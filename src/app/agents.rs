@@ -196,6 +196,9 @@ impl App {
 
         let mut argv = vec![crate::detect::interactive_agent_executable(kind).to_string()];
         argv.extend(params.args);
+        if kind == crate::detect::Agent::Codex {
+            crate::agent_launch_args::codex_without_daemon(&mut argv);
+        }
         let command = crate::platform::interactive_shell_command(&argv, &shell_name)
             .ok_or(AgentStartError::InvalidArgument)?;
         let bytes = crate::app::api_helpers::encode_api_submission(runtime, &command);
