@@ -146,7 +146,8 @@ pub(crate) struct SpaceTokenContext<'a> {
     pub(crate) diff_stat: Option<(usize, usize)>,
     pub(crate) number: Option<char>,
     pub(crate) tokens: &'a std::collections::HashMap<String, String>,
-    pub(crate) suppress_git_details: bool,
+    /// Worktree rows under their main checkout are already named by branch.
+    pub(crate) suppress_branch: bool,
 }
 
 pub(crate) fn space_rows(
@@ -169,20 +170,18 @@ pub(crate) fn space_rows(
                         SpaceSidebarToken::Workspace => {
                             Some(ResolvedTokenKind::Workspace(context.workspace.to_string()))
                         }
-                        SpaceSidebarToken::Branch if !context.suppress_git_details => context
+                        SpaceSidebarToken::Branch if !context.suppress_branch => context
                             .branch
                             .map(|branch| ResolvedTokenKind::Branch(branch.to_string())),
                         SpaceSidebarToken::Branch => None,
-                        SpaceSidebarToken::GitStatus if !context.suppress_git_details => context
+                        SpaceSidebarToken::GitStatus => context
                             .ahead_behind
                             .filter(|(ahead, behind)| *ahead > 0 || *behind > 0)
                             .map(|(ahead, behind)| ResolvedTokenKind::GitStatus { ahead, behind }),
-                        SpaceSidebarToken::GitStatus => None,
-                        SpaceSidebarToken::DiffStat if !context.suppress_git_details => context
+                        SpaceSidebarToken::DiffStat => context
                             .diff_stat
                             .filter(|(added, removed)| *added > 0 || *removed > 0)
                             .map(|(added, removed)| ResolvedTokenKind::DiffStat { added, removed }),
-                        SpaceSidebarToken::DiffStat => None,
                         SpaceSidebarToken::Number => context.number.map(ResolvedTokenKind::Number),
                         SpaceSidebarToken::Custom(name) => context
                             .tokens
@@ -379,7 +378,7 @@ rows = [[{ token = "$load", rules = [{ lt = 50, dim = true }] }]]
                     state_text: "working",
                     ahead_behind: None,
                     diff_stat: None,
-                    suppress_git_details: false,
+                    suppress_branch: false,
                     number: None,
                     tokens: &entry.tokens,
                 },
@@ -430,7 +429,7 @@ rows = [[{ token = "$load", rules = [{ lt = 50, hide = true }] }], ["workspace"]
                     state_text: "working",
                     ahead_behind: None,
                     diff_stat: None,
-                    suppress_git_details: false,
+                    suppress_branch: false,
                     number: None,
                     tokens: &entry.tokens,
                 },
@@ -589,7 +588,7 @@ rows = [[{ token = "$load", rules = [{ lt = 50, hide = true }] }], ["workspace"]
     }
 
     #[test]
-    fn grouped_children_suppress_all_builtin_git_details() {
+    fn grouped_children_hide_their_branch_but_keep_git_stats() {
         let config = SpacesSidebarConfig::default();
 
         assert_eq!(
@@ -603,13 +602,25 @@ rows = [[{ token = "$load", rules = [{ lt = 50, hide = true }] }], ["workspace"]
                     diff_stat: Some((4, 2)),
                     number: None,
                     tokens: &std::collections::HashMap::new(),
-                    suppress_git_details: true,
+                    suppress_branch: true,
                 },
             ),
-            vec![vec![
-                ResolvedToken::unstyled(ResolvedTokenKind::StateIcon),
-                ResolvedToken::unstyled(ResolvedTokenKind::Workspace("feature".into())),
-            ]]
+            vec![
+                vec![
+                    ResolvedToken::unstyled(ResolvedTokenKind::StateIcon),
+                    ResolvedToken::unstyled(ResolvedTokenKind::Workspace("feature".into())),
+                ],
+                vec![
+                    ResolvedToken::unstyled(ResolvedTokenKind::GitStatus {
+                        ahead: 2,
+                        behind: 1
+                    }),
+                    ResolvedToken::unstyled(ResolvedTokenKind::DiffStat {
+                        added: 4,
+                        removed: 2
+                    }),
+                ],
+            ]
         );
     }
 
@@ -628,7 +639,7 @@ rows = [[{ token = "$load", rules = [{ lt = 50, hide = true }] }], ["workspace"]
                     diff_stat,
                     number: None,
                     tokens: &tokens,
-                    suppress_git_details: false,
+                    suppress_branch: false,
                 },
             )
         };
@@ -695,7 +706,7 @@ rows = [[{ token = "$load", rules = [{ lt = 50, hide = true }] }], ["workspace"]
                     diff_stat: None,
                     number: None,
                     tokens: &tokens,
-                    suppress_git_details: false,
+                    suppress_branch: false,
                 },
             ),
             vec![vec![ResolvedToken::unstyled(ResolvedTokenKind::Custom(

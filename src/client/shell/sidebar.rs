@@ -1095,7 +1095,7 @@ pub(in crate::client::shell) fn workspace_rows(
             diff_stat: workspace.git_diff_stat,
             number,
             tokens: &token_values,
-            suppress_git_details: indented,
+            suppress_branch: indented,
         },
     )
 }
