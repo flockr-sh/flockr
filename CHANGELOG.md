@@ -1,6 +1,6 @@
 # Changelog
 
-## [1.0.0] - Unreleased
+## [1.0.0] - 2026-10-18
 
 First flockr release. flockr is a hard fork of
 [herdr](https://github.com/herdrdev/herdr), taken from herdr's `master` at
