@@ -121,18 +121,6 @@ const DEFAULT_CONFIG: &str = r##"# flockr configuration
 # Render pane images in Kitty graphics-compatible outer terminals.
 # kitty_graphics = true
 
-[update]
-# Update channel used by background version checks and `flockr update`.
-# Stable builds default to "stable". Windows preview builds default to "preview"
-# so existing preview installs stay there until explicitly switched.
-# channel = "stable"
-
-# Check herdr.dev for new Flockr versions in the background.
-# version_check = true
-
-# Check herdr.dev for remote agent-detection manifest updates in the background.
-# manifest_check = true
-
 [keys]
 # Prefix key to enter prefix mode (default: "ctrl+b")
 # Examples: "ctrl+b", "f12", "esc", "-"
@@ -197,6 +185,10 @@ const DEFAULT_CONFIG: &str = r##"# flockr configuration
 # resize_pane_down = "prefix+ctrl+j"
 # resize_pane_up = "prefix+ctrl+k"
 # resize_pane_right = "prefix+ctrl+l"
+# swap_pane_left = ""    # optional, unset by default; swaps the focused pane with its neighbor
+# swap_pane_down = ""
+# swap_pane_up = ""
+# swap_pane_right = ""
 # Layout presets, as in tmux. main_* layouts lead with the focused pane.
 # layout_even_horizontal = "prefix+alt+1"
 # layout_even_vertical = "prefix+alt+2"
@@ -343,6 +335,11 @@ const DEFAULT_CONFIG: &str = r##"# flockr configuration
 # Keep split panes visually separated instead of sharing divider borders.
 # pane_gaps = true
 
+# Size of the main pane in the main_* layouts: a cell count or a percentage
+# such as "60%". Width applies to main_vertical, height to main_horizontal.
+# main_pane_width = 80
+# main_pane_height = 24
+
 # Show detected/reported agent labels in split pane borders when no manual pane name is set.
 # show_agent_labels_on_pane_borders = false
 
@@ -483,7 +480,7 @@ const DEFAULT_CONFIG: &str = r##"# flockr configuration
 # Allow launching flockr from inside a flockr-managed pane.
 # allow_nested = false
 # Save recent pane screen history across full server restarts.
-pane_history = false
+# pane_history = false
 # While prefix mode is active, temporarily switch the host input source to
 # an ASCII-capable mode so prefix commands register even when an IME is
 # active, then restore the previous input source when prefix mode exits. On
