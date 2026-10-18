@@ -137,6 +137,48 @@ fn assert_graphics_cover(state: &mut ClientShellState, covered: Rect, cols: u16,
 }
 
 #[test]
+fn notifications_stay_beside_the_sidebar_on_either_side() {
+    use crate::config::{SidebarPositionConfig as Side, ToastFlockrPosition as Toast};
+    for side in [Side::Left, Side::Right] {
+        for position in [
+            Toast::TopLeft,
+            Toast::TopRight,
+            Toast::BottomLeft,
+            Toast::BottomRight,
+        ] {
+            let mut config = Config::default();
+            config.ui.sidebar_position = side;
+            let mut state = ClientShellState::new(ClientShellConfig::from_config(&config));
+            state.set_snapshot(Box::new(snapshot()));
+            state.set_pane_surface(surface());
+            state.visible_notification = Some(ClientVisibleNotification {
+                endpoint_id: ClientEndpointId::Local,
+                event: SemanticNotification {
+                    kind: SemanticNotificationKind::Custom,
+                    title: "notice".into(),
+                    body: Some("body".into()),
+                    sound: None,
+                    agent: None,
+                    workspace_id: None,
+                    tab_id: None,
+                    pane_id: None,
+                    position: Some(position),
+                },
+                deadline: std::time::Instant::now(),
+            });
+            state.compose(106, 30).unwrap();
+            let sidebar = state.layout(106, 30).sidebar;
+            let toast = state.hits.notification_toast;
+            assert!(!toast.is_empty(), "{side:?} {position:?}");
+            assert!(
+                toast.intersection(sidebar).is_empty(),
+                "{side:?} {position:?}: toast {toast:?} covers sidebar {sidebar:?}"
+            );
+        }
+    }
+}
+
+#[test]
 fn notifications_and_clipboard_feedback_only_cover_their_drawn_corners() {
     use crate::config::{ToastClipboardPosition as Clipboard, ToastFlockrPosition as Toast};
     for (cols, rows) in [(106, 40), (40, 24)] {

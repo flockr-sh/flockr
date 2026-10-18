@@ -498,11 +498,13 @@ impl ClientShellState {
                 ));
                 1
             });
+            // Toast cards sit beside the sidebar, over the tab bar and panes.
+            let toast_area = Rect::new(layout.pane_surface.x, 0, layout.pane_surface.width, rows);
             if let Some(notice) = self.visible_endpoint_notice.as_ref() {
                 self.hits.notification_toast = if layout.mobile_header.is_empty() {
                     endpoint_notices::render_notice(
                         &mut composed,
-                        Rect::new(0, 0, cols, rows),
+                        toast_area,
                         notice,
                         u16::from(has_config_diagnostic) + lifecycle_offset,
                         &self.config.palette,
@@ -520,7 +522,7 @@ impl ClientShellState {
                 self.hits.notification_toast = if layout.mobile_header.is_empty() {
                     notifications::render_visible_notification(
                         &mut composed,
-                        Rect::new(0, 0, cols, rows),
+                        toast_area,
                         notification,
                         self.config.toast_position,
                         u16::from(has_config_diagnostic) + lifecycle_offset,
