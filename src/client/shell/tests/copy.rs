@@ -2308,3 +2308,38 @@ fn copy_mode_repeat_during_projection_gap_stays_active() {
         );
     }
 }
+
+#[test]
+fn navigator_gg_jumps_to_the_top_and_a_lone_g_does_nothing() {
+    let mut projected = snapshot();
+    for index in 0..4 {
+        let mut pane = projected.panes[0].clone();
+        pane.pane_id = format!("pane_extra_{index}");
+        pane.label = Some(format!("extra {index}"));
+        pane.focused = false;
+        projected.panes.push(pane);
+    }
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.set_snapshot(Box::new(projected));
+    state.set_pane_surface(surface());
+    state.open_navigator_overlay();
+    let selected = |state: &ClientShellState| match state.overlay.as_ref() {
+        Some(ClientShellOverlay::Navigator(navigator)) => navigator.selected.clone(),
+        _ => panic!("navigator closed"),
+    };
+
+    let first = selected(&state);
+    state.handle_input_bytes(b"G");
+    let last = selected(&state);
+    assert!(last.is_some());
+    assert_ne!(last, first);
+    state.handle_input_bytes(b"g");
+    assert_eq!(selected(&state), last);
+    // Another key between the two presses cancels the jump.
+    state.handle_input_bytes(b"k");
+    let above_last = selected(&state);
+    state.handle_input_bytes(b"g");
+    assert_eq!(selected(&state), above_last);
+    state.handle_input_bytes(b"g");
+    assert_eq!(selected(&state), None);
+}

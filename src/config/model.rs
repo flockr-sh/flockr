@@ -407,6 +407,9 @@ pub struct KeysConfig {
     /// Mark the focused pane's finished agent unread, so it shows as done
     /// again. Default: "prefix+u".
     pub mark_unread: BindingConfig,
+    /// Open the command palette: search every action and custom command and
+    /// run one. Default: ["prefix+colon", "prefix+slash"].
+    pub command_palette: BindingConfig,
     /// Select the previous workspace. Unset by default.
     pub previous_workspace: BindingConfig,
     /// Select the next workspace. Unset by default.
@@ -584,6 +587,8 @@ pub(crate) struct KeysConfigOverlay {
     focus_next_attention: Option<BindingConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     mark_unread: Option<BindingConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    command_palette: Option<BindingConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     previous_workspace: Option<BindingConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -766,6 +771,7 @@ impl<'de> Deserialize<'de> for KeysConfig {
         apply_field!(open_notification_target);
         apply_field!(focus_next_attention);
         apply_field!(mark_unread);
+        apply_field!(command_palette);
         apply_field!(previous_workspace);
         apply_field!(next_workspace);
         apply_field!(previous_agent);
@@ -893,6 +899,7 @@ impl KeysConfig {
         copy_effective_action_field!(open_notification_target, keybinds.open_notification_target);
         copy_effective_action_field!(focus_next_attention, keybinds.focus_next_attention);
         copy_effective_action_field!(mark_unread, keybinds.mark_unread);
+        copy_effective_action_field!(command_palette, keybinds.command_palette);
         copy_effective_action_field!(previous_workspace, keybinds.previous_workspace);
         copy_effective_action_field!(next_workspace, keybinds.next_workspace);
         copy_effective_action_field!(previous_agent, keybinds.previous_agent);
@@ -1352,6 +1359,10 @@ impl Default for KeysConfig {
             open_notification_target: BindingConfig::one("prefix+o"),
             focus_next_attention: BindingConfig::one("prefix+a"),
             mark_unread: BindingConfig::one("prefix+u"),
+            command_palette: BindingConfig::Many(vec![
+                "prefix+colon".into(),
+                "prefix+slash".into(),
+            ]),
             previous_workspace: BindingConfig::empty(),
             next_workspace: BindingConfig::empty(),
             previous_agent: BindingConfig::empty(),

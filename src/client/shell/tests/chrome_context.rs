@@ -404,10 +404,27 @@ fn global_menu_opens_from_sidebar_and_routes_client_actions() {
         })
         .collect::<Vec<_>>()
         .join("\n");
+    assert!(text.contains("command palette"));
     assert!(text.contains("settings"));
     assert!(text.contains("keybinds"));
     assert!(text.contains("reload config"));
     assert!(text.contains("detach"));
+
+    let palette = state.hits.global_menu_rows[3].0;
+    state.handle_raw_events(vec![RawInputEvent::Mouse(crossterm::event::MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: palette.x,
+        row: palette.y,
+        modifiers: KeyModifiers::empty(),
+    })]);
+    assert!(matches!(
+        state.overlay,
+        Some(ClientShellOverlay::CommandPalette(_))
+    ));
+    state.overlay = Some(ClientShellOverlay::GlobalMenu(ClientGlobalMenuOverlay {
+        highlighted: 0,
+    }));
+    state.compose(106, 30).expect("global menu");
 
     let keybinds = state.hits.global_menu_rows[1].0;
     let help = state.handle_raw_events(vec![RawInputEvent::Mouse(crossterm::event::MouseEvent {
@@ -420,7 +437,7 @@ fn global_menu_opens_from_sidebar_and_routes_client_actions() {
     assert!(matches!(state.overlay, Some(ClientShellOverlay::Help(_))));
 
     state.overlay = Some(ClientShellOverlay::GlobalMenu(ClientGlobalMenuOverlay {
-        highlighted: 3,
+        highlighted: 4,
     }));
     let detach = state.handle_input_bytes(b"\r");
     assert!(detach.detach);

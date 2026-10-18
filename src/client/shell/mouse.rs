@@ -1387,6 +1387,48 @@ impl ClientShellState {
                 return;
             }
         }
+        if matches!(self.overlay, Some(ClientShellOverlay::CommandPalette(_))) {
+            let row_hit = self
+                .hits
+                .command_palette_rows
+                .iter()
+                .find(|(rect, _)| super::contains(*rect, point))
+                .copied();
+            match mouse.kind {
+                MouseEventKind::Moved => {
+                    if let (
+                        Some((_, position)),
+                        Some(ClientShellOverlay::CommandPalette(palette)),
+                    ) = (row_hit, self.overlay.as_mut())
+                    {
+                        if palette.selected != position {
+                            palette.selected = position;
+                            outcome.repaint = true;
+                        }
+                    }
+                }
+                MouseEventKind::ScrollUp => {
+                    self.move_command_palette_selection(-1);
+                    outcome.repaint = true;
+                }
+                MouseEventKind::ScrollDown => {
+                    self.move_command_palette_selection(1);
+                    outcome.repaint = true;
+                }
+                MouseEventKind::Down(MouseButton::Left) => {
+                    if let Some((_, position)) = row_hit {
+                        self.activate_command_palette_row(position, outcome);
+                    } else if super::contains(self.hits.overlay_cancel, point)
+                        || !super::contains(self.hits.command_palette_popup, point)
+                    {
+                        self.overlay = None;
+                        outcome.repaint = true;
+                    }
+                }
+                _ => {}
+            }
+            return;
+        }
         if matches!(self.overlay, Some(ClientShellOverlay::GlobalMenu(_))) {
             let row_hit = self
                 .hits

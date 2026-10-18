@@ -1,6 +1,6 @@
 use crossterm::event::KeyCode;
 
-use crate::config::{CustomCommandKeybind, Keybinds};
+use crate::config::{ActionKeybinds, CustomCommandKeybind, Keybinds};
 
 use super::TerminalKey;
 
@@ -72,6 +72,7 @@ pub(crate) enum KeybindAction {
     OpenNotificationTarget,
     FocusNextAttention,
     MarkUnread,
+    CommandPalette,
     Detach,
     OpenNavigator,
 }
@@ -94,128 +95,295 @@ pub(crate) fn resolve_prefix_binding(
     })
 }
 
+/// Every non-indexed action with its bindings and a short label. Key
+/// resolution and the command palette both read this one table, so a new
+/// action is reachable from both once it is listed here.
+pub(crate) fn action_table(
+    keybinds: &Keybinds,
+) -> Vec<(&ActionKeybinds, KeybindAction, &'static str)> {
+    use crate::api::schema::LayoutSelection;
+
+    vec![
+        (&keybinds.help, KeybindAction::Help, "keybinds"),
+        (&keybinds.settings, KeybindAction::Settings, "settings"),
+        (
+            &keybinds.command_palette,
+            KeybindAction::CommandPalette,
+            "command palette",
+        ),
+        (
+            &keybinds.workspace_picker,
+            KeybindAction::WorkspacePicker,
+            "pick workspace",
+        ),
+        (
+            &keybinds.new_workspace,
+            KeybindAction::NewWorkspace,
+            "new workspace",
+        ),
+        (
+            &keybinds.new_worktree,
+            KeybindAction::NewWorktree,
+            "new worktree",
+        ),
+        (
+            &keybinds.open_worktree,
+            KeybindAction::OpenWorktree,
+            "open worktree",
+        ),
+        (
+            &keybinds.remove_worktree,
+            KeybindAction::RemoveWorktree,
+            "remove worktree",
+        ),
+        (
+            &keybinds.rename_workspace,
+            KeybindAction::RenameWorkspace,
+            "rename workspace",
+        ),
+        (
+            &keybinds.close_workspace,
+            KeybindAction::CloseWorkspace,
+            "close workspace",
+        ),
+        (
+            &keybinds.previous_workspace,
+            KeybindAction::PreviousWorkspace,
+            "previous workspace",
+        ),
+        (
+            &keybinds.next_workspace,
+            KeybindAction::NextWorkspace,
+            "next workspace",
+        ),
+        (
+            &keybinds.previous_agent,
+            KeybindAction::PreviousAgent,
+            "previous agent",
+        ),
+        (&keybinds.next_agent, KeybindAction::NextAgent, "next agent"),
+        (&keybinds.new_tab, KeybindAction::NewTab, "new tab"),
+        (&keybinds.rename_tab, KeybindAction::RenameTab, "rename tab"),
+        (
+            &keybinds.previous_tab,
+            KeybindAction::PreviousTab,
+            "previous tab",
+        ),
+        (&keybinds.next_tab, KeybindAction::NextTab, "next tab"),
+        (
+            &keybinds.move_tab_previous,
+            KeybindAction::MoveTabPrevious,
+            "move tab left",
+        ),
+        (
+            &keybinds.move_tab_next,
+            KeybindAction::MoveTabNext,
+            "move tab right",
+        ),
+        (&keybinds.close_tab, KeybindAction::CloseTab, "close tab"),
+        (
+            &keybinds.rename_pane,
+            KeybindAction::RenamePane,
+            "rename pane",
+        ),
+        (
+            &keybinds.edit_scrollback,
+            KeybindAction::EditScrollback,
+            "edit scrollback in $EDITOR",
+        ),
+        (&keybinds.clear_pane, KeybindAction::ClearPane, "clear pane"),
+        (&keybinds.copy_mode, KeybindAction::CopyMode, "copy mode"),
+        (
+            &keybinds.link_hints,
+            KeybindAction::LinkHints,
+            "open or copy a link",
+        ),
+        (
+            &keybinds.focus_pane_left,
+            KeybindAction::FocusPaneLeft,
+            "focus pane left",
+        ),
+        (
+            &keybinds.focus_pane_down,
+            KeybindAction::FocusPaneDown,
+            "focus pane down",
+        ),
+        (
+            &keybinds.focus_pane_up,
+            KeybindAction::FocusPaneUp,
+            "focus pane up",
+        ),
+        (
+            &keybinds.focus_pane_right,
+            KeybindAction::FocusPaneRight,
+            "focus pane right",
+        ),
+        (
+            &keybinds.swap_pane_left,
+            KeybindAction::SwapPaneLeft,
+            "swap pane left",
+        ),
+        (
+            &keybinds.swap_pane_down,
+            KeybindAction::SwapPaneDown,
+            "swap pane down",
+        ),
+        (
+            &keybinds.swap_pane_up,
+            KeybindAction::SwapPaneUp,
+            "swap pane up",
+        ),
+        (
+            &keybinds.swap_pane_right,
+            KeybindAction::SwapPaneRight,
+            "swap pane right",
+        ),
+        (&keybinds.last_pane, KeybindAction::LastPane, "last pane"),
+        (
+            &keybinds.cycle_pane_next,
+            KeybindAction::CyclePaneNext,
+            "next pane",
+        ),
+        (
+            &keybinds.cycle_pane_previous,
+            KeybindAction::CyclePanePrevious,
+            "previous pane",
+        ),
+        (
+            &keybinds.split_vertical,
+            KeybindAction::SplitVertical,
+            "split right",
+        ),
+        (
+            &keybinds.split_horizontal,
+            KeybindAction::SplitHorizontal,
+            "split down",
+        ),
+        (&keybinds.close_pane, KeybindAction::ClosePane, "close pane"),
+        (&keybinds.zoom, KeybindAction::Zoom, "zoom pane"),
+        (
+            &keybinds.resize_mode,
+            KeybindAction::EnterResizeMode,
+            "resize mode",
+        ),
+        (
+            &keybinds.resize_pane_left,
+            KeybindAction::ResizePaneLeft,
+            "resize pane left",
+        ),
+        (
+            &keybinds.resize_pane_down,
+            KeybindAction::ResizePaneDown,
+            "resize pane down",
+        ),
+        (
+            &keybinds.resize_pane_up,
+            KeybindAction::ResizePaneUp,
+            "resize pane up",
+        ),
+        (
+            &keybinds.resize_pane_right,
+            KeybindAction::ResizePaneRight,
+            "resize pane right",
+        ),
+        (
+            &keybinds.layout_even_horizontal,
+            KeybindAction::SelectLayout(LayoutSelection::EvenHorizontal),
+            "layout: even horizontal",
+        ),
+        (
+            &keybinds.layout_even_vertical,
+            KeybindAction::SelectLayout(LayoutSelection::EvenVertical),
+            "layout: even vertical",
+        ),
+        (
+            &keybinds.layout_main_horizontal,
+            KeybindAction::SelectLayout(LayoutSelection::MainHorizontal),
+            "layout: main horizontal",
+        ),
+        (
+            &keybinds.layout_main_vertical,
+            KeybindAction::SelectLayout(LayoutSelection::MainVertical),
+            "layout: main vertical",
+        ),
+        (
+            &keybinds.layout_tiled,
+            KeybindAction::SelectLayout(LayoutSelection::Tiled),
+            "layout: tiled",
+        ),
+        (
+            &keybinds.layout_main_horizontal_mirrored,
+            KeybindAction::SelectLayout(LayoutSelection::MainHorizontalMirrored),
+            "layout: main horizontal, mirrored",
+        ),
+        (
+            &keybinds.layout_main_vertical_mirrored,
+            KeybindAction::SelectLayout(LayoutSelection::MainVerticalMirrored),
+            "layout: main vertical, mirrored",
+        ),
+        (
+            &keybinds.layout_tiled_main_bottom,
+            KeybindAction::SelectLayout(LayoutSelection::TiledMainBottom),
+            "layout: tiled, main at bottom",
+        ),
+        (
+            &keybinds.next_layout,
+            KeybindAction::SelectLayout(LayoutSelection::Next),
+            "next layout",
+        ),
+        (
+            &keybinds.previous_layout,
+            KeybindAction::SelectLayout(LayoutSelection::Previous),
+            "previous layout",
+        ),
+        (
+            &keybinds.spread_layout,
+            KeybindAction::SelectLayout(LayoutSelection::Spread),
+            "spread panes evenly",
+        ),
+        (
+            &keybinds.toggle_sidebar,
+            KeybindAction::ToggleSidebar,
+            "toggle sidebar",
+        ),
+        (
+            &keybinds.reload_config,
+            KeybindAction::ReloadConfig,
+            "reload config",
+        ),
+        (
+            &keybinds.open_notification_target,
+            KeybindAction::OpenNotificationTarget,
+            "open notification target",
+        ),
+        (
+            &keybinds.focus_next_attention,
+            KeybindAction::FocusNextAttention,
+            "next agent that needs you",
+        ),
+        (
+            &keybinds.mark_unread,
+            KeybindAction::MarkUnread,
+            "mark agent unread",
+        ),
+        (&keybinds.detach, KeybindAction::Detach, "detach"),
+        (
+            &keybinds.goto,
+            KeybindAction::OpenNavigator,
+            "go to (navigator)",
+        ),
+    ]
+}
+
 pub(crate) fn resolve_non_indexed_action(
     keybinds: &Keybinds,
     key: &TerminalKey,
     dispatch: KeybindDispatch,
 ) -> Option<KeybindAction> {
-    use crate::api::schema::LayoutSelection;
-
-    for (bindings, action) in [
-        (&keybinds.help, KeybindAction::Help),
-        (&keybinds.settings, KeybindAction::Settings),
-        (&keybinds.workspace_picker, KeybindAction::WorkspacePicker),
-        (&keybinds.new_workspace, KeybindAction::NewWorkspace),
-        (&keybinds.new_worktree, KeybindAction::NewWorktree),
-        (&keybinds.open_worktree, KeybindAction::OpenWorktree),
-        (&keybinds.remove_worktree, KeybindAction::RemoveWorktree),
-        (&keybinds.rename_workspace, KeybindAction::RenameWorkspace),
-        (&keybinds.close_workspace, KeybindAction::CloseWorkspace),
-        (
-            &keybinds.previous_workspace,
-            KeybindAction::PreviousWorkspace,
-        ),
-        (&keybinds.next_workspace, KeybindAction::NextWorkspace),
-        (&keybinds.previous_agent, KeybindAction::PreviousAgent),
-        (&keybinds.next_agent, KeybindAction::NextAgent),
-        (&keybinds.new_tab, KeybindAction::NewTab),
-        (&keybinds.rename_tab, KeybindAction::RenameTab),
-        (&keybinds.previous_tab, KeybindAction::PreviousTab),
-        (&keybinds.next_tab, KeybindAction::NextTab),
-        (&keybinds.move_tab_previous, KeybindAction::MoveTabPrevious),
-        (&keybinds.move_tab_next, KeybindAction::MoveTabNext),
-        (&keybinds.close_tab, KeybindAction::CloseTab),
-        (&keybinds.rename_pane, KeybindAction::RenamePane),
-        (&keybinds.edit_scrollback, KeybindAction::EditScrollback),
-        (&keybinds.clear_pane, KeybindAction::ClearPane),
-        (&keybinds.copy_mode, KeybindAction::CopyMode),
-        (&keybinds.link_hints, KeybindAction::LinkHints),
-        (&keybinds.focus_pane_left, KeybindAction::FocusPaneLeft),
-        (&keybinds.focus_pane_down, KeybindAction::FocusPaneDown),
-        (&keybinds.focus_pane_up, KeybindAction::FocusPaneUp),
-        (&keybinds.focus_pane_right, KeybindAction::FocusPaneRight),
-        (&keybinds.swap_pane_left, KeybindAction::SwapPaneLeft),
-        (&keybinds.swap_pane_down, KeybindAction::SwapPaneDown),
-        (&keybinds.swap_pane_up, KeybindAction::SwapPaneUp),
-        (&keybinds.swap_pane_right, KeybindAction::SwapPaneRight),
-        (&keybinds.last_pane, KeybindAction::LastPane),
-        (&keybinds.cycle_pane_next, KeybindAction::CyclePaneNext),
-        (
-            &keybinds.cycle_pane_previous,
-            KeybindAction::CyclePanePrevious,
-        ),
-        (&keybinds.split_vertical, KeybindAction::SplitVertical),
-        (&keybinds.split_horizontal, KeybindAction::SplitHorizontal),
-        (&keybinds.close_pane, KeybindAction::ClosePane),
-        (&keybinds.zoom, KeybindAction::Zoom),
-        (&keybinds.resize_mode, KeybindAction::EnterResizeMode),
-        (&keybinds.resize_pane_left, KeybindAction::ResizePaneLeft),
-        (&keybinds.resize_pane_down, KeybindAction::ResizePaneDown),
-        (&keybinds.resize_pane_up, KeybindAction::ResizePaneUp),
-        (&keybinds.resize_pane_right, KeybindAction::ResizePaneRight),
-        (
-            &keybinds.layout_even_horizontal,
-            KeybindAction::SelectLayout(LayoutSelection::EvenHorizontal),
-        ),
-        (
-            &keybinds.layout_even_vertical,
-            KeybindAction::SelectLayout(LayoutSelection::EvenVertical),
-        ),
-        (
-            &keybinds.layout_main_horizontal,
-            KeybindAction::SelectLayout(LayoutSelection::MainHorizontal),
-        ),
-        (
-            &keybinds.layout_main_vertical,
-            KeybindAction::SelectLayout(LayoutSelection::MainVertical),
-        ),
-        (
-            &keybinds.layout_tiled,
-            KeybindAction::SelectLayout(LayoutSelection::Tiled),
-        ),
-        (
-            &keybinds.layout_main_horizontal_mirrored,
-            KeybindAction::SelectLayout(LayoutSelection::MainHorizontalMirrored),
-        ),
-        (
-            &keybinds.layout_main_vertical_mirrored,
-            KeybindAction::SelectLayout(LayoutSelection::MainVerticalMirrored),
-        ),
-        (
-            &keybinds.layout_tiled_main_bottom,
-            KeybindAction::SelectLayout(LayoutSelection::TiledMainBottom),
-        ),
-        (
-            &keybinds.next_layout,
-            KeybindAction::SelectLayout(LayoutSelection::Next),
-        ),
-        (
-            &keybinds.previous_layout,
-            KeybindAction::SelectLayout(LayoutSelection::Previous),
-        ),
-        (
-            &keybinds.spread_layout,
-            KeybindAction::SelectLayout(LayoutSelection::Spread),
-        ),
-        (&keybinds.toggle_sidebar, KeybindAction::ToggleSidebar),
-        (&keybinds.reload_config, KeybindAction::ReloadConfig),
-        (
-            &keybinds.open_notification_target,
-            KeybindAction::OpenNotificationTarget,
-        ),
-        (
-            &keybinds.focus_next_attention,
-            KeybindAction::FocusNextAttention,
-        ),
-        (&keybinds.mark_unread, KeybindAction::MarkUnread),
-        (&keybinds.detach, KeybindAction::Detach),
-        (&keybinds.goto, KeybindAction::OpenNavigator),
-    ] {
-        if action_matches(bindings, key, dispatch) {
-            return Some(action);
-        }
-    }
-    None
+    action_table(keybinds)
+        .into_iter()
+        .find(|(bindings, _, _)| action_matches(bindings, key, dispatch))
+        .map(|(_, action, _)| action)
 }
 
 pub(crate) fn resolve_custom_command(

@@ -152,6 +152,7 @@ const DEFAULT_CONFIG: &str = r##"# flockr configuration
 # open_notification_target = "prefix+o"
 # focus_next_attention = "prefix+a"   # blocked or unseen-done agents, oldest alert first
 # mark_unread = "prefix+u"            # show the focused pane's finished agent as done again
+# command_palette = ["prefix+colon", "prefix+slash"]   # search every action and custom command, enter runs it
 # workspace_picker = "prefix+w"
 # goto = "prefix+g"
 # new_workspace = "prefix+shift+n"

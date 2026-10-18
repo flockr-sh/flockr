@@ -6,6 +6,7 @@ mod aggregate_navigation;
 mod machine_diagnostics;
 mod workspace_navigation;
 use workspace_navigation::{NavigateGrab, PendingWorkspaceHighlight, WorkspaceNavigationTarget};
+mod command_palette;
 mod composition;
 mod config;
 mod context_menu;
@@ -37,6 +38,7 @@ mod surface_patch;
 mod text_editor;
 mod word_selection;
 mod worktrees;
+use command_palette::ClientCommandPaletteEntry;
 use text_editor::TextEditor;
 use word_selection::ClientWordSelection;
 

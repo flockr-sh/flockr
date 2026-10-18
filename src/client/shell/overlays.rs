@@ -17,6 +17,8 @@ pub(crate) struct OverlayRender {
     pub(crate) navigator_scroll_metrics: Option<crate::pane::ScrollMetrics>,
     pub(crate) worktree_search: Rect,
     pub(crate) worktree_rows: Vec<(Rect, usize)>,
+    pub(crate) command_palette_popup: Rect,
+    pub(crate) command_palette_rows: Vec<(Rect, usize)>,
     pub(crate) help_popup: Rect,
     pub(crate) help_scrollbar: Rect,
     pub(crate) help_scroll_metrics: Option<crate::pane::ScrollMetrics>,
@@ -64,6 +66,7 @@ pub(crate) fn render_client_overlay(
         ClientShellOverlay::Rename(v) => render_rename_overlay(b, v, p),
         ClientShellOverlay::ConfirmClose(v) => render_confirm_close_overlay(b, v, p),
         ClientShellOverlay::Help(v) => render_help_overlay(b, v, k, p),
+        ClientShellOverlay::CommandPalette(v) => render_command_palette_overlay(b, v, p),
         ClientShellOverlay::Navigator(v) => {
             render_navigator_overlay(b, v, endpoints, active_endpoint_id, p)
         }
@@ -1238,7 +1241,7 @@ fn render_help_overlay(
         if h.search_focused {
             " edit ←→/home/end · kill ^u/^k · yank ^y · scroll ↑↓ · back esc"
         } else {
-            " search / · scroll j/k/↑↓/pgup/pgdn · close esc/enter"
+            " search / · scroll j/k/↑↓/^d/^u · top/bottom gg/G · close esc/enter"
         },
         Style::default().fg(p.overlay0).bg(p.panel_bg),
     );
@@ -1253,6 +1256,155 @@ fn render_help_overlay(
         ..OverlayRender::default()
     })
 }
+fn render_command_palette_overlay(
+    b: &mut Buffer,
+    palette: &ClientCommandPaletteOverlay,
+    p: &Palette,
+) -> Option<OverlayRender> {
+    let popup_height = (palette.entries.len() + 6).clamp(10, 24) as u16;
+    let q = popup(b.area, 72, popup_height)?;
+    let i = panel(b, q, p.accent, p.panel_bg)?;
+    if i.width < 20 || i.height < 6 {
+        return None;
+    }
+    put_text(
+        b,
+        i.x,
+        i.y,
+        i.width,
+        "command palette",
+        Style::default()
+            .fg(p.text)
+            .bg(p.panel_bg)
+            .add_modifier(Modifier::BOLD),
+    );
+    let close = Rect::new(i.right() - 11, i.y, 11, 1);
+    button(
+        b,
+        close,
+        " esc close ",
+        Style::default()
+            .fg(contrast(p))
+            .bg(p.accent)
+            .add_modifier(Modifier::BOLD),
+    );
+    let filtered = palette.filtered();
+    let count = if filtered.len() == palette.entries.len() {
+        format!("{} commands", palette.entries.len())
+    } else {
+        format!("{}/{} commands", filtered.len(), palette.entries.len())
+    };
+    let search = Rect::new(i.x, i.y + 1, i.width, 1);
+    put_text(
+        b,
+        search.x,
+        search.y,
+        search.width,
+        " > ",
+        Style::default().fg(p.accent).bg(p.panel_bg),
+    );
+    let cursor = text_editor::render(
+        b,
+        Rect::new(
+            search.x + 3,
+            search.y,
+            search.width.saturating_sub(4 + display_width(&count)),
+            1,
+        ),
+        &palette.query,
+        Style::default().fg(p.text).bg(p.panel_bg),
+    );
+    put_right_text(
+        b,
+        search,
+        search.y,
+        &count,
+        Style::default().fg(p.overlay0).bg(p.panel_bg),
+    );
+    put_text(
+        b,
+        i.x,
+        i.y + 2,
+        i.width,
+        &"─".repeat(i.width as usize),
+        Style::default().fg(p.surface1).bg(p.panel_bg),
+    );
+    let body = Rect::new(i.x, i.y + 3, i.width, i.height.saturating_sub(4));
+    let visible_count = usize::from(body.height.max(1));
+    let selected = palette.selected.min(filtered.len().saturating_sub(1));
+    let start = selected
+        .saturating_sub(visible_count.saturating_sub(1))
+        .min(filtered.len().saturating_sub(visible_count));
+    let mut rows = Vec::new();
+    for (visible, (position, entry_index)) in filtered
+        .iter()
+        .copied()
+        .enumerate()
+        .skip(start)
+        .take(visible_count)
+        .enumerate()
+    {
+        let entry = &palette.entries[entry_index];
+        let rect = Rect::new(body.x, body.y + visible as u16, body.width, 1);
+        rows.push((rect, position));
+        let is_selected = position == selected;
+        let style = if is_selected {
+            Style::default().fg(contrast(p)).bg(p.accent)
+        } else {
+            Style::default().fg(p.text).bg(p.panel_bg)
+        };
+        b.set_style(rect, style);
+        let keys_width = display_width(&entry.keys);
+        put_text(
+            b,
+            rect.x,
+            rect.y,
+            rect.width.saturating_sub(keys_width + 2),
+            &format!(" {}", entry.label),
+            style,
+        );
+        if !entry.keys.is_empty() {
+            put_right_text(
+                b,
+                rect,
+                rect.y,
+                &format!("{} ", entry.keys),
+                if is_selected {
+                    style
+                } else {
+                    Style::default().fg(p.mauve).bg(p.panel_bg)
+                },
+            );
+        }
+    }
+    if filtered.is_empty() {
+        put_text(
+            b,
+            body.x,
+            body.y,
+            body.width,
+            " no matching commands",
+            Style::default().fg(p.overlay0).bg(p.panel_bg),
+        );
+    }
+    put_text(
+        b,
+        i.x,
+        i.bottom() - 1,
+        i.width,
+        " run enter · move ↑↓/^n/^p · close esc",
+        Style::default().fg(p.overlay0).bg(p.panel_bg),
+    );
+    Some(OverlayRender {
+        area: q,
+        cancel: close,
+        command_palette_popup: q,
+        command_palette_rows: rows,
+        cursor,
+        ..OverlayRender::default()
+    })
+}
+
 fn render_confirm_close_overlay(
     b: &mut Buffer,
     c: &ClientConfirmCloseOverlay,

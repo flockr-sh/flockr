@@ -94,6 +94,7 @@ pub(crate) fn keybind_help_groups(
             vec![
                 entry(crate::config::format_prefix_combos(prefixes), "prefix mode"),
                 entry(binding_label(&keybinds.help), "keybinds"),
+                entry(binding_label(&keybinds.command_palette), "command palette"),
                 entry(binding_label(&keybinds.settings), "settings"),
                 entry(binding_label(&keybinds.detach), "detach"),
                 entry(binding_label(&keybinds.reload_config), "reload config"),

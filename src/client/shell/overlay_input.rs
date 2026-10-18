@@ -630,6 +630,7 @@ impl ClientShellState {
         }
         if matches!(self.overlay, Some(ClientShellOverlay::Navigator(_))) {
             let (code, modifiers) = crate::config::normalize_key_combo((key.code, key.modifiers));
+            let pending_g = std::mem::take(&mut self.overlay_pending_g);
             let search_focused = matches!(
                 self.overlay,
                 Some(ClientShellOverlay::Navigator(ClientNavigatorOverlay {
@@ -693,7 +694,12 @@ impl ClientShellState {
                 outcome.repaint = true;
                 return;
             }
-            if code == KeyCode::Home && modifiers.is_empty() {
+            let typed = crate::input::keybind_help_text_char(key);
+            if typed == Some('g') && !pending_g {
+                self.overlay_pending_g = true;
+                return;
+            }
+            if code == KeyCode::Home && modifiers.is_empty() || typed == Some('g') {
                 if let Some(ClientShellOverlay::Navigator(navigator)) = self.overlay.as_mut() {
                     navigator.selected = None;
                     navigator.scroll = 0;
@@ -701,7 +707,7 @@ impl ClientShellState {
                 outcome.repaint = true;
                 return;
             }
-            if matches!(code, KeyCode::End | KeyCode::Char('G')) && modifiers.is_empty() {
+            if code == KeyCode::End && modifiers.is_empty() || typed == Some('G') {
                 let last = self.overlay.as_ref().and_then(|overlay| match overlay {
                     ClientShellOverlay::Navigator(navigator) => render::client_navigator_rows(
                         &self.endpoints,
@@ -780,7 +786,47 @@ impl ClientShellState {
             return;
         }
 
+        if matches!(self.overlay, Some(ClientShellOverlay::CommandPalette(_))) {
+            let (code, modifiers) = crate::config::normalize_key_combo((key.code, key.modifiers));
+            let ctrl = modifiers == KeyModifiers::CONTROL;
+            let delta = match code {
+                KeyCode::Up | KeyCode::BackTab => Some(-1),
+                KeyCode::Down | KeyCode::Tab => Some(1),
+                KeyCode::Char('p') if ctrl => Some(-1),
+                KeyCode::Char('n') if ctrl => Some(1),
+                KeyCode::PageUp => Some(-8),
+                KeyCode::PageDown => Some(8),
+                _ => None,
+            };
+            if let Some(delta) = delta {
+                self.move_command_palette_selection(delta);
+                outcome.repaint = true;
+                return;
+            }
+            match code {
+                KeyCode::Esc => self.overlay = None,
+                KeyCode::Enter => {
+                    let selected = match self.overlay.as_ref() {
+                        Some(ClientShellOverlay::CommandPalette(palette)) => palette.selected,
+                        _ => 0,
+                    };
+                    self.activate_command_palette_row(selected, outcome);
+                }
+                _ => {
+                    if let Some(ClientShellOverlay::CommandPalette(palette)) = self.overlay.as_mut()
+                    {
+                        if palette.query.handle_key(key) == Some(true) {
+                            palette.selected = 0;
+                        }
+                    }
+                }
+            }
+            outcome.repaint = true;
+            return;
+        }
+
         if matches!(self.overlay, Some(ClientShellOverlay::Help(_))) {
+            let pending_g = std::mem::take(&mut self.overlay_pending_g);
             let text_character = crate::input::keybind_help_text_char(key);
             let (code, modifiers) = crate::config::normalize_key_combo((key.code, key.modifiers));
             let search_focused = matches!(
@@ -839,12 +885,28 @@ impl ClientShellState {
 
             match code {
                 KeyCode::Esc | KeyCode::Enter => self.overlay = None,
-                KeyCode::Home => {
+                _ if text_character == Some('g') && !pending_g => {
+                    self.overlay_pending_g = true;
+                }
+                _ if code == KeyCode::Home || text_character == Some('g') => {
                     if let Some(ClientShellOverlay::Help(help)) = self.overlay.as_mut() {
                         help.scroll = 0;
                     }
                 }
-                KeyCode::End => {
+                KeyCode::Char('d' | 'u') if modifiers == KeyModifiers::CONTROL => {
+                    let half_page = (self.hits.help_scroll_metrics)
+                        .map_or(8, |metrics| (metrics.viewport_rows / 2).max(1));
+                    if let Some(ClientShellOverlay::Help(help)) = self.overlay.as_mut() {
+                        help.scroll = if code == KeyCode::Char('d') {
+                            help.scroll
+                                .saturating_add(half_page)
+                                .min(self.hits.help_max_scroll)
+                        } else {
+                            help.scroll.saturating_sub(half_page)
+                        };
+                    }
+                }
+                _ if code == KeyCode::End || text_character == Some('G') => {
                     if let Some(ClientShellOverlay::Help(help)) = self.overlay.as_mut() {
                         help.scroll = self.hits.help_max_scroll;
                     }

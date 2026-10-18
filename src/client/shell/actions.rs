@@ -57,6 +57,11 @@ impl ClientShellState {
                     outcome.repaint = true;
                     return;
                 }
+                if action == crate::input::KeybindAction::CommandPalette {
+                    self.open_command_palette();
+                    outcome.repaint = true;
+                    return;
+                }
                 if action == crate::input::KeybindAction::Settings {
                     self.open_settings_overlay();
                     outcome.repaint = true;

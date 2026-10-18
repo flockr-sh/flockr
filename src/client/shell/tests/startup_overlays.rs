@@ -729,7 +729,7 @@ fn update_ready_menu_opens_client_owned_release_notes_and_dismisses_by_version()
         .join("\n");
     assert!(text.contains("● update ready"));
     let update_row = state.hits.global_menu_rows[3].0;
-    assert_eq!(update_row.width, 16);
+    assert_eq!(update_row.width, 17);
     let menu_buffer = menu.to_ratatui_buffer().expect("menu buffer");
     assert_eq!(
         menu_buffer[(update_row.x + 1, update_row.y)].fg,

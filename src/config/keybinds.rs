@@ -380,6 +380,7 @@ pub struct Keybinds {
     pub open_notification_target: ActionKeybinds,
     pub focus_next_attention: ActionKeybinds,
     pub mark_unread: ActionKeybinds,
+    pub command_palette: ActionKeybinds,
     pub previous_workspace: ActionKeybinds,
     pub next_workspace: ActionKeybinds,
     pub previous_agent: ActionKeybinds,
@@ -582,6 +583,7 @@ impl Config {
             open_notification_target: empty_action!(),
             focus_next_attention: empty_action!(),
             mark_unread: empty_action!(),
+            command_palette: empty_action!(),
             previous_workspace: empty_action!(),
             next_workspace: empty_action!(),
             previous_agent: empty_action!(),
@@ -757,6 +759,7 @@ impl Config {
             );
             apply_action!(keybinds.focus_next_attention, focus_next_attention, source);
             apply_action!(keybinds.mark_unread, mark_unread, source);
+            apply_action!(keybinds.command_palette, command_palette, source);
             apply_action!(keybinds.previous_workspace, previous_workspace, source);
             apply_action!(keybinds.next_workspace, next_workspace, source);
             apply_action!(keybinds.previous_agent, previous_agent, source);
@@ -1923,6 +1926,27 @@ focus_next_attention = "prefix+shift+a"
             binding_triggers(&kb.mark_unread),
             vec![BindingTrigger::Prefix((
                 KeyCode::Char('u'),
+                KeyModifiers::empty()
+            ))]
+        );
+    }
+
+    #[test]
+    fn command_palette_defaults_to_prefix_colon_and_slash_and_is_configurable() {
+        let kb = Config::default().keybinds();
+        assert_eq!(
+            binding_triggers(&kb.command_palette),
+            vec![
+                BindingTrigger::Prefix((KeyCode::Char(':'), KeyModifiers::empty())),
+                BindingTrigger::Prefix((KeyCode::Char('/'), KeyModifiers::empty())),
+            ]
+        );
+        let config: Config = toml::from_str("[keys]\ncommand_palette = \"prefix+slash\"").unwrap();
+        assert!(config.collect_diagnostics().is_empty());
+        assert_eq!(
+            binding_triggers(&config.keybinds().command_palette),
+            vec![BindingTrigger::Prefix((
+                KeyCode::Char('/'),
                 KeyModifiers::empty()
             ))]
         );

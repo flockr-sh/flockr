@@ -137,6 +137,8 @@ pub(super) struct ShellHitMap {
     pub(super) navigator_scroll_metrics: Option<crate::pane::ScrollMetrics>,
     pub(super) worktree_search: Rect,
     pub(super) worktree_rows: Vec<(Rect, usize)>,
+    pub(super) command_palette_popup: Rect,
+    pub(super) command_palette_rows: Vec<(Rect, usize)>,
     pub(super) help_popup: Rect,
     pub(super) help_scrollbar: Rect,
     pub(super) help_scroll_metrics: Option<crate::pane::ScrollMetrics>,
@@ -304,6 +306,7 @@ pub(super) enum ClientShellOverlayKind {
     ContextMenu,
     GlobalMenu,
     Settings,
+    CommandPalette,
 }
 
 #[derive(Debug)]
@@ -387,6 +390,20 @@ pub(super) struct ClientHelpOverlay {
     pub(super) query: TextEditor,
     pub(super) search_focused: bool,
     pub(super) scroll: usize,
+}
+
+#[derive(Debug)]
+pub(super) struct ClientCommandPaletteOverlay {
+    pub(super) entries: Vec<ClientCommandPaletteEntry>,
+    pub(super) query: TextEditor,
+    /// Position in the filtered list, not an index into `entries`.
+    pub(super) selected: usize,
+}
+
+impl ClientCommandPaletteOverlay {
+    pub(super) fn filtered(&self) -> Vec<usize> {
+        super::command_palette::filter_command_palette(&self.entries, self.query.as_str())
+    }
 }
 
 #[derive(Debug)]
@@ -613,6 +630,7 @@ pub(super) enum ClientShellOverlay {
     ContextMenu(ClientContextMenuOverlay),
     GlobalMenu(ClientGlobalMenuOverlay),
     Settings(ClientSettingsOverlay),
+    CommandPalette(ClientCommandPaletteOverlay),
 }
 
 impl ClientShellOverlay {
@@ -631,6 +649,7 @@ impl ClientShellOverlay {
             Self::ContextMenu(_) => ClientShellOverlayKind::ContextMenu,
             Self::GlobalMenu(_) => ClientShellOverlayKind::GlobalMenu,
             Self::Settings(_) => ClientShellOverlayKind::Settings,
+            Self::CommandPalette(_) => ClientShellOverlayKind::CommandPalette,
         }
     }
 }
@@ -935,6 +954,8 @@ pub(crate) struct ClientShellState {
     /// Keep the navigate selection on the focused workspace after an agent
     /// key moved focus, since the new focus arrives in a later snapshot.
     pub(super) navigate_follow_focus: bool,
+    /// A list overlay saw one `g`; a second one jumps to the top (vim `gg`).
+    pub(super) overlay_pending_g: bool,
     pub(super) pending_workspace_highlight: Option<PendingWorkspaceHighlight>,
     pub(super) reveal_navigation_workspace: bool,
     pub(super) overlay: Option<ClientShellOverlay>,
@@ -1116,6 +1137,7 @@ impl ClientShellState {
             navigate_workspace_id: None,
             navigate_grab: None,
             navigate_follow_focus: false,
+            overlay_pending_g: false,
             pending_workspace_highlight: None,
             reveal_navigation_workspace: false,
             overlay,

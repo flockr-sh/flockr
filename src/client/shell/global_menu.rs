@@ -47,6 +47,10 @@ pub(super) fn global_menu_items(
         ));
     }
     items.push((
+        "command palette",
+        ClientGlobalMenuAction::Binding(crate::input::KeybindAction::CommandPalette),
+    ));
+    items.push((
         "detach",
         ClientGlobalMenuAction::Binding(crate::input::KeybindAction::Detach),
     ));

@@ -965,3 +965,126 @@ fn resize_mode_reuses_endpoint_resize_and_stays_active_until_done() {
     assert!(state.handle_input_bytes(b"\r").actions.is_empty());
     assert_eq!(state.mode, ClientShellMode::Terminal);
 }
+
+#[test]
+fn command_palette_opens_from_prefix_filters_and_runs_the_selected_command() {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    let mut projection = snapshot();
+    projection
+        .commands
+        .push(crate::protocol::ClientShellCommand {
+            command_id: "plugin-action".into(),
+            binding_label: "prefix+z".into(),
+            binding_labels: vec!["prefix+z".into()],
+            action: crate::protocol::ClientShellCommandAction::PluginAction,
+            description: Some("run plugin action".into()),
+        });
+    state.set_snapshot(Box::new(projection));
+    state.set_pane_surface(surface());
+
+    state.handle_input_bytes(b"\x02:");
+    assert!(matches!(
+        state.overlay,
+        Some(ClientShellOverlay::CommandPalette(_))
+    ));
+    state.handle_input_bytes(b"new tab");
+    let frame = state.compose(106, 30).expect("command palette");
+    let text = frame
+        .cells
+        .chunks(frame.width as usize)
+        .map(|row| {
+            row.iter()
+                .map(|cell| cell.symbol.as_str())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(text.contains("command palette"));
+    assert!(text.contains("new tab"));
+    assert!(text.contains("prefix+c"));
+    assert!(frame.cursor.as_ref().is_some_and(|cursor| cursor.visible));
+
+    // Enter runs the top match as if its key had been pressed: new tab opens
+    // its name prompt.
+    state.handle_input_bytes(b"\r");
+    assert!(matches!(state.overlay, Some(ClientShellOverlay::Rename(_))));
+
+    // Custom commands are listed by description and run through the endpoint.
+    state.overlay = None;
+    state.handle_input_bytes(b"\x02:");
+    state.handle_input_bytes(b"run plugin");
+    let run = state.handle_input_bytes(b"\r");
+    assert!(state.overlay.is_none());
+    assert!(!run.actions.is_empty());
+
+    // Esc closes without running anything.
+    state.handle_input_bytes(b"\x02:");
+    let closed = state.handle_input_bytes(b"\x1b");
+    assert!(closed.actions.is_empty());
+    assert!(state.overlay.is_none());
+}
+
+#[test]
+fn command_palette_rows_run_on_click_and_a_click_outside_closes_it() {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.set_snapshot(Box::new(snapshot()));
+    state.set_pane_surface(surface());
+    let left_click = |rect: Rect| {
+        RawInputEvent::Mouse(crossterm::event::MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: rect.x + 1,
+            row: rect.y,
+            modifiers: KeyModifiers::empty(),
+        })
+    };
+
+    state.open_command_palette();
+    state.handle_input_bytes(b"new tab");
+    state.compose(106, 30).expect("command palette");
+    let row = state.hits.command_palette_rows[0].0;
+    state.handle_raw_events(vec![left_click(row)]);
+    assert!(matches!(state.overlay, Some(ClientShellOverlay::Rename(_))));
+
+    state.open_command_palette();
+    state.compose(106, 30).expect("command palette");
+    let outside = Rect::new(0, 0, 1, 1);
+    let closed = state.handle_raw_events(vec![left_click(outside)]);
+    assert!(closed.actions.is_empty());
+    assert!(state.overlay.is_none());
+}
+
+#[test]
+fn help_overlay_scrolls_with_vim_half_page_and_top_bottom_keys() {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.set_snapshot(Box::new(snapshot()));
+    state.set_pane_surface(surface());
+    let mut open = ClientShellInput::default();
+    state.record_binding(
+        crate::input::KeybindMatch::Action(crate::input::KeybindAction::Help),
+        &mut open,
+    );
+    state.compose(106, 30).expect("help overlay");
+    let max = state.hits.help_max_scroll;
+    let half_page = state
+        .hits
+        .help_scroll_metrics
+        .expect("help metrics")
+        .viewport_rows
+        / 2;
+    assert!(max > half_page);
+    let scroll = |state: &ClientShellState| match state.overlay.as_ref() {
+        Some(ClientShellOverlay::Help(help)) => help.scroll,
+        _ => panic!("help closed"),
+    };
+
+    state.handle_input_bytes(b"\x04");
+    assert_eq!(scroll(&state), half_page);
+    state.handle_input_bytes(b"\x15");
+    assert_eq!(scroll(&state), 0);
+    state.handle_input_bytes(b"G");
+    assert_eq!(scroll(&state), max);
+    state.handle_input_bytes(b"g");
+    assert_eq!(scroll(&state), max);
+    state.handle_input_bytes(b"g");
+    assert_eq!(scroll(&state), 0);
+}
