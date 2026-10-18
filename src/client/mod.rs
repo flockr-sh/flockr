@@ -17,6 +17,8 @@ mod catalog_reload;
 mod clipboard_forwarding;
 mod clipboard_images;
 mod config_reload;
+#[cfg(all(unix, feature = "dev-reload"))]
+mod dev_reload;
 #[cfg(unix)]
 mod direct_graphics;
 pub(crate) mod endpoint;
@@ -178,6 +180,8 @@ fn run_client_with_mode(
     log_message: &'static str,
 ) -> io::Result<()> {
     init_logging();
+    #[cfg(all(unix, feature = "dev-reload"))]
+    let dev_reload_resume = attach_request.is_none() && dev_reload::take_resume_request();
 
     let loaded_config = crate::config::Config::load();
     // Windows may not have virtual terminal processing enabled until the rendered
@@ -248,6 +252,8 @@ fn run_client_with_mode(
             warn!(%error, "Local is unavailable; keeping saved machines available");
             None
         }
+        #[cfg(all(unix, feature = "dev-reload"))]
+        Err(_) if dev_reload_resume => None,
         Err(error) => {
             return Err(io::Error::other(
                 ClientError::ConnectionFailed(error).to_string(),
@@ -279,50 +285,55 @@ fn run_client_with_mode(
         .as_ref()
         .map(|shell| shell.initial_surface_size(cols, rows));
     // Healthy Local attaches directly; only an actual failure enters background recovery.
-    let initial = initial_stream
-        .map(|mut stream| {
-            let handshake = do_handshake(
-                &mut stream,
-                cols,
-                rows,
-                cell_width_px,
-                cell_height_px,
-                HandshakePixelCapabilities {
-                    exact_geometry: exact_cell_size,
-                    sgr_mouse: loop_config.host_sgr_pixel_mouse == Some(true),
-                },
-                shell_surface_size,
-                endpoint_keybindings,
-                loop_config.mouse_capture_active,
-                true,
-                !is_remote_client_process(),
-                &AtomicBool::new(false),
+    let attach_local = |mut stream: LocalStream| {
+        let handshake = do_handshake(
+            &mut stream,
+            cols,
+            rows,
+            cell_width_px,
+            cell_height_px,
+            HandshakePixelCapabilities {
+                exact_geometry: exact_cell_size,
+                sgr_mouse: loop_config.host_sgr_pixel_mouse == Some(true),
+            },
+            shell_surface_size,
+            endpoint_keybindings,
+            loop_config.mouse_capture_active,
+            true,
+            !is_remote_client_process(),
+            &AtomicBool::new(false),
+        )
+        .map_err(|error| io::Error::other(error.to_string()))?;
+        if federated
+            && !endpoint::EndpointNegotiation::new(
+                handshake.endpoint_methods.clone().unwrap_or_default(),
+                handshake.endpoint_capabilities.clone().unwrap_or_default(),
             )
-            .map_err(|error| io::Error::other(error.to_string()))?;
-            if federated
-                && !endpoint::EndpointNegotiation::new(
-                    handshake.endpoint_methods.clone().unwrap_or_default(),
-                    handshake.endpoint_capabilities.clone().unwrap_or_default(),
-                )
-                .supports_surface_interest()
-            {
-                return Err(io::Error::new(
-                    io::ErrorKind::Unsupported,
-                    "Local needs a server update before it can participate in multi-machine viewing",
-                ));
-            }
-            if let Some((terminal_id, takeover)) = attach_request {
-                write_to_server(
-                    &mut stream,
-                    &ClientMessage::AttachTerminal {
-                        terminal_id,
-                        takeover,
-                    },
-                )?;
-            }
-            Ok((stream, handshake))
-        })
-        .transpose();
+            .supports_surface_interest()
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "Local needs a server update before it can participate in multi-machine viewing",
+            ));
+        }
+        if let Some((terminal_id, takeover)) = &attach_request {
+            write_to_server(
+                &mut stream,
+                &ClientMessage::AttachTerminal {
+                    terminal_id: terminal_id.clone(),
+                    takeover: *takeover,
+                },
+            )?;
+        }
+        Ok((stream, handshake))
+    };
+    let initial = initial_stream.map(&attach_local).transpose();
+    #[cfg(all(unix, feature = "dev-reload"))]
+    let initial = if dev_reload_resume {
+        dev_reload::retry_until_attached(initial, &socket_path, &attach_local)
+    } else {
+        initial
+    };
     let initial = match initial {
         Ok(initial) => initial,
         Err(error) if federated => {
@@ -373,6 +384,18 @@ fn run_client_with_mode(
         )
         .await
     });
+
+    #[cfg(all(unix, feature = "dev-reload"))]
+    if let Err(err) = &result {
+        if dev_reload::is_handoff_shutdown(err)
+            && !direct_attach
+            && !federated
+            && !is_remote_client_process()
+        {
+            let error = dev_reload::exec_rebuilt_client(&mut terminal_guard);
+            warn!(%error, "dev reload: exec failed; exiting");
+        }
+    }
 
     // Restore the terminal before printing any final status message.
     let terminal_restore_failed = terminal_guard.restore().is_err();

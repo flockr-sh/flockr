@@ -32,6 +32,7 @@ ui-hot-path-architecture-test:
 lint:
     cargo fmt --check
     cargo clippy --all-targets --locked -- -D warnings
+    cargo clippy --all-targets --locked --features dev-reload -- -D warnings
 
 [script("powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File")]
 [windows]
@@ -70,6 +71,13 @@ install-hooks:
     git config merge.ours.driver true
     chmod +x .githooks/pre-commit
     @echo "installed git hooks from .githooks"
+
+# Dev only: rebuild with dev-reload, then hand the running server to the new
+# binary. Panes and agents keep running; the TUI execs the new build in place.
+[unix]
+reload:
+    CARGO_PROFILE_RELEASE_INCREMENTAL=true cargo build --release --locked --features dev-reload
+    target/release/flockr server live-handoff --import-exe "{{justfile_directory()}}/target/release/flockr"
 
 # Build release binary
 [unix]

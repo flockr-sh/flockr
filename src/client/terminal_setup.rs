@@ -873,6 +873,20 @@ impl TerminalGuard {
         }
     }
 
+    /// Hands the terminal to an exec'd client without leaving the alternate
+    /// screen. Undoes only what the new process would stack or record twice:
+    /// the keyboard flags push and raw mode, whose saved termios crossterm
+    /// would otherwise restore on exit.
+    #[cfg(all(unix, feature = "dev-reload"))]
+    pub(super) fn release_for_exec(&mut self) {
+        let _ = clear_received_kitty_graphics(&mut io::stdout());
+        if self.reset_keyboard_enhancements {
+            let _ = pop_keyboard_enhancement_flags();
+            self.reset_keyboard_enhancements = false;
+        }
+        let _ = crossterm::terminal::disable_raw_mode();
+    }
+
     pub(super) fn restore(mut self) -> io::Result<()> {
         self.restored = true;
         restore_terminal_state_once(

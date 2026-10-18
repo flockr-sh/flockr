@@ -20,6 +20,10 @@ include = [
     "Cargo.toml",
 ]
 
+[features]
+# Dev-only: the TUI execs the rebuilt binary after a live handoff (`just reload`).
+dev-reload = []
+
 [workspace]
 members = ["crates/ghostty-vt"]
 default-members = [".", "crates/ghostty-vt"]

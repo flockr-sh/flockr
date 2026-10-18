@@ -772,6 +772,10 @@ impl Config {
             }
         }
 
+        // Off in tests so tests that count custom commands hold with the feature on.
+        #[cfg(all(unix, feature = "dev-reload", not(test)))]
+        append_dev_reload_binding(&mut keybinds, &mut registry, &mut diagnostics);
+
         (prefix_diag, prefix, diagnostics, keybinds)
     }
 }
@@ -855,6 +859,38 @@ fn append_custom_command_bindings(
             height,
         });
     }
+}
+
+/// Dev only: `prefix+alt+r` runs `just reload` for the checkout this binary
+/// was built from. Registered as a default, so any user binding on the key wins.
+#[cfg(all(unix, feature = "dev-reload"))]
+fn append_dev_reload_binding(
+    keybinds: &mut Keybinds,
+    registry: &mut BindingRegistry,
+    diagnostics: &mut Vec<String>,
+) {
+    let bindings = parse_action_bindings(
+        "dev reload",
+        &BindingConfig::one("prefix+alt+r"),
+        registry,
+        diagnostics,
+        BindingSource::Default,
+    );
+    let Some(label) = bindings.label() else {
+        return;
+    };
+    let justfile = concat!(env!("CARGO_MANIFEST_DIR"), "/justfile");
+    keybinds.custom_commands.push(CustomCommandKeybind {
+        bindings,
+        label,
+        command: format!(
+            "just --justfile '{justfile}' reload || {{ echo 'build failed; press enter'; read _; }}"
+        ),
+        action: CustomCommandAction::Popup,
+        description: Some("rebuild and reload flockr (dev)".to_string()),
+        width: Some(PopupSize::Percent(80)),
+        height: Some(PopupSize::Percent(60)),
+    });
 }
 
 fn parse_action_bindings(
@@ -2523,6 +2559,34 @@ description = "say hello"
             keybinds.custom_commands[0].description,
             Some("say hello".to_string())
         );
+    }
+
+    #[cfg(all(unix, feature = "dev-reload"))]
+    #[test]
+    fn dev_reload_binding_yields_to_user_binding() {
+        let (_, prefix, _, mut keybinds) = Config::default().validated_keybinds();
+        let mut registry = BindingRegistry::new(prefix.clone(), BindingSource::Default);
+        let mut diagnostics = Vec::new();
+        append_dev_reload_binding(&mut keybinds, &mut registry, &mut diagnostics);
+        assert_eq!(keybinds.custom_commands.len(), 1);
+        assert_eq!(keybinds.custom_commands[0].label, "prefix+alt+r");
+        assert_eq!(
+            keybinds.custom_commands[0].action,
+            CustomCommandAction::Popup
+        );
+
+        let (_, _, _, mut keybinds) = Config::default().validated_keybinds();
+        let mut registry = BindingRegistry::new(prefix, BindingSource::Default);
+        parse_action_bindings(
+            "keys.command[0].key",
+            &BindingConfig::one("prefix+alt+r"),
+            &mut registry,
+            &mut diagnostics,
+            BindingSource::User,
+        );
+        append_dev_reload_binding(&mut keybinds, &mut registry, &mut diagnostics);
+        assert!(keybinds.custom_commands.is_empty());
+        assert!(diagnostics.is_empty());
     }
 
     #[test]
