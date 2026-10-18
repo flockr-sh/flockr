@@ -1,0 +1,29 @@
+# Maintainer: Dylan Kenney <dylanmkenney@gmail.com>
+pkgname=flockr-bin
+pkgver=1.0.0
+pkgrel=1
+pkgdesc="Terminal workspace manager for AI coding agents (release binary)"
+arch=('x86_64' 'aarch64')
+url="https://github.com/flockr-sh/flockr"
+license=('Apache-2.0')
+provides=('flockr')
+conflicts=('flockr')
+options=('!strip' '!debug')
+source=("LICENSE-$pkgver::https://raw.githubusercontent.com/flockr-sh/flockr/v$pkgver/LICENSE")
+source_x86_64=("flockr-$pkgver-x86_64::$url/releases/download/v$pkgver/flockr-linux-x86_64")
+source_aarch64=("flockr-$pkgver-aarch64::$url/releases/download/v$pkgver/flockr-linux-aarch64")
+# Filled by `updpkgsums` after the release is published.
+sha256sums=('SKIP')
+sha256sums_x86_64=('SKIP')
+sha256sums_aarch64=('SKIP')
+
+package() {
+  local bin="flockr-$pkgver-$CARCH"
+  install -Dm755 "$bin" "$pkgdir/usr/bin/flockr"
+  install -Dm644 "LICENSE-$pkgver" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+
+  chmod +x "$bin"
+  "./$bin" completion bash | install -Dm644 /dev/stdin "$pkgdir/usr/share/bash-completion/completions/flockr"
+  "./$bin" completion zsh | install -Dm644 /dev/stdin "$pkgdir/usr/share/zsh/site-functions/_flockr"
+  "./$bin" completion fish | install -Dm644 /dev/stdin "$pkgdir/usr/share/fish/vendor_completions.d/flockr.fish"
+}

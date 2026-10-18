@@ -1,0 +1,47 @@
+# Maintainer: Dylan Kenney <dylanmkenney@gmail.com>
+pkgname=flockr-git
+pkgver=1.0.0.r0.g0000000
+pkgrel=1
+pkgdesc="Terminal workspace manager for AI coding agents (latest master)"
+arch=('x86_64' 'aarch64')
+url="https://github.com/flockr-sh/flockr"
+license=('Apache-2.0')
+depends=('gcc-libs' 'glibc')
+# libghostty-vt is built with Zig 0.16.
+makedepends=('cargo' 'git' 'zig>=0.16' 'zig<0.17')
+provides=('flockr')
+conflicts=('flockr')
+options=('!lto' '!debug')
+source=("flockr::git+$url.git")
+sha256sums=('SKIP')
+
+pkgver() {
+  cd flockr
+  # The repo also carries upstream herdr tags, so don't use git describe.
+  printf '%s.r%s.g%s' "$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)" \
+    "$(git rev-list --count HEAD)" "$(git rev-parse --short=7 HEAD)"
+}
+
+prepare() {
+  cd flockr
+  export RUSTUP_TOOLCHAIN=stable
+  cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
+}
+
+build() {
+  cd flockr
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_TARGET_DIR=target
+  export LIBGHOSTTY_VT_OPTIMIZE=ReleaseFast
+  cargo build --frozen --release
+}
+
+package() {
+  cd flockr
+  local bin=target/release/flockr
+  install -Dm755 "$bin" "$pkgdir/usr/bin/flockr"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  "$bin" completion bash | install -Dm644 /dev/stdin "$pkgdir/usr/share/bash-completion/completions/flockr"
+  "$bin" completion zsh | install -Dm644 /dev/stdin "$pkgdir/usr/share/zsh/site-functions/_flockr"
+  "$bin" completion fish | install -Dm644 /dev/stdin "$pkgdir/usr/share/fish/vendor_completions.d/flockr.fish"
+}
