@@ -32,7 +32,7 @@ const NIX_UPDATE_COMMAND: &str = "update through Nix";
 const MISE_INSTALLS_DIR_ENV: &str = "MISE_INSTALLS_DIR";
 const FAKE_UPDATE_VERSION_ENV: &str = "FLOCKR_FAKE_UPDATE_VERSION";
 const FAKE_UPDATE_NOTES_VERSION_ENV: &str = "FLOCKR_FAKE_UPDATE_NOTES_VERSION";
-const DEFAULT_FAKE_UPDATE_NOTES_VERSION: &str = "0.3.0";
+const DEFAULT_FAKE_UPDATE_NOTES_VERSION: &str = "1.0.0";
 #[cfg(not(windows))]
 const SERVER_STOP_RESPONSE_TIMEOUT: Duration = Duration::from_secs(5);
 #[cfg(not(windows))]
@@ -2979,8 +2979,8 @@ mod tests {
         std::env::remove_var(FAKE_UPDATE_NOTES_VERSION_ENV);
 
         let body = fake_release_notes_body("9.4.9");
-        assert!(body.contains("### Major Changes"));
-        assert!(body.contains("Added tabs within workspaces"));
+        assert!(body.contains("### Added"));
+        assert!(body.contains("Settings screen"));
     }
 
     #[test]
