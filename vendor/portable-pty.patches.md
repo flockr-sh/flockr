@@ -2,7 +2,7 @@
 
 This file tracks intentional local changes applied on top of the vendored
 `portable-pty` source. Remove a patch only when the upstream crate contains an
-equivalent fix or exposes an option that lets Herdr keep the same behavior.
+equivalent fix or exposes an option that lets Flockr keep the same behavior.
 
 ## 0001 control ConPTY loading
 
@@ -28,17 +28,17 @@ local files:
 - `vendor/portable-pty/src/win/psuedocon.rs`
 
 reason: `portable-pty` intentionally probes a bare `conpty.dll` through the DLL
-search path. Herdr must never load another application's DLL from `PATH`. The
-Windows package ships a pinned Microsoft ConPTY runtime under `conpty/`; Herdr
+search path. Flockr must never load another application's DLL from `PATH`. The
+Windows package ships a pinned Microsoft ConPTY runtime under `conpty/`; Flockr
 verifies the exact DLL and x64/ARM64 host hashes, rejects reparse points and
 unexpected files, then loads the DLL by absolute path with its dependency search
 limited to that directory and System32. Installations without a bundle continue
 using the ConPTY exports from the already loaded `kernel32.dll`. Set
-`HERDR_WINDOWS_CONPTY=system` to bypass the bundle during compatibility
+`FLOCKR_WINDOWS_CONPTY=system` to bypass the bundle during compatibility
 recovery.
 
 remove when: upstream `portable-pty` exposes hash-verified app-local and system
-ConPTY selection with constrained DLL loading and no bare DLL search, or Herdr
+ConPTY selection with constrained DLL loading and no bare DLL search, or Flockr
 replaces the Windows PTY backend.
 
 verification:
@@ -69,13 +69,13 @@ local files:
 
 - `vendor/portable-pty/src/cmdbuilder.rs`
 
-reason: Herdr needs to launch `cmd.exe /d /c` with the user-authored command
+reason: Flockr needs to launch `cmd.exe /d /c` with the user-authored command
 tail parsed as shell text. `portable-pty` represents commands as argv and
 ArgvQuote escapes embedded quotes, which changes how `cmd.exe` parses the raw
 command string.
 
 remove when: upstream `portable-pty` exposes Windows raw command-line tail
-support or Herdr replaces this launch path.
+support or Flockr replaces this launch path.
 
 verification:
 
@@ -116,7 +116,7 @@ environment string types and omit entries that cannot form one complete
 
 remove when: upstream `portable-pty` both imports only valid Windows environment
 string types and prevents malformed names or values from corrupting the process
-environment block, or Herdr replaces this launch path.
+environment block, or Flockr replaces this launch path.
 
 verification:
 
@@ -150,13 +150,13 @@ local files:
 
 reason: Windows `PATH` commonly contains a directory whose name matches a
 program, such as `C:\Windows\System32\PowerShell`. `search_path` returned that
-directory because `Path::exists()` is true for directories, so Herdr asked
+directory because `Path::exists()` is true for directories, so Flockr asked
 `CreateProcessW` to execute a directory and the pane failed to open with
 `Access is denied` (os error 5). Requiring `is_file()` for both the exact name
 and the PATHEXT candidates skips shadowing directories and finds the real
 executable, matching CreateProcessW's own `PATH` search.
 
-remove when: upstream `portable-pty` skips non-file `PATH` candidates, or Herdr
+remove when: upstream `portable-pty` skips non-file `PATH` candidates, or Flockr
 replaces this launch path.
 
 verification:
@@ -166,7 +166,7 @@ python3 -m unittest scripts.test_vendor_portable_pty
 ```
 
 On Windows, run the regression test against the vendored crate. It lives inside
-the Herdr workspace but is only a `[patch]` provider, not a workspace member, so
+the Flockr workspace but is only a `[patch]` provider, not a workspace member, so
 build a standalone copy and mark it as its own workspace root:
 
 ```sh

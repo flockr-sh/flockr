@@ -1955,7 +1955,7 @@ fi
         r#"if [ -n "$home" ]; then
     emit "$home/.local/share/mise/installs/flockr/$version/bin/flockr"
     emit "$home/.local/share/mise/installs/flockr/$version/flockr"
-    emit "$home/.local/share/mise/installs/github-ogulcancelik-herdr/$version/flockr"
+    emit "$home/.local/share/mise/installs/github-flockr-sh-flockr/$version/flockr"
     emit "$home/.nix-profile/bin/flockr"
 fi
 if [ -n "$user" ]; then
@@ -5667,7 +5667,7 @@ function Get-Process {
         );
         assert!(script.contains("emit \"$home/.local/share/mise/installs/flockr/$version/flockr\""));
         assert!(script.contains(
-            "emit \"$home/.local/share/mise/installs/github-ogulcancelik-herdr/$version/flockr\""
+            "emit \"$home/.local/share/mise/installs/github-flockr-sh-flockr/$version/flockr\""
         ));
         assert!(script.contains("emit \"$home/.nix-profile/bin/flockr\""));
         assert!(script.contains("emit \"/etc/profiles/per-user/$user/bin/flockr\""));

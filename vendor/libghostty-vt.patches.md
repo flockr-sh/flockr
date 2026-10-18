@@ -24,7 +24,7 @@ local files:
 - `vendor/libghostty-vt/include/ghostty/vt/terminal.h`
 - `vendor/libghostty-vt/src/terminal/c/terminal.zig`
 
-reason: Herdr must know whether xterm modifyOtherKeys mode 2 is active to
+reason: Flockr must know whether xterm modifyOtherKeys mode 2 is active to
 request printable key releases from the outer terminal. The formatter API can
 recover this fact only by formatting the active screen and scrollback. A typed
 terminal-data query exposes the authoritative scalar without formatting or
@@ -32,7 +32,7 @@ allocation. The local query uses value 41; upstream now owns the previous
 local value 33 for VT processing errors.
 
 remove when: the vendored source exposes an equivalent scalar query for
-modifyOtherKeys mode 2 and Herdr can use it without this patch.
+modifyOtherKeys mode 2 and Flockr can use it without this patch.
 
 verification:
 
@@ -44,7 +44,7 @@ just ui-hot-path-architecture-test
 ```
 
 The former grapheme-default patch is replaced by upstream's public
-`GHOSTTY_TERMINAL_OPT_MODE_DEFAULT` API. Herdr configures mode 2027 through that
+`GHOSTTY_TERMINAL_OPT_MODE_DEFAULT` API. Flockr configures mode 2027 through that
 API and tests that RIS restores it after a child disables it. The Wuffs C-only
 mirror fix from Ghostty PR 13789 is also included in this vendored base.
 
@@ -118,10 +118,10 @@ without scanning an arbitrarily long logical line. The new, opt-in API shares
 one cell-inspection budget across both directions and returns no selection on
 exhaustion, never a truncated link. Its scan skips wide-character spacer cells.
 The existing word-selection functions and option layouts remain unchanged;
-only Herdr's link activation uses the new function.
+only Flockr's link activation uses the new function.
 
 remove when: upstream provides an equivalent bounded, wrap-aware selection API
-that handles wide-character spacers, and Herdr passes the tests below using it
+that handles wide-character spacers, and Flockr passes the tests below using it
 without this patch.
 
 verification:
@@ -154,13 +154,13 @@ local files:
 - `vendor/libghostty-vt/src/terminal/c/main.zig`
 - `vendor/libghostty-vt/src/terminal/c/terminal.zig`
 
-reason: Herdr needs an explicit screen/history clear that preserves the cursor's
+reason: Flockr needs an explicit screen/history clear that preserves the cursor's
 visible soft-wrapped line without writing to the child or interrupting a partial
 VT sequence. The new C function operates directly on the screen, leaves alternate
 screens untouched, clears image placements, and marks the result dirty.
 
 remove when: the vendored C API provides an equivalent parser-independent clear
-operation preserving the visible cursor line, and Herdr passes the checks below
+operation preserving the visible cursor line, and Flockr passes the checks below
 using it without this patch.
 
 verification:
@@ -205,11 +205,11 @@ Storage reserves both encoded bytes and expected decoded size.
 This is default-off and experimental: CRC-valid corrupt compressed pixels may
 be rejected later than in normal mode, including after placement. Quiet mode
 suppresses replies, not validation semantics; this patch is not a claim of full
-protocol-equivalent transparent forwarding. Herdr exercises this mode only in
+protocol-equivalent transparent forwarding. Flockr exercises this mode only in
 tests; production PNG uploads retain full decoding and validation.
 
 A separate default-off snapshot callback retains host-owned immutable raw RGBA
-file backing before reading pixels. Herdr installs this callback automatically
+file backing before reading pixels. Flockr installs this callback automatically
 on Linux, using same-filesystem CoW snapshots. It never retains a mutable producer pathname. Unsupported snapshots
 use the original loader; animation materializes pixels transactionally. Backing
 ownership and bounded reads are explicit in the embedding ABI.
