@@ -9,7 +9,7 @@ socket, `FLOCKR_*` env vars, own integration hooks.
 
 - Forked from herdr's `master` at `143bf5fd` (after herdr v0.9.5). flockr does
   not merge from herdr; changes here are flockr's own. Work on `master`;
-  `origin` is `dmkenney/flockr`.
+  `origin` is `flockr-sh/flockr`.
 - Versions are flockr's own, starting at 1.0.0. `CHANGELOG.md` holds flockr's
   changes and links to herdr's changelog for history before the fork.
 - Name things flockr. "herdr" stays only where flockr accepts herdr plugins and
