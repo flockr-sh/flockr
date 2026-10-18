@@ -201,6 +201,8 @@ jobs:
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           # Notes and protocol come from the tagged source, not newer master.
+          # The checkout holds only master, so fetch the tag first.
+          git fetch --no-tags --depth=1 origin "+refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME"
           git show "$GITHUB_REF_NAME:CHANGELOG.md" > "$RUNNER_TEMP/CHANGELOG.md"
           git show "$GITHUB_REF_NAME:src/protocol/wire.rs" > "$RUNNER_TEMP/wire.rs"
           git show "$GITHUB_REF_NAME:src/protocol/endpoint.rs" > "$RUNNER_TEMP/endpoint.rs"
