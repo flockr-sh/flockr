@@ -580,11 +580,11 @@ mod tests {
 
     #[cfg(unix)]
     fn unique_test_path(name: &str) -> std::path::PathBuf {
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        std::env::temp_dir().join(format!("flockr-{name}-{}-{nanos}", std::process::id()))
+        // A counter, not a timestamp: socket paths must stay under macOS's
+        // 104-byte sun_path limit, and its temp dir is already ~50 bytes.
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        std::env::temp_dir().join(format!("flockr-{name}-{}-{n}", std::process::id()))
     }
 
     #[cfg(unix)]
