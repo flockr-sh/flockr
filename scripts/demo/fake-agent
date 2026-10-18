@@ -1,0 +1,110 @@
+#!/usr/bin/env bash
+# Plays a scripted coding-agent session for the README demo and reports its
+# state to flockr, so the sidebar shows real working, blocked, and done
+# states without running a real agent.
+#
+# usage: fake-agent <agent-label> <scenario>
+# scenarios: finish, ask, busy, done
+#
+# Each scenario draws its history at once, then waits for $DEMO_ROOT/go
+# before its live part, so the recording controls when things happen.
+set -uo pipefail
+
+agent="$1"
+scenario="$2"
+seq=0
+
+report() {
+  seq=$((seq + 1))
+  flockr pane report-agent "$FLOCKR_PANE_ID" --source demo --agent "$agent" \
+    --state "$1" --seq "$seq" >/dev/null 2>&1 || true
+}
+
+dim=$'\e[2m' bold=$'\e[1m' reset=$'\e[0m'
+accent=$'\e[38;5;141m' green=$'\e[32m' red=$'\e[31m' yellow=$'\e[33m' cyan=$'\e[36m'
+
+header() {
+  printf '%s╭─ %s%s %s─ %s%s\n' "$dim" "$reset$bold$accent" "$agent" "$reset$dim" "${PWD/#$HOME/\~}" "$reset"
+  printf '%s╰─%s\n\n' "$dim" "$reset"
+}
+prompt() { printf '%s›%s %s\n\n' "$accent$bold" "$reset" "$1"; }
+step() { printf '%s●%s %s %s%s%s\n' "$cyan" "$reset" "$1" "$dim" "${2:-}" "$reset"; }
+diff_line() { printf '    %s+%s%s  %s-%s%s  %s\n' "$green" "$1" "$reset" "$red" "$2" "$reset" "$3"; }
+say() { printf '\n%s\n' "$1"; }
+spin() {
+  local frames=(⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏) i
+  for ((i = 0; i < $1 * 10; i++)); do
+    printf '\r%s%s %s%s' "$yellow" "${frames[i % 10]}" "$2" "$reset"
+    sleep 0.1
+  done
+  printf '\r\e[2K'
+}
+wait_for_go() { while [[ ! -e "$DEMO_ROOT/go" ]]; do sleep 0.1; done; }
+
+# Keys sent to the pane (such as a stray Escape) must not echo into it.
+stty -echo 2>/dev/null
+clear
+header
+case "$scenario" in
+  finish)
+    report working
+    prompt "Add request tracing to the API middleware"
+    step "Read" "src/middleware/index.ts"
+    step "Read" "src/middleware/logger.ts"
+    step "Edit" "src/middleware/trace.ts"
+    diff_line 42 3 "src/middleware/trace.ts"
+    wait_for_go
+    spin 3 "Wiring trace ids into the logger…"
+    step "Edit" "src/middleware/logger.ts"
+    diff_line 9 2 "src/middleware/logger.ts"
+    spin 2 "Running tests…"
+    step "Bash" "npm test -- middleware"
+    printf '    %s18 passed%s\n' "$green" "$reset"
+    report idle
+    say "Done. Every request now carries a trace id from the edge to the logs."
+    ;;
+  ask)
+    report working
+    prompt "Requests time out after 30s when the session store is slow"
+    step "Read" "src/auth/session.ts"
+    step "Grep" "\"timeout\" in src/auth"
+    say "The store call has no deadline. I'll add one and retry once."
+    printf '\n%s┌ Edit src/auth/session.ts?%s\n' "$yellow" "$reset"
+    printf '%s│%s  %s1%s Yes   %s2%s Yes, and don'"'"'t ask again   %s3%s No\n' \
+      "$yellow" "$reset" "$bold" "$reset" "$bold" "$reset" "$bold" "$reset"
+    printf '%s└%s ' "$yellow" "$reset"
+    report blocked
+    read -rsn1 _
+    printf '1\n\n'
+    report working
+    step "Edit" "src/auth/session.ts"
+    diff_line 17 4 "src/auth/session.ts"
+    spin 6 "Running auth tests…"
+    step "Bash" "npm test -- auth"
+    printf '    %s31 passed%s\n' "$green" "$reset"
+    report idle
+    say "Fixed. Slow store calls now fail fast after 2s and retry once."
+    ;;
+  busy)
+    report working
+    prompt "${DEMO_TASK:-Refactor the rate limiter to use a sliding window}"
+    step "Read" "${DEMO_READ:-src/limits/bucket.ts}"
+    step "Read" "${DEMO_FILE:-src/limits/window.ts}"
+    step "Edit" "${DEMO_FILE:-src/limits/window.ts}"
+    diff_line 63 21 "${DEMO_FILE:-src/limits/window.ts}"
+    wait_for_go
+    spin 600 "Thinking…"
+    ;;
+  done)
+    report working
+    prompt "${DEMO_TASK:-Update the deploy docs for the new staging cluster}"
+    step "Read" "docs/deploy.md"
+    step "Edit" "docs/deploy.md"
+    diff_line 28 11 "docs/deploy.md"
+    report idle
+    say "Updated the staging steps and added the new cluster's endpoints."
+    ;;
+esac
+# Keep the pane open after the session ends, like an agent at its prompt.
+printf '\n%s›%s ' "$accent$bold" "$reset"
+exec sleep infinity
