@@ -5,7 +5,7 @@ mod agent_sidebar;
 mod aggregate_navigation;
 mod machine_diagnostics;
 mod workspace_navigation;
-use workspace_navigation::{PendingWorkspaceHighlight, WorkspaceNavigationTarget};
+use workspace_navigation::{NavigateGrab, PendingWorkspaceHighlight, WorkspaceNavigationTarget};
 mod composition;
 mod config;
 mod context_menu;
@@ -233,6 +233,17 @@ fn status_color(
         AgentStatus::Done => palette.teal,
         AgentStatus::Idle => palette.green,
         AgentStatus::Unknown => palette.overlay0,
+    }
+}
+
+/// Status icon color, with the working pulse applied when it runs.
+fn status_icon_color(
+    status: crate::api::schema::AgentStatus,
+    config: &ClientShellConfig,
+) -> ratatui::style::Color {
+    match (status, config.working_pulse_color) {
+        (crate::api::schema::AgentStatus::Working, Some(color)) => color,
+        _ => status_color(status, &config.palette),
     }
 }
 

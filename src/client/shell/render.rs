@@ -296,6 +296,8 @@ pub(super) fn render_shell(
                 state
                     .selected_workspace_id
                     .map(|target| target.workspace_id.as_str()),
+                state.dragged_workspace_id,
+                state.collapsed_groups,
                 &mut hits,
             );
         } else {

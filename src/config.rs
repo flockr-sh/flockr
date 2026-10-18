@@ -17,9 +17,9 @@ pub use self::{
         upsert_section_value,
     },
     keybinds::{
-        format_prefix_combos, normalize_key_combo, terminal_key_matches_combo, ActionKeybinds,
-        BindingConfig, CommandKeybindConfig, CustomCommandAction, CustomCommandKeybind,
-        IndexedKeybind, KeyCombo, Keybinds, LiveKeybindConfig,
+        format_prefix_combos, indexed_key, normalize_key_combo, terminal_key_matches_combo,
+        ActionKeybinds, BindingConfig, CommandKeybindConfig, CustomCommandAction,
+        CustomCommandKeybind, IndexedKeybind, KeyCombo, Keybinds, LiveKeybindConfig,
     },
     model::{
         validated_sidebar_bounds, AgentPanelSortConfig, Config, ConfigReloadReport,
@@ -29,8 +29,9 @@ pub use self::{
         UpdateChannelConfig, MAX_TOAST_DELAY_SECONDS,
     },
     sidebar::{
-        AgentSidebarToken, AgentsSidebarConfig, SidebarConfig, SidebarTokenStyle,
-        SpaceSidebarToken, SpacesSidebarConfig,
+        AgentSidebarToken, AgentsSidebarConfig, SidebarBorder, SidebarButtonStyle, SidebarChrome,
+        SidebarConfig, SidebarDividerStyle, SidebarGrabStyle, SidebarHeaderStyle,
+        SidebarTokenStyle, SpaceSidebarToken, SpacesSidebarConfig,
     },
     sound::SoundConfig,
     tab_bar::TabBarRightEntryConfig,

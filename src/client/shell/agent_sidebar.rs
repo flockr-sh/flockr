@@ -15,6 +15,40 @@ pub(super) struct AgentRow {
     pub(super) status: crate::api::schema::AgentStatus,
     pub(super) focused: bool,
     pub(super) rows: Vec<Vec<crate::ui::ResolvedToken>>,
+    pub(super) workspace_id: String,
+    pub(super) workspace_label: String,
+    /// Space name drawn above the first agent of each space in grouped sort.
+    pub(super) header: Option<String>,
+    /// Indents the agent under its space header.
+    pub(super) grouped: bool,
+    /// Last agent before the next space header, or any agent when ungrouped.
+    pub(super) group_end: bool,
+}
+
+impl AgentRow {
+    pub(super) fn lines(&self) -> usize {
+        self.rows.len().max(1) + usize::from(self.header.is_some())
+    }
+}
+
+/// Group agents that sit next to each other in the same space under one header.
+pub(super) fn mark_space_groups<'a, K: PartialEq>(
+    rows: impl IntoIterator<Item = (K, &'a mut AgentRow)>,
+) {
+    let mut last = None;
+    let mut previous: Option<&mut AgentRow> = None;
+    for (key, row) in rows {
+        row.grouped = true;
+        let starts_group = last.as_ref() != Some(&key);
+        if starts_group {
+            row.header = Some(row.workspace_label.clone());
+        }
+        if let Some(previous) = previous.take() {
+            previous.group_end = starts_group;
+        }
+        last = Some(key);
+        previous = Some(row);
+    }
 }
 
 pub(super) fn ordered_agent_pane_ids(
@@ -57,17 +91,17 @@ pub(super) fn render_agent_panel(
     agent_scroll: &mut usize,
     hits: &mut ShellHitMap,
 ) {
+    let rows = agent_rows(snapshot, config, None);
     if !render_agent_panel_header(
         buffer,
         area,
         snapshot.agent_view_label.as_deref(),
+        rows.len(),
         config,
         hits,
     ) {
         return;
     }
-
-    let rows = agent_rows(snapshot, config, None);
     render_agent_list(
         buffer,
         area,
@@ -79,10 +113,10 @@ pub(super) fn render_agent_panel(
         config,
         agent_scroll,
         hits,
-        |row| row.rows.len(),
+        |row| row.lines(),
         |buffer, rect, row, hits| {
+            let rect = render_agent_row(buffer, rect, row, config);
             hits.agents.push((rect, row.pane_id.clone()));
-            render_agent_row(buffer, rect, row, config);
         },
     );
 }
@@ -91,63 +125,60 @@ pub(super) fn render_agent_panel_header(
     buffer: &mut Buffer,
     area: Rect,
     agent_view_label: Option<&str>,
+    agent_count: usize,
     config: &ClientShellConfig,
     hits: &mut ShellHitMap,
 ) -> bool {
+    use super::sidebar::{
+        render_section_divider, render_section_header, render_sidebar_button, sidebar_button_width,
+        SidebarButtonLabel,
+    };
+
     if area.height == 0 {
         return false;
     }
-    put_text(
+    render_section_divider(
         buffer,
-        area.x,
-        area.y,
-        area.width,
-        &"─".repeat(area.width as usize),
-        Style::default().fg(config.palette.surface_dim),
+        Rect::new(area.x, area.y, area.width, 1),
+        true,
+        config,
     );
     if area.height < 2 {
         return false;
     }
-    put_text(
-        buffer,
-        area.x,
-        area.y + 1,
-        area.width,
-        " agents",
-        Style::default()
-            .fg(config.palette.overlay0)
-            .add_modifier(Modifier::BOLD),
-    );
+    let header = Rect::new(area.x, area.y + 1, area.width, 1);
+    render_section_header(buffer, header, "agents", Some(agent_count), config);
     let sort_label = agent_view_label.unwrap_or(match config.agent_panel_sort {
         crate::config::AgentPanelSortConfig::Spaces => "grouped",
         crate::config::AgentPanelSortConfig::Priority => "priority",
     });
-    let sort_width = display_width(sort_label).min(area.width as usize) as u16;
-    let sort_rect = Rect::new(
-        area.right().saturating_sub(sort_width),
-        area.y + 1,
-        sort_width,
-        1,
+    let chip = if agent_view_label.is_some() {
+        sort_label.to_owned()
+    } else {
+        format!("{sort_label} ▾")
+    };
+    let label = SidebarButtonLabel {
+        chip: &chip,
+        text: sort_label,
+    };
+    let sort_rect = render_sidebar_button(
+        buffer,
+        header
+            .right()
+            .saturating_sub(sidebar_button_width(label, config))
+            .max(header.x),
+        header.y,
+        header.right(),
+        label,
+        agent_view_label.is_some(),
+        true,
+        config,
     );
     hits.agent_sort_toggle = if config.mouse_capture && agent_view_label.is_none() {
         sort_rect
     } else {
         Rect::default()
     };
-    put_text(
-        buffer,
-        sort_rect.x,
-        sort_rect.y,
-        sort_rect.width,
-        sort_label,
-        Style::default()
-            .fg(if agent_view_label.is_some() {
-                config.palette.accent
-            } else {
-                config.palette.overlay0
-            })
-            .add_modifier(Modifier::BOLD),
-    );
     true
 }
 
@@ -239,10 +270,21 @@ pub(super) fn agent_rows(
     config: &ClientShellConfig,
     machine: Option<&str>,
 ) -> Vec<AgentRow> {
-    ordered_agent_pane_ids(snapshot, config.agent_panel_sort)
+    let focus_agent = &config.keybinds.keybinds.focus_agent;
+    let mut rows = ordered_agent_pane_ids(snapshot, config.agent_panel_sort)
         .into_iter()
-        .filter_map(|pane_id| agent_row(snapshot, &pane_id, config, machine))
-        .collect()
+        .enumerate()
+        .filter_map(|(index, pane_id)| {
+            let number = crate::config::indexed_key(focus_agent, index);
+            agent_row(snapshot, &pane_id, config, machine, number)
+        })
+        .collect::<Vec<_>>();
+    if config.agent_panel_sort == crate::config::AgentPanelSortConfig::Spaces
+        && snapshot.agent_view_label.is_none()
+    {
+        mark_space_groups(rows.iter_mut().map(|row| (row.workspace_id.clone(), row)));
+    }
+    rows
 }
 
 pub(super) fn agent_row(
@@ -250,6 +292,7 @@ pub(super) fn agent_row(
     pane_id: &str,
     config: &ClientShellConfig,
     machine: Option<&str>,
+    number: Option<char>,
 ) -> Option<AgentRow> {
     let agent = snapshot
         .agents
@@ -306,6 +349,7 @@ pub(super) fn agent_row(
             terminal_title: agent.terminal_title.as_deref(),
             terminal_title_stripped: agent.terminal_title_stripped.as_deref(),
             canonical_agent,
+            number,
             tokens: &tokens,
         },
         state_text,
@@ -315,16 +359,51 @@ pub(super) fn agent_row(
         status: agent.agent_status,
         focused: agent.focused,
         rows,
+        workspace_id: workspace.workspace_id.clone(),
+        workspace_label: workspace.label.clone(),
+        header: None,
+        grouped: false,
+        group_end: true,
     })
 }
 
+/// Draws one agent and returns the rect of its own lines, without the header.
 pub(super) fn render_agent_row(
     buffer: &mut Buffer,
     rect: Rect,
     row: &AgentRow,
     config: &ClientShellConfig,
-) {
+) -> Rect {
     let palette = &config.palette;
+    let border = config.agents.border;
+    let full = rect;
+    let mut rect = if border == crate::config::SidebarBorder::Bracket {
+        Rect::new(
+            rect.x.saturating_add(1),
+            rect.y,
+            rect.width.saturating_sub(1),
+            rect.height,
+        )
+    } else {
+        rect
+    };
+    if let Some(header) = &row.header {
+        if rect.height == 0 {
+            return rect;
+        }
+        put_text(
+            buffer,
+            rect.x.saturating_add(1),
+            rect.y,
+            rect.width.saturating_sub(1),
+            header,
+            Style::default()
+                .fg(palette.subtext0)
+                .add_modifier(Modifier::BOLD),
+        );
+        rect = Rect::new(rect.x, rect.y + 1, rect.width, rect.height - 1);
+    }
+    let group_indent = if row.grouped { 2 } else { 0 };
     let row_style = if row.focused {
         Style::default().bg(palette.active_row_bg)
     } else {
@@ -343,7 +422,7 @@ pub(super) fn render_agent_row(
     let secondary = Style::default().fg(palette.overlay0);
     let icon = (
         status_icon(row.status, config.status_indicators),
-        Style::default().fg(status_color(row.status, palette)),
+        Style::default().fg(status_icon_color(row.status, config)),
     );
     let rows = if row.rows.is_empty() {
         vec![vec![crate::ui::ResolvedToken {
@@ -353,8 +432,9 @@ pub(super) fn render_agent_row(
     } else {
         row.rows.clone()
     };
+    let continuation = super::sidebar::continuation_indent(&rows, icon.0) as usize;
     for (index, tokens) in rows.iter().take(rect.height as usize).enumerate() {
-        let indent = if index == 0 { 1 } else { 3 };
+        let indent = group_indent + if index == 0 { 1 } else { continuation };
         let mut spans = vec![ratatui::text::Span::raw(" ".repeat(indent))];
         spans.extend(crate::ui::resolved_token_spans(
             tokens,
@@ -371,6 +451,25 @@ pub(super) fn render_agent_row(
             buffer,
         );
     }
+    super::sidebar::render_group_border(
+        buffer,
+        full,
+        border,
+        row.header.is_some() || !row.grouped,
+        row.group_end,
+        palette,
+    );
+    let rect = Rect::new(full.x, rect.y, full.width, rect.height);
+    if row.focused && rect.width > 0 {
+        for y in rect.top()..rect.bottom() {
+            let cell = &mut buffer[(rect.x, y)];
+            if border != crate::config::SidebarBorder::Bracket {
+                cell.set_symbol("▎");
+            }
+            cell.set_fg(palette.accent);
+        }
+    }
+    rect
 }
 
 fn put_text(buffer: &mut Buffer, x: u16, y: u16, width: u16, text: &str, style: Style) {
@@ -379,10 +478,6 @@ fn put_text(buffer: &mut Buffer, x: u16, y: u16, width: u16, text: &str, style: 
             cell.set_char(character).set_style(style);
         }
     }
-}
-
-fn display_width(text: &str) -> usize {
-    unicode_width::UnicodeWidthStr::width(text)
 }
 
 fn sidebar_status_text(status: crate::api::schema::AgentStatus) -> &'static str {

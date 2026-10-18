@@ -2,6 +2,7 @@
 pub(crate) enum ConfigEdit<'a> {
     Theme(&'a str),
     StatusIndicators(super::StatusIndicatorStyle),
+    PulseWorking(bool),
     Sound(bool),
     ToastDelivery(super::ToastDelivery),
 }
@@ -11,6 +12,7 @@ impl ConfigEdit<'_> {
         match self {
             Self::Theme(_) => "theme",
             Self::StatusIndicators(_) => "status indicators",
+            Self::PulseWorking(_) => "working pulse setting",
             Self::Sound(_) => "sound setting",
             Self::ToastDelivery(_) => "toast setting",
         }
@@ -29,6 +31,9 @@ impl ConfigEdit<'_> {
                 "status_indicators",
                 &format!("\"{}\"", style.as_str()),
             ),
+            Self::PulseWorking(enabled) => {
+                super::upsert_section_bool(content, "ui", "pulse_working", enabled)
+            }
             Self::Sound(enabled) => {
                 super::upsert_section_bool(content, "ui.sound", "enabled", enabled)
             }

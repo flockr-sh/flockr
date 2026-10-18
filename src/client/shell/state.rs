@@ -4,6 +4,12 @@ pub(super) const MIN_TAB_WIDTH: u16 = 8;
 pub(super) const NEW_TAB_WIDTH: u16 = 3;
 pub(super) const WORKSPACE_HEADER_ROWS: u16 = 2;
 const ENDPOINT_ERROR_TIMEOUT_SECS: u64 = 5;
+/// The working pulse runs one cycle every `STEPS * STEP_MS` (1.6s), on the
+/// client's 100ms timer.
+const WORKING_PULSE_STEP_MS: u128 = 100;
+const WORKING_PULSE_STEPS: u128 = 16;
+/// How far the working icon fades toward the background at the dimmest step.
+const WORKING_PULSE_DEPTH: f32 = 0.65;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ClientShellKeybindingSource {
@@ -23,8 +29,12 @@ pub(crate) struct ClientShellConfig {
     pub(super) hide_tab_bar_when_single_tab: bool,
     pub(super) spaces: SpacesSidebarConfig,
     pub(super) agents: crate::config::AgentsSidebarConfig,
+    pub(super) sidebar_chrome: crate::config::SidebarChrome,
     pub(super) agent_panel_sort: crate::config::AgentPanelSortConfig,
     pub(super) status_indicators: crate::config::StatusIndicatorStyle,
+    pub(super) pulse_working: bool,
+    /// Current working icon color while the pulse runs. Set by the client timer.
+    pub(super) working_pulse_color: Option<ratatui::style::Color>,
     pub(super) sound_enabled: bool,
     pub(super) toast_delivery: crate::config::ToastDelivery,
     pub(super) toast_delay_seconds: u64,
@@ -385,6 +395,7 @@ pub(super) struct ClientGlobalMenuOverlay {
 pub(super) enum ClientSettingsSection {
     Theme,
     Indicators,
+    Pulse,
     Sound,
     Toast,
     Integrations,
@@ -394,6 +405,7 @@ impl ClientSettingsSection {
     pub(super) const ALL: &[Self] = &[
         Self::Theme,
         Self::Indicators,
+        Self::Pulse,
         Self::Sound,
         Self::Toast,
         Self::Integrations,
@@ -403,6 +415,7 @@ impl ClientSettingsSection {
         match self {
             Self::Theme => "theme",
             Self::Indicators => "indicators",
+            Self::Pulse => "pulse",
             Self::Sound => "sound",
             Self::Toast => "toasts",
             Self::Integrations => "integrations",
@@ -901,6 +914,11 @@ pub(crate) struct ClientShellState {
     pub(super) collapsed_endpoints: HashSet<ClientEndpointId>,
     pub(super) mode: ClientShellMode,
     pub(super) navigate_workspace_id: Option<WorkspaceNavigationTarget>,
+    /// The workspace that navigate mode's workspace keys are moving, if any.
+    pub(super) navigate_grab: Option<NavigateGrab>,
+    /// Keep the navigate selection on the focused workspace after an agent
+    /// key moved focus, since the new focus arrives in a later snapshot.
+    pub(super) navigate_follow_focus: bool,
     pub(super) pending_workspace_highlight: Option<PendingWorkspaceHighlight>,
     pub(super) reveal_navigation_workspace: bool,
     pub(super) overlay: Option<ClientShellOverlay>,
@@ -954,11 +972,14 @@ pub(crate) struct ClientShellState {
     pub(super) host_appearance: Option<crate::terminal_theme::HostAppearance>,
     pub(super) host_appearance_explicit: bool,
     pub(super) host_background: Option<crate::terminal_theme::RgbColor>,
+    /// The host terminal's 16 ANSI colors, for blending named theme colors.
+    pub(super) host_ansi_colors: [Option<crate::terminal_theme::RgbColor>; 16],
     pub(super) local_config_diagnostic: Option<String>,
     pub(super) config_diagnostic: Option<String>,
     pub(super) endpoint_error: Option<String>,
     pub(super) endpoint_error_deadline: Option<std::time::Instant>,
     pub(super) dismissed_product_announcement: Option<(String, String)>,
+    pub(super) working_pulse_epoch: std::time::Instant,
 }
 
 pub(super) fn product_announcement_state(
@@ -1075,6 +1096,8 @@ impl ClientShellState {
             collapsed_endpoints: HashSet::new(),
             mode: ClientShellMode::Terminal,
             navigate_workspace_id: None,
+            navigate_grab: None,
+            navigate_follow_focus: false,
             pending_workspace_highlight: None,
             reveal_navigation_workspace: false,
             overlay,
@@ -1122,11 +1145,13 @@ impl ClientShellState {
             host_appearance: None,
             host_appearance_explicit: false,
             host_background: None,
+            host_ansi_colors: [None; 16],
             config_diagnostic: local_config_diagnostic.clone(),
             local_config_diagnostic,
             endpoint_error: None,
             endpoint_error_deadline: None,
             dismissed_product_announcement: None,
+            working_pulse_epoch: std::time::Instant::now(),
         }
     }
 
@@ -1587,6 +1612,7 @@ impl ClientShellState {
         }
         self.snapshot = Some(snapshot);
         self.reconcile_pending_workspace_highlight();
+        self.follow_navigate_focus();
         let pending_surface = self.pending_pane_surface.take();
         if let Some(surface) = pending_surface {
             let matching = self.snapshot.as_ref().is_some_and(|snapshot| {
@@ -1876,6 +1902,95 @@ impl ClientShellState {
             return true;
         }
         false
+    }
+
+    /// Steps the working icon pulse. Returns true when its color changed.
+    pub(crate) fn tick_working_pulse(&mut self, now: std::time::Instant) -> bool {
+        let color = self
+            .working_pulse_running()
+            .then(|| self.working_pulse_color_at(now))
+            .flatten();
+        if self.config.working_pulse_color == color {
+            return false;
+        }
+        self.config.working_pulse_color = color;
+        true
+    }
+
+    fn working_pulse_running(&self) -> bool {
+        use crate::api::schema::AgentStatus;
+        self.config.pulse_working
+            && self
+                .snapshot
+                .iter()
+                .chain(
+                    self.endpoints
+                        .iter()
+                        .filter_map(|endpoint| endpoint.snapshot.as_ref()),
+                )
+                .flat_map(|snapshot| &snapshot.agents)
+                .any(|agent| agent.agent_status == AgentStatus::Working)
+    }
+
+    fn working_pulse_color_at(&self, now: std::time::Instant) -> Option<ratatui::style::Color> {
+        let palette = &self.config.palette;
+        let (r, g, b) = self.resolve_rgb(palette.yellow)?;
+        let background = self
+            .resolve_rgb(palette.sidebar_bg)
+            .or_else(|| {
+                self.host_background
+                    .map(|color| (color.r, color.g, color.b))
+            })
+            .or_else(|| self.resolve_rgb(palette.panel_bg))?;
+        let elapsed = now.saturating_duration_since(self.working_pulse_epoch);
+        let step = (elapsed.as_millis() / WORKING_PULSE_STEP_MS) % WORKING_PULSE_STEPS;
+        if step == 0 {
+            // Full brightness draws the theme color itself, so a named color
+            // stays exact even when the host palette report is stale.
+            return Some(palette.yellow);
+        }
+        let phase = step as f32 / WORKING_PULSE_STEPS as f32;
+        let amount = WORKING_PULSE_DEPTH * (1.0 - (phase * std::f32::consts::TAU).cos()) / 2.0;
+        let mix = |from: u8, to: u8| {
+            (f32::from(from) + (f32::from(to) - f32::from(from)) * amount).round() as u8
+        };
+        Some(ratatui::style::Color::Rgb(
+            mix(r, background.0),
+            mix(g, background.1),
+            mix(b, background.2),
+        ))
+    }
+
+    /// The RGB a theme color draws as. Named ANSI colors resolve through the
+    /// host terminal's reported palette.
+    fn resolve_rgb(&self, color: ratatui::style::Color) -> Option<(u8, u8, u8)> {
+        use ratatui::style::Color;
+        let index = match color {
+            Color::Rgb(r, g, b) => return Some((r, g, b)),
+            Color::Black => 0,
+            Color::Red => 1,
+            Color::Green => 2,
+            Color::Yellow => 3,
+            Color::Blue => 4,
+            Color::Magenta => 5,
+            Color::Cyan => 6,
+            Color::Gray => 7,
+            Color::DarkGray => 8,
+            Color::LightRed => 9,
+            Color::LightGreen => 10,
+            Color::LightYellow => 11,
+            Color::LightBlue => 12,
+            Color::LightMagenta => 13,
+            Color::LightCyan => 14,
+            Color::White => 15,
+            Color::Indexed(index) => usize::from(index),
+            Color::Reset => return None,
+        };
+        self.host_ansi_colors
+            .get(index)
+            .copied()
+            .flatten()
+            .map(|color| (color.r, color.g, color.b))
     }
 
     pub(crate) fn timer_delay(&self, now: std::time::Instant) -> std::time::Duration {

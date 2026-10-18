@@ -182,10 +182,22 @@ pub(super) fn render_collapsed(
                     .fg(if stale {
                         palette.overlay0
                     } else {
-                        status_color(workspace.agent_status, palette)
+                        status_icon_color(workspace.agent_status, config)
                     })
                     .add_modifier(dim),
             );
+            if active
+                && selected
+                && state.dragged_workspace_id == Some(workspace.workspace_id.as_str())
+            {
+                // Grabbed in navigate mode: the marker replaces the status icon.
+                super::sidebar::render_grab_marker(
+                    buffer,
+                    rect,
+                    rect.x.saturating_add(number_width),
+                    config,
+                );
+            }
             hits.workspaces.push(WorkspaceHit {
                 rect,
                 endpoint_id: endpoint.endpoint_id.clone(),
@@ -197,13 +209,11 @@ pub(super) fn render_collapsed(
         }
     }
     if let Some(divider_y) = divider_y {
-        put_text(
+        super::sidebar::render_section_divider(
             buffer,
-            workspace_area.x,
-            divider_y,
-            workspace_area.width,
-            &"─".repeat(workspace_area.width as usize),
-            Style::default().fg(palette.surface_dim),
+            Rect::new(workspace_area.x, divider_y, workspace_area.width, 1),
+            false,
+            config,
         );
     }
     super::endpoint_agents::render_collapsed(
@@ -214,24 +224,8 @@ pub(super) fn render_collapsed(
         config,
         hits,
     );
-    hits.sidebar_toggle = if area.is_empty() || workspace_area.width == 0 {
-        Rect::default()
-    } else {
-        Rect::new(
-            workspace_area.x + workspace_area.width / 2,
-            area.bottom().saturating_sub(1),
-            1,
-            1,
-        )
-    };
-    put_text(
-        buffer,
-        hits.sidebar_toggle.x,
-        hits.sidebar_toggle.y,
-        hits.sidebar_toggle.width,
-        "»",
-        Style::default().fg(palette.overlay0),
-    );
+    hits.sidebar_toggle =
+        super::sidebar::render_collapsed_toggle(buffer, area, workspace_area, false, config);
 }
 
 pub(super) fn render_expanded(
@@ -253,15 +247,12 @@ pub(super) fn render_expanded(
         crate::ui::expanded_sidebar_sections(area, state.sidebar_section_split);
     hits.sidebar_section_divider =
         crate::ui::sidebar_section_divider_rect(area, state.sidebar_section_split);
-    put_text(
+    super::sidebar::render_section_header(
         buffer,
-        workspace_area.x,
-        workspace_area.y,
-        workspace_area.width,
-        " machines",
-        Style::default()
-            .fg(palette.overlay0)
-            .add_modifier(Modifier::BOLD),
+        workspace_area,
+        "machines",
+        Some(state.endpoints.len()),
+        config,
     );
 
     let empty_collapsed_groups = HashSet::new();
@@ -271,8 +262,10 @@ pub(super) fn render_expanded(
         Workspace {
             endpoint: usize,
             entry: WorkspaceEntry,
+            number: Option<char>,
         },
     }
+    let switch_workspace = &config.keybinds.keybinds.switch_workspace;
     let mut rows = Vec::new();
     for (endpoint_index, endpoint) in state.endpoints.iter().enumerate() {
         rows.push(Row::Endpoint(endpoint_index));
@@ -282,12 +275,18 @@ pub(super) fn render_expanded(
         if let Some(snapshot) = endpoint.snapshot.as_deref() {
             let collapsed_groups = collapsed_groups_for_endpoint(state, &endpoint.endpoint_id)
                 .unwrap_or(&empty_collapsed_groups);
+            // Switch keys act on the active machine, so only its spaces get numbers.
+            let numbered = &endpoint.endpoint_id == state.active_endpoint_id;
             rows.extend(
                 super::sidebar::workspace_entries(snapshot, collapsed_groups)
                     .into_iter()
-                    .map(|entry| Row::Workspace {
+                    .enumerate()
+                    .map(|(position, entry)| Row::Workspace {
                         endpoint: endpoint_index,
                         entry,
+                        number: numbered
+                            .then(|| crate::config::indexed_key(switch_workspace, position))
+                            .flatten(),
                     }),
             );
         }
@@ -305,7 +304,11 @@ pub(super) fn render_expanded(
         .iter()
         .map(|row| match row {
             Row::Endpoint(_) => 1,
-            Row::Workspace { endpoint, entry } => {
+            Row::Workspace {
+                endpoint,
+                entry,
+                number,
+            } => {
                 let endpoint = &state.endpoints[*endpoint];
                 let collapsed_groups = collapsed_groups_for_endpoint(state, &endpoint.endpoint_id)
                     .unwrap_or(&empty_collapsed_groups);
@@ -323,6 +326,7 @@ pub(super) fn render_expanded(
                                     collapsed_groups,
                                 ),
                                 entry.indented,
+                                *number,
                                 &config.spaces,
                             )
                             .len()
@@ -343,6 +347,7 @@ pub(super) fn render_expanded(
                 Some(Row::Workspace {
                     endpoint: next_endpoint,
                     entry,
+                    ..
                 }),
             ) if endpoint == next_endpoint => u16::from(!entry.indented) * config.spaces.row_gap,
             _ => 0,
@@ -352,7 +357,9 @@ pub(super) fn render_expanded(
     let reveal_focus = !body.is_empty() && std::mem::take(state.reveal_focused_workspace);
     if reveal_navigation || reveal_focus {
         let selected_row = rows.iter().position(|row| match row {
-            Row::Workspace { endpoint, entry } => {
+            Row::Workspace {
+                endpoint, entry, ..
+            } => {
                 let endpoint = &state.endpoints[*endpoint];
                 endpoint
                     .snapshot
@@ -432,7 +439,11 @@ pub(super) fn render_expanded(
                     .saturating_add(1)
                     .saturating_add(gaps.get(row_index).copied().unwrap_or(0));
             }
-            Row::Workspace { endpoint, entry } => {
+            Row::Workspace {
+                endpoint,
+                entry,
+                number,
+            } => {
                 let endpoint = &state.endpoints[*endpoint];
                 let Some(snapshot) = endpoint.snapshot.as_deref() else {
                     continue;
@@ -451,6 +462,7 @@ pub(super) fn render_expanded(
                     workspace,
                     status,
                     entry.indented,
+                    *number,
                     &config.spaces,
                 );
                 let height = (tokens.len().max(1).min(u16::MAX as usize) as u16).min(body.height);
@@ -472,7 +484,7 @@ pub(super) fn render_expanded(
                     buffer,
                     nested,
                     status,
-                    config.status_indicators,
+                    config,
                     entry,
                     tokens,
                     endpoint_active && workspace.focused,
@@ -517,40 +529,41 @@ pub(super) fn render_expanded(
     }
 
     let footer_y = workspace_area.bottom().saturating_sub(1);
-    if config.mouse_capture {
-        let label = format!(" new · {}", active_endpoint_label(state));
-        hits.new_workspace = Rect::new(
-            workspace_area.x,
-            footer_y,
-            display_width(&label).min(workspace_area.width),
-            u16::from(workspace_area.height > 0),
-        );
-        put_text(
+    if config.mouse_capture && workspace_area.height > 0 {
+        use super::sidebar::{render_sidebar_button, sidebar_button_width, SidebarButtonLabel};
+
+        let chip = format!("+ new · {}", active_endpoint_label(state));
+        let text = format!(" new · {}", active_endpoint_label(state));
+        hits.new_workspace = render_sidebar_button(
             buffer,
             workspace_area.x,
             footer_y,
-            workspace_area.width,
-            &label,
-            Style::default().fg(palette.overlay0),
+            workspace_area.right(),
+            SidebarButtonLabel {
+                chip: &chip,
+                text: &text,
+            },
+            false,
+            false,
+            config,
         );
         let attention = active_snapshot.is_some_and(super::global_menu::global_menu_attention);
-        let width = if attention { 8 } else { 6 }.min(workspace_area.width);
-        hits.global_launcher = Rect::new(
-            workspace_area.right().saturating_sub(width),
-            footer_y,
-            width,
-            1,
-        );
-        put_right_text(
+        let label = SidebarButtonLabel {
+            chip: if attention { "● menu" } else { "≡ menu" },
+            text: if attention { "● menu" } else { "menu" },
+        };
+        hits.global_launcher = render_sidebar_button(
             buffer,
-            workspace_area,
+            workspace_area
+                .right()
+                .saturating_sub(sidebar_button_width(label, config))
+                .max(workspace_area.x),
             footer_y,
-            if attention { "● menu" } else { "menu" },
-            Style::default().fg(if attention {
-                palette.accent
-            } else {
-                palette.overlay0
-            }),
+            workspace_area.right(),
+            label,
+            attention,
+            false,
+            config,
         );
     }
     super::endpoint_agents::render_expanded(

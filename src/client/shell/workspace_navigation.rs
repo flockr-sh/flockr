@@ -16,6 +16,13 @@ pub(super) struct PendingWorkspaceHighlight {
     expires_at: std::time::Instant,
 }
 
+/// A workspace grabbed in navigate mode, and where it sat when grabbed.
+pub(super) struct NavigateGrab {
+    pub(super) workspace_id: String,
+    /// The workspace it sat before, or None when it was last.
+    restore_before: Option<String>,
+}
+
 impl WorkspaceNavigationTarget {
     pub(super) fn matches(&self, endpoint_id: &ClientEndpointId, workspace_id: &str) -> bool {
         &self.endpoint_id == endpoint_id && self.workspace_id == workspace_id
@@ -161,6 +168,105 @@ impl ClientShellState {
         self.reveal_mobile_workspace = mobile;
         self.reveal_navigation_workspace =
             !mobile || self.snapshot.is_none() || self.pane_surface.is_none();
+    }
+
+    /// Workspace IDs that can be reordered, in sidebar order. Linked
+    /// worktrees move with their group, so they are not listed.
+    fn movable_workspace_ids(&self) -> Vec<String> {
+        self.snapshot
+            .as_deref()
+            .map(|snapshot| {
+                snapshot
+                    .workspaces
+                    .iter()
+                    .filter(|workspace| {
+                        !workspace
+                            .worktree
+                            .as_ref()
+                            .is_some_and(|worktree| worktree.is_linked_worktree)
+                    })
+                    .map(|workspace| workspace.workspace_id.clone())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Grab the selected workspace so the workspace keys move it.
+    pub(super) fn start_navigate_grab(&mut self) {
+        let Some(target) = self
+            .navigate_workspace_id
+            .clone()
+            .or_else(|| self.focused_navigation_target())
+        else {
+            return;
+        };
+        // Moves go through the active connection's snapshot.
+        if target.endpoint_id != self.active_endpoint_id || !self.navigation_target_valid(&target) {
+            return;
+        }
+        let ids = self.movable_workspace_ids();
+        let Some(position) = ids.iter().position(|id| *id == target.workspace_id) else {
+            return;
+        };
+        self.navigate_grab = Some(NavigateGrab {
+            workspace_id: target.workspace_id.clone(),
+            restore_before: ids.get(position + 1).cloned(),
+        });
+        self.navigate_workspace_id = Some(target);
+        self.navigate_follow_focus = false;
+    }
+
+    /// Move the grabbed workspace one slot up (negative) or down.
+    pub(super) fn move_grabbed_workspace(&mut self, delta: isize, outcome: &mut ClientShellInput) {
+        let Some(workspace_id) = self
+            .navigate_grab
+            .as_ref()
+            .map(|grab| grab.workspace_id.clone())
+        else {
+            return;
+        };
+        let ids = self.movable_workspace_ids();
+        let Some(position) = ids.iter().position(|id| *id == workspace_id) else {
+            return;
+        };
+        let before = if delta < 0 {
+            let Some(previous) = position.checked_sub(1) else {
+                return;
+            };
+            Some(ids[previous].as_str())
+        } else {
+            if position + 1 >= ids.len() {
+                return;
+            }
+            ids.get(position + 2).map(String::as_str)
+        };
+        if let Some(method) = self.workspace_move_method(&workspace_id, before) {
+            self.push_endpoint_method(method, outcome);
+        }
+    }
+
+    /// Leave the grabbed workspace where it is now.
+    pub(super) fn drop_navigate_grab(&mut self) {
+        self.navigate_grab = None;
+    }
+
+    /// Put the grabbed workspace back where it was when grabbed.
+    pub(super) fn restore_navigate_grab(&mut self, outcome: &mut ClientShellInput) {
+        let Some(grab) = self.navigate_grab.take() else {
+            return;
+        };
+        if let Some(method) =
+            self.workspace_move_method(&grab.workspace_id, grab.restore_before.as_deref())
+        {
+            self.push_endpoint_method(method, outcome);
+        }
+    }
+
+    /// After an agent key moved focus, keep the selection on the newly focused workspace.
+    pub(super) fn follow_navigate_focus(&mut self) {
+        if self.mode == ClientShellMode::Navigate && self.navigate_follow_focus {
+            self.navigate_workspace_id = self.focused_navigation_target();
+        }
     }
 
     pub(super) fn accept_navigate_workspace(&mut self, outcome: &mut ClientShellInput) {

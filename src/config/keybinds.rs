@@ -96,10 +96,7 @@ impl BindingConfig {
                     }
                 }
                 Some(ParsedBinding::Range(range)) => {
-                    labels.extend(range.into_iter().filter_map(|binding| {
-                        matches!(binding.trigger.combo().0, KeyCode::Char('1'..='9'))
-                            .then_some(binding.label)
-                    }));
+                    labels.extend(range.into_iter().map(|binding| binding.label));
                 }
                 None => {}
             }
@@ -305,11 +302,16 @@ impl ActionKeybinds {
 pub struct IndexedKeybind {
     pub trigger: BindingTrigger,
     pub label: String,
+    /// Zero-based target index; keys past 9 in a range continue at 9.
+    pub index: usize,
 }
 
 impl IndexedKeybind {
     pub fn matched_index(&self, key: &TerminalKey) -> Option<usize> {
         let combo = self.trigger.combo();
+        if terminal_key_matches_combo(key, combo) {
+            return Some(self.index);
+        }
         let (expected_code, _) = normalize_key_combo(combo);
         let KeyCode::Char(key_number @ '1'..='9') = expected_code else {
             return None;
@@ -317,12 +319,19 @@ impl IndexedKeybind {
         let legacy_shifted_number = matches!(key.code, KeyCode::Char(c)
             if shifted_number_symbol(c) == Some(key_number)
                 && indexed_shifted_number_matches(key, combo, key_number));
-        if terminal_key_matches_combo(key, combo) || legacy_shifted_number {
-            Some((key_number as usize) - ('1' as usize))
-        } else {
-            None
-        }
+        legacy_shifted_number.then_some(self.index)
     }
+}
+
+/// The key bound to target `index`, shown as that target's number.
+pub fn indexed_key(bindings: &[IndexedKeybind], index: usize) -> Option<char> {
+    bindings
+        .iter()
+        .find(|binding| binding.index == index)
+        .and_then(|binding| match binding.trigger.combo().0 {
+            KeyCode::Char(key) => Some(key),
+            _ => None,
+        })
 }
 
 #[derive(Debug, Clone)]
@@ -345,6 +354,11 @@ pub struct NavigateKeybinds {
     pub pane_down: ActionKeybinds,
     pub pane_up: ActionKeybinds,
     pub pane_right: ActionKeybinds,
+    pub agent_up: ActionKeybinds,
+    pub agent_down: ActionKeybinds,
+    pub focus_agent: Vec<IndexedKeybind>,
+    pub switch_workspace: Vec<IndexedKeybind>,
+    pub move_workspace: ActionKeybinds,
 }
 
 /// Parsed keybinds for Flockr actions.
@@ -533,6 +547,11 @@ impl Config {
                 pane_down: empty_action!(),
                 pane_up: empty_action!(),
                 pane_right: empty_action!(),
+                agent_up: empty_action!(),
+                agent_down: empty_action!(),
+                focus_agent: Vec::new(),
+                switch_workspace: Vec::new(),
+                move_workspace: empty_action!(),
             },
             help: empty_action!(),
             settings: empty_action!(),
@@ -629,8 +648,23 @@ impl Config {
                             &mut registry,
                             &mut diagnostics,
                             $source,
+                            reject_binding,
                         );
                     }
+                }
+            };
+        }
+        macro_rules! apply_navigate_indexed {
+            ($target:expr, $field:ident, $source:expr) => {
+                if field_source!($field) == $source {
+                    $target = parse_indexed_bindings(
+                        concat!("keys.", stringify!($field)),
+                        &self.keys.$field,
+                        &mut navigate_registry,
+                        &mut diagnostics,
+                        $source,
+                        reject_navigate_binding,
+                    );
                 }
             };
         }
@@ -663,6 +697,19 @@ impl Config {
             apply_navigate!(keybinds.navigate.pane_down, navigate_pane_down, source);
             apply_navigate!(keybinds.navigate.pane_up, navigate_pane_up, source);
             apply_navigate!(keybinds.navigate.pane_right, navigate_pane_right, source);
+            apply_navigate!(keybinds.navigate.agent_up, navigate_agent_up, source);
+            apply_navigate!(keybinds.navigate.agent_down, navigate_agent_down, source);
+            apply_navigate_indexed!(keybinds.navigate.focus_agent, navigate_focus_agent, source);
+            apply_navigate_indexed!(
+                keybinds.navigate.switch_workspace,
+                navigate_switch_workspace,
+                source
+            );
+            apply_navigate!(
+                keybinds.navigate.move_workspace,
+                navigate_move_workspace,
+                source
+            );
             apply_action!(keybinds.help, help, source);
             apply_action!(keybinds.settings, settings, source);
             apply_action!(keybinds.new_workspace, new_workspace, source);
@@ -792,15 +839,10 @@ fn reserve_navigate_runtime_keys(registry: &mut BindingRegistry) {
     ] {
         registry.reserve_direct(combo, "navigate reserved keys", BindingSource::Default);
     }
-
-    for idx in '1'..='9' {
-        registry.reserve_direct(
-            (KeyCode::Char(idx), KeyModifiers::empty()),
-            "navigate reserved keys",
-            BindingSource::Default,
-        );
-    }
 }
+
+type RejectBinding =
+    fn(&str, &ResolvedBinding, &BindingRegistry, &mut Vec<String>, BindingSource) -> bool;
 
 fn append_custom_command_bindings(
     config: &Config,
@@ -971,6 +1013,7 @@ fn parse_indexed_bindings(
     registry: &mut BindingRegistry,
     diagnostics: &mut Vec<String>,
     source: BindingSource,
+    reject: RejectBinding,
 ) -> Vec<IndexedKeybind> {
     let mut bindings = Vec::new();
     for raw in config.values() {
@@ -980,18 +1023,32 @@ fn parse_indexed_bindings(
         }
         match parse_binding_string(raw) {
             Some(ParsedBinding::Single(binding)) => {
-                push_indexed_binding(field, binding, registry, diagnostics, source, &mut bindings);
+                let KeyCode::Char(number @ '1'..='9') = binding.trigger.combo().0 else {
+                    let diag = format!(
+                        "indexed keybinding must use 1..9: {field} = {:?}; disabling binding",
+                        binding.label
+                    );
+                    warn!(message = %diag, "config diagnostic");
+                    diagnostics.push(diag);
+                    continue;
+                };
+                let index = number as usize - '1' as usize;
+                if !reject(field, &binding, registry, diagnostics, source) {
+                    push_indexed_binding(field, binding, index, registry, source, &mut bindings);
+                }
             }
             Some(ParsedBinding::Range(range)) => {
-                for binding in range {
-                    push_indexed_binding(
-                        field,
-                        binding,
-                        registry,
-                        diagnostics,
-                        source,
-                        &mut bindings,
-                    );
+                for (index, binding) in range.into_iter().enumerate() {
+                    if !reject(field, &binding, registry, diagnostics, source) {
+                        push_indexed_binding(
+                            field,
+                            binding,
+                            index,
+                            registry,
+                            source,
+                            &mut bindings,
+                        );
+                    }
                 }
             }
             None => {
@@ -1007,27 +1064,16 @@ fn parse_indexed_bindings(
 fn push_indexed_binding(
     field: &str,
     binding: ResolvedBinding,
+    index: usize,
     registry: &mut BindingRegistry,
-    diagnostics: &mut Vec<String>,
     source: BindingSource,
     bindings: &mut Vec<IndexedKeybind>,
 ) {
-    if !matches!(binding.trigger.combo().0, KeyCode::Char('1'..='9')) {
-        let diag = format!(
-            "indexed keybinding must use 1..9: {field} = {:?}; disabling binding",
-            binding.label
-        );
-        warn!(message = %diag, "config diagnostic");
-        diagnostics.push(diag);
-        return;
-    }
-    if reject_binding(field, &binding, registry, diagnostics, source) {
-        return;
-    }
     registry.register(&binding, field, source);
     bindings.push(IndexedKeybind {
         trigger: binding.trigger,
         label: binding.label,
+        index,
     });
 }
 
@@ -1067,6 +1113,7 @@ fn append_legacy_indexed_bindings(
         target.push(IndexedKeybind {
             trigger: binding.trigger,
             label: binding.label,
+            index: idx as usize - 1,
         });
     }
 }
@@ -1165,13 +1212,11 @@ fn parse_binding_string(raw: &str) -> Option<ParsedBinding> {
         (false, trimmed)
     };
 
-    if let Some(range_modifiers) = parse_range_modifiers(body) {
-        let bindings = (1..=9)
-            .map(|idx| {
-                let combo = (
-                    KeyCode::Char(char::from_digit(idx, 10).unwrap_or('1')),
-                    range_modifiers,
-                );
+    if let Some((range_modifiers, keys)) = parse_range(body) {
+        let bindings = keys
+            .into_iter()
+            .map(|key| {
+                let combo = (KeyCode::Char(key), range_modifiers);
                 let key_label = format_key_combo(combo);
                 ResolvedBinding {
                     trigger: if trigger_prefix {
@@ -1275,21 +1320,43 @@ fn parse_modifier_token(token: &str) -> Option<KeyModifiers> {
     }
 }
 
-fn parse_range_modifiers(s: &str) -> Option<KeyModifiers> {
+fn parse_range(s: &str) -> Option<(KeyModifiers, Vec<char>)> {
     let mut modifiers = KeyModifiers::empty();
-    let mut saw_range = false;
+    let mut range = None;
     for part in s.split('+') {
         let trimmed = part.trim();
-        if trimmed == "1..9" {
-            if saw_range {
+        if let Some(keys) = parse_range_keys(trimmed) {
+            if range.is_some() {
                 return None;
             }
-            saw_range = true;
+            range = Some(keys);
         } else {
             modifiers |= parse_modifier_token(trimmed)?;
         }
     }
-    saw_range.then_some(modifiers)
+    Some((modifiers, range?))
+}
+
+/// The keys of an indexed range: `1..9`, optionally followed by keys for
+/// 10 and up, as in `1..9,0,y,u,i,p`.
+fn parse_range_keys(token: &str) -> Option<Vec<char>> {
+    let extra = token.strip_prefix("1..9")?;
+    let mut keys: Vec<char> = ('1'..='9').collect();
+    if extra.is_empty() {
+        return Some(keys);
+    }
+    for key in extra.strip_prefix(',')?.split(',') {
+        let mut chars = key.trim().chars();
+        let (Some(key), None) = (chars.next(), chars.next()) else {
+            return None;
+        };
+        let key = key.to_ascii_lowercase();
+        if !key.is_ascii_alphanumeric() || keys.contains(&key) {
+            return None;
+        }
+        keys.push(key);
+    }
+    Some(keys)
 }
 
 fn parse_modifier_combo(s: &str) -> Option<KeyModifiers> {
@@ -1743,9 +1810,95 @@ next_tab = "prefix+n"
     }
 
     #[test]
+    fn splits_also_take_tmux_percent_and_quote_by_default() {
+        let kb = Config::default().keybinds();
+        let prefix = |code| BindingTrigger::Prefix((code, KeyModifiers::empty()));
+        assert_eq!(
+            binding_triggers(&kb.split_vertical),
+            vec![prefix(KeyCode::Char('v')), prefix(KeyCode::Char('%'))]
+        );
+        assert_eq!(
+            binding_triggers(&kb.split_horizontal),
+            vec![prefix(KeyCode::Char('-')), prefix(KeyCode::Char('"'))]
+        );
+    }
+
+    #[test]
+    fn agents_take_alt_numbers_and_workspaces_alt_shift_numbers_by_default() {
+        let kb = Config::default().keybinds();
+        assert_eq!(kb.focus_agent[0].label, "alt+1");
+        assert_eq!(kb.focus_agent.len(), 9);
+        assert_eq!(kb.switch_workspace[0].label, "alt+shift+1");
+        assert_eq!(kb.switch_workspace.len(), 9);
+        // Legacy terminals send alt+shift+2 as alt+@ with no shift flag.
+        let legacy = TerminalKey::new(KeyCode::Char('@'), KeyModifiers::ALT);
+        assert_eq!(kb.switch_workspace[1].matched_index(&legacy), Some(1));
+        assert!(Config::default().collect_diagnostics().is_empty());
+    }
+
+    #[test]
+    fn indexed_range_keys_after_nine_continue_the_index() {
+        let config: Config = toml::from_str(
+            r#"
+[keys]
+switch_workspace = "prefix+shift+1..9,0,Y"
+"#,
+        )
+        .unwrap();
+        let kb = config.keybinds();
+        assert_eq!(kb.switch_workspace.len(), 11);
+        let ten = &kb.switch_workspace[9];
+        assert_eq!(ten.label, "prefix+shift+0");
+        assert_eq!(ten.index, 9);
+        let eleven = &kb.switch_workspace[10];
+        assert_eq!(
+            eleven.trigger,
+            BindingTrigger::Prefix((KeyCode::Char('y'), KeyModifiers::SHIFT))
+        );
+        assert_eq!(eleven.index, 10);
+        let key = TerminalKey::new(KeyCode::Char('y'), KeyModifiers::SHIFT);
+        assert_eq!(eleven.matched_index(&key), Some(10));
+        assert_eq!(kb.switch_workspace[0].matched_index(&key), None);
+    }
+
+    #[test]
+    fn indexed_range_rejects_bad_extra_keys() {
+        for raw in [
+            "ctrl+1..9,",
+            "ctrl+1..9,5",
+            "ctrl+1..9,yy",
+            "ctrl+1..9,y,y",
+            "ctrl+1..9x",
+        ] {
+            let config: Config =
+                toml::from_str(&format!("[keys]\nswitch_workspace = {raw:?}\n")).unwrap();
+            assert!(config.keybinds().switch_workspace.is_empty(), "{raw}");
+        }
+    }
+
+    #[test]
+    fn resize_uses_prefix_ctrl_hjkl_by_default() {
+        let kb = Config::default().keybinds();
+        let prefix_ctrl = |c| {
+            vec![BindingTrigger::Prefix((
+                KeyCode::Char(c),
+                KeyModifiers::CONTROL,
+            ))]
+        };
+        assert_eq!(binding_triggers(&kb.resize_pane_left), prefix_ctrl('h'));
+        assert_eq!(binding_triggers(&kb.resize_pane_down), prefix_ctrl('j'));
+        assert_eq!(binding_triggers(&kb.resize_pane_up), prefix_ctrl('k'));
+        assert_eq!(binding_triggers(&kb.resize_pane_right), prefix_ctrl('l'));
+    }
+
+    #[test]
     fn back_and_forth_keybinds_are_unset_by_default() {
         let kb = Config::default().keybinds();
         assert!(kb.last_pane.bindings.is_empty());
+        assert!(kb.next_agent.bindings.is_empty());
+        assert!(kb.previous_agent.bindings.is_empty());
+        assert!(kb.next_workspace.bindings.is_empty());
+        assert!(kb.previous_workspace.bindings.is_empty());
     }
 
     #[test]
@@ -2155,7 +2308,7 @@ navigate_pane_down = "ctrl+j"
         let config: Config = toml::from_str(
             r#"
 [keys]
-navigate_workspace_up = ["esc", "alt+esc", "enter", "1", "tab", "shift+tab", "left", "right"]
+navigate_workspace_up = ["esc", "alt+esc", "enter", "tab", "shift+tab", "left", "right"]
 "#,
         )
         .unwrap();
@@ -2172,8 +2325,45 @@ navigate_workspace_up = ["esc", "alt+esc", "enter", "1", "tab", "shift+tab", "le
                         && diag.contains("keys.navigate_workspace_up")
                 })
                 .count(),
-            8
+            7
         );
+    }
+
+    #[test]
+    fn navigate_digits_switch_workspaces_by_default_and_can_move_to_agents() {
+        let defaults = Config::default().keybinds();
+        assert_eq!(defaults.navigate.switch_workspace.len(), 9);
+        assert!(defaults.navigate.focus_agent.is_empty());
+        assert!(defaults.navigate.agent_up.bindings.is_empty());
+        assert_eq!(defaults.navigate.move_workspace.labels(), vec!["m"]);
+
+        let config: Config = toml::from_str(
+            r#"
+[keys]
+navigate_focus_agent = "1..9"
+navigate_switch_workspace = "shift+1..9"
+navigate_agent_down = "j"
+navigate_agent_up = "k"
+navigate_pane_down = "ctrl+j"
+navigate_pane_up = "ctrl+k"
+"#,
+        )
+        .unwrap();
+        let keybinds = config.keybinds();
+        assert!(config.collect_diagnostics().is_empty());
+        let one = TerminalKey::new(KeyCode::Char('1'), KeyModifiers::empty());
+        assert_eq!(
+            keybinds.navigate.focus_agent[0].matched_index(&one),
+            Some(0)
+        );
+        let bang = TerminalKey::new(KeyCode::Char('!'), KeyModifiers::empty());
+        assert_eq!(
+            keybinds.navigate.switch_workspace[0].matched_index(&bang),
+            Some(0)
+        );
+        let j = TerminalKey::new(KeyCode::Char('j'), KeyModifiers::empty());
+        assert!(keybinds.navigate.agent_down.matches_direct_key(&j));
+        assert!(!keybinds.navigate.pane_down.matches_direct_key(&j));
     }
 
     #[test]

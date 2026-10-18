@@ -161,7 +161,7 @@ const DEFAULT_CONFIG: &str = r##"# flockr configuration
 # next_workspace = ""     # optional, unset by default
 # previous_agent = ""     # optional, unset by default
 # next_agent = ""         # optional, unset by default
-# focus_agent = ""        # optional indexed binding, e.g. "prefix+alt+1..9"
+# focus_agent = "alt+1..9"   # terminals with tabs (Ghostty, GNOME Terminal, Konsole) take alt+1..9 first; unbind it there or pick other keys
 # remote_image_paste = "ctrl+v" # only active in flockr --remote; empty disables raw-key image paste
 # new_tab = "prefix+c"
 # rename_tab = "prefix+shift+t"
@@ -170,7 +170,7 @@ const DEFAULT_CONFIG: &str = r##"# flockr configuration
 # move_tab_previous = ""   # optional, e.g. "alt+shift+left" moves the tab toward the front
 # move_tab_next = ""       # optional, e.g. "alt+shift+right" moves the tab toward the back
 # switch_tab = "prefix+1..9"
-# switch_workspace = ""   # optional indexed binding, e.g. "prefix+shift+1..9"
+# switch_workspace = "alt+shift+1..9"   # list keys after 9 for workspaces 10 and up, e.g. "ctrl+alt+1..9,0,y,u,i,p"
 # close_tab = "prefix+shift+x"
 # rename_pane = "prefix+shift+p"
 # edit_scrollback = "prefix+e"
@@ -182,25 +182,30 @@ const DEFAULT_CONFIG: &str = r##"# flockr configuration
 # cycle_pane_next = "prefix+tab"
 # cycle_pane_previous = "prefix+shift+tab"
 # last_pane = ""          # optional, unset by default; bind e.g. "prefix+tab" for global back-and-forth
-# split_vertical = "prefix+v"
-# split_horizontal = "prefix+minus"
+# split_vertical = ["prefix+v", "prefix+%"]
+# split_horizontal = ["prefix+minus", 'prefix+"']
 # close_pane = "prefix+x"
 # zoom = "prefix+z"       # legacy alias: fullscreen
 # resize_mode = "prefix+r"
-# resize_pane_left = ""   # optional, e.g. "ctrl+shift+alt+left" resizes without entering resize mode
-# resize_pane_down = ""   # optional, e.g. "ctrl+shift+alt+down"
-# resize_pane_up = ""     # optional, e.g. "ctrl+shift+alt+up"
-# resize_pane_right = ""  # optional, e.g. "ctrl+shift+alt+right"
+# resize_pane_left = "prefix+ctrl+h"   # resizes without entering resize mode
+# resize_pane_down = "prefix+ctrl+j"
+# resize_pane_up = "prefix+ctrl+k"
+# resize_pane_right = "prefix+ctrl+l"
 # toggle_sidebar = "prefix+b"
 
 # Navigate-mode movement. These local shortcuts win while navigate mode is open.
-# They are independent from focus_pane_*. Do not include prefix+, esc, enter, tab, or 1..9 here.
+# They are independent from focus_pane_*. Do not include prefix+, esc, enter, or tab here.
 # navigate_workspace_up = "up"
 # navigate_workspace_down = "down"
 # navigate_pane_left = "h"      # left arrow always focuses the pane to the left
 # navigate_pane_down = "j"
 # navigate_pane_up = "k"
 # navigate_pane_right = "l"     # right arrow always focuses the pane to the right
+# navigate_agent_up = ""        # optional, e.g. "k"; focuses the agent and stays in navigate mode
+# navigate_agent_down = ""      # optional, e.g. "j"
+# navigate_focus_agent = ""     # optional indexed binding, e.g. "1..9"
+# navigate_switch_workspace = "1..9"   # e.g. "shift+1..9" to free the digits for agents
+# navigate_move_workspace = "m" # grab the selected workspace; workspace keys move it, m or enter drops, esc puts it back
 
 # Custom commands use the same binding syntax.
 # type = "shell" runs detached in the background.
@@ -340,30 +345,52 @@ const DEFAULT_CONFIG: &str = r##"# flockr configuration
 # distinct static glyphs for blocked, working, done, idle, and unknown states.
 # status_indicators = "dots"
 
+# Pulse the working status indicator. Set to false for a static mark.
+# pulse_working = true
+
 # Accent color for highlights, borders, and navigation UI.
 # Accepts: hex (#89b4fa), named colors (cyan, blue, magenta), or rgb(r,g,b)
 # accent = "cyan"
 
-# Expanded agent rows. Built-ins are state_icon, state_text, machine, workspace, tab,
+# Sidebar look apart from its rows.
+# [ui.sidebar]
+# Section headers (spaces, machines, agents): "band" (filled row) or "plain".
+# header = "band"
+# Show the number of spaces, machines, or agents next to each header.
+# header_counts = true
+# Line between spaces and agents: "handle" (line with a drag grip), "line", or "dim".
+# divider = "handle"
+# Clickable labels (new, menu, sort): "chip" (padded, filled) or "text".
+# buttons = "chip"
+# Space grabbed in navigate mode: "marker" (↕ at the right edge) or "fill" (accent row).
+# grab = "marker"
+
+# Expanded agent rows. Built-ins are state_icon, state_text, number, machine, workspace, tab,
 # pane, agent, terminal_title, and terminal_title_stripped.
+# number shows the focus_agent key for that agent.
 # Custom values reported through pane metadata use a $name token.
 # A token occurrence may be styled with { token = "workspace", fg = "#89b4fa", bold = true, dim = false }.
 # Omitted style fields preserve the contextual default.
 # [ui.sidebar.agents]
 # Blank rows between agent entries. Set to 1 to restore the previous spacing.
 # row_gap = 0
-# rows = [["state_icon", "machine", "workspace", "tab"], ["agent"]]
+# Marks where each space's agents end: "none", "underline" (no extra rows), or "bracket" (left column).
+# border = "none"
+# rows = [["state_icon", "number", "machine", "workspace", "tab"], ["agent"]]
 # Optional canonical agent IDs replace the default rows for matching agents.
 # [ui.sidebar.agents.rows_by_agent]
 # claude = [["state_icon", "machine", "workspace", "tab"], ["terminal_title_stripped"], ["agent"]]
 
-# Expanded space rows. Built-ins are state_icon, state_text, workspace, branch, and git_status.
+# Expanded space rows. Built-ins are state_icon, state_text, number, workspace, branch, and git_status.
+# number shows the switch_workspace key for that space.
 # Custom values reported through workspace metadata use a $name token, for example $jj_status.
 # Inline token styles accept strict #RGB/#RRGGBB foregrounds plus bold and dim booleans.
 # [ui.sidebar.spaces]
 # Blank rows between space entries. Set to 1 to restore the previous spacing.
 # row_gap = 0
-# rows = [["state_icon", "workspace"], ["branch", "git_status"]]
+# Marks where each space ends: "none", "underline" (no extra rows), or "bracket" (left column).
+# border = "none"
+# rows = [["state_icon", "number", "workspace"], ["branch", "git_status"]]
 
 # Background notification popup delivery
 [ui.toast]

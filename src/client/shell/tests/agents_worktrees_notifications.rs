@@ -792,6 +792,190 @@ fn agent_sidebar_honors_priority_symbols_tokens_and_stable_hits() {
 }
 
 #[test]
+fn grouped_agent_sidebar_shows_each_space_once_and_aligns_its_agents() {
+    let mut projected = snapshot();
+    let mut second_workspace = projected.workspaces[0].clone();
+    second_workspace.workspace_id = "ws_2".into();
+    second_workspace.label = "other-space".into();
+    projected.workspaces.push(second_workspace);
+    let agent = |pane_id: &str, workspace_id: &str, name: &str, focused: bool| ClientShellAgent {
+        pane_id: pane_id.into(),
+        workspace_id: workspace_id.into(),
+        tab_id: "tab_1".into(),
+        name: Some(name.into()),
+        display_agent: None,
+        agent: Some("pi".into()),
+        title: None,
+        terminal_title: None,
+        terminal_title_stripped: None,
+        agent_status: AgentStatus::Idle,
+        state_change_seq: 0,
+        state_labels: Vec::new(),
+        tokens: Vec::new(),
+        focused,
+    };
+    projected.agents = vec![
+        agent("pane_1", "ws_1", "agent-a", false),
+        agent("pane_2", "ws_1", "agent-b", false),
+        agent("pane_3", "ws_2", "agent-c", true),
+    ];
+    let mut config = Config::default();
+    config.ui.agent_panel_sort = crate::config::AgentPanelSortConfig::Spaces;
+    config.ui.sidebar.agents.rows = vec![vec![
+        crate::config::AgentSidebarToken::StateIcon,
+        crate::config::AgentSidebarToken::Agent,
+    ]];
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&config));
+    state.set_snapshot(Box::new(projected));
+    state.set_pane_surface(surface());
+
+    let frame = state.compose(106, 30).expect("grouped agent sidebar frame");
+    let lines = frame
+        .cells
+        .chunks(frame.width as usize)
+        .map(|row| {
+            row.iter()
+                .map(|cell| cell.symbol.as_str())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>();
+    // Search below the agent panel title so the spaces list doesn't match.
+    let panel = lines
+        .iter()
+        .position(|line| line.starts_with(" agents"))
+        .expect("agent panel title");
+    let line_of = |needle: &str| {
+        lines
+            .iter()
+            .skip(panel)
+            .position(|line| line.contains(needle))
+            .map(|index| index + panel)
+            .unwrap_or_else(|| panic!("missing {needle}: {}", lines.join("\n")))
+    };
+    let column_of = |needle: &str| {
+        let line = &lines[line_of(needle)];
+        line.find(needle).map(|byte| line[..byte].chars().count())
+    };
+
+    // Each space header shows once, directly above its agents.
+    let header = line_of(" client-shell");
+    assert_eq!(line_of("agent-a"), header + 1);
+    assert_eq!(line_of("agent-b"), header + 2);
+    assert_eq!(line_of("agent-c"), line_of(" other-space") + 1);
+    assert_eq!(
+        lines[panel..]
+            .iter()
+            .filter(|line| line.contains("client-shell"))
+            .count(),
+        1
+    );
+
+    // Every agent is indented the same amount under its header.
+    assert_eq!(column_of("agent-a"), column_of("agent-b"));
+    assert_eq!(column_of("agent-a"), column_of("agent-c"));
+    assert!(column_of("agent-a") > column_of("client-shell"));
+
+    // Headers are not part of an agent's hit area; the selection bar marks
+    // only the focused agent.
+    let hit = |pane_id: &str| {
+        state
+            .hits
+            .agents
+            .iter()
+            .find(|(_, id)| id == pane_id)
+            .expect("agent hit")
+            .0
+    };
+    assert_eq!(hit("pane_1").y as usize, header + 1);
+    assert_eq!(hit("pane_1").height, 1);
+    let focused = hit("pane_3");
+    assert!(lines[focused.y as usize].starts_with('▎'));
+    assert!(!lines[hit("pane_1").y as usize].starts_with('▎'));
+}
+
+#[test]
+fn sidebar_numbers_show_the_keys_that_focus_agents_and_switch_spaces() {
+    let mut projected = snapshot();
+    let mut second_workspace = projected.workspaces[0].clone();
+    second_workspace.workspace_id = "ws_2".into();
+    second_workspace.label = "other-space".into();
+    second_workspace.focused = false;
+    second_workspace.branch = Some("feature-x".into());
+    projected.workspaces.push(second_workspace);
+    let agent = |pane_id: &str, workspace_id: &str, name: &str| ClientShellAgent {
+        pane_id: pane_id.into(),
+        workspace_id: workspace_id.into(),
+        tab_id: "tab_1".into(),
+        name: Some(name.into()),
+        display_agent: None,
+        agent: Some("pi".into()),
+        title: None,
+        terminal_title: None,
+        terminal_title_stripped: None,
+        agent_status: AgentStatus::Idle,
+        state_change_seq: 0,
+        state_labels: Vec::new(),
+        tokens: Vec::new(),
+        focused: false,
+    };
+    projected.agents = vec![
+        agent("pane_1", "ws_1", "agent-a"),
+        agent("pane_2", "ws_2", "agent-b"),
+    ];
+    let mut config = Config::default();
+    config.ui.agent_panel_sort = crate::config::AgentPanelSortConfig::Spaces;
+    config.ui.sidebar.agents.rows = vec![vec![
+        crate::config::AgentSidebarToken::Number,
+        crate::config::AgentSidebarToken::Agent,
+    ]];
+    config.ui.sidebar.spaces.rows = vec![
+        vec![
+            crate::config::SpaceSidebarToken::StateIcon,
+            crate::config::SpaceSidebarToken::Number,
+            crate::config::SpaceSidebarToken::Workspace,
+        ],
+        vec![crate::config::SpaceSidebarToken::Branch],
+    ];
+    // Agent numbers follow the bound keys, not a fixed 1..9.
+    config.keys.focus_agent = crate::config::BindingConfig::one("alt+1..9");
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&config));
+    state.set_snapshot(Box::new(projected));
+    state.set_pane_surface(surface());
+
+    let frame = state.compose(106, 30).expect("numbered sidebar frame");
+    let lines = frame
+        .cells
+        .chunks(frame.width as usize)
+        .map(|row| {
+            row.iter()
+                .map(|cell| cell.symbol.as_str())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>();
+    let has = |needle: &str| {
+        assert!(
+            lines.iter().any(|line| line.contains(needle)),
+            "missing {needle}: {}",
+            lines.join("\n")
+        );
+    };
+    // The number takes a plain space, not the " · " token separator.
+    has(" 1 client-shell");
+    has(" 2 other-space");
+    has(" 1 agent-a");
+    has(" 2 agent-b");
+    // The branch line sits under the space name, past the icon and number.
+    let column_of = |needle: &str| {
+        let line = lines
+            .iter()
+            .find(|line| line.contains(needle))
+            .unwrap_or_else(|| panic!("missing {needle}"));
+        line[..line.find(needle).unwrap()].chars().count()
+    };
+    assert_eq!(column_of("feature-x"), column_of("other-space"));
+}
+
+#[test]
 fn muted_agent_sidebar_rows_do_not_stack_terminal_faint() {
     let mut projected = snapshot();
     projected.tabs[0].label = "second".into();
@@ -1681,4 +1865,108 @@ fn semantic_notifications_use_client_policy_and_stable_navigation_targets() {
     assert!(repaint);
     assert!(state.visible_notification.is_none());
     assert_eq!(state.pending_notifications.len(), 1);
+}
+#[test]
+fn working_pulse_cycles_only_while_an_agent_works_and_the_setting_is_on() {
+    let mut working = snapshot();
+    working.agents = vec![ClientShellAgent {
+        pane_id: "pane_1".into(),
+        workspace_id: "ws_1".into(),
+        tab_id: "tab_1".into(),
+        name: None,
+        display_agent: None,
+        agent: Some("claude".into()),
+        title: None,
+        terminal_title: None,
+        terminal_title_stripped: None,
+        agent_status: AgentStatus::Working,
+        state_change_seq: 1,
+        state_labels: Vec::new(),
+        tokens: Vec::new(),
+        focused: true,
+    }];
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.set_snapshot(Box::new(working.clone()));
+    let epoch = state.working_pulse_epoch;
+    let at = |ms| epoch + std::time::Duration::from_millis(ms);
+    let full = status_color(AgentStatus::Working, &state.config.palette);
+
+    // The cycle starts at full color, dims at its midpoint, and returns.
+    assert!(state.tick_working_pulse(at(0)));
+    assert_eq!(state.config.working_pulse_color, Some(full));
+    assert!(!state.tick_working_pulse(at(50)));
+    assert!(state.tick_working_pulse(at(800)));
+    let dim = state.config.working_pulse_color.expect("pulse color");
+    assert_ne!(dim, full);
+    assert_eq!(status_icon_color(AgentStatus::Working, &state.config), dim);
+    assert_eq!(
+        status_icon_color(AgentStatus::Blocked, &state.config),
+        status_color(AgentStatus::Blocked, &state.config.palette)
+    );
+    assert!(state.tick_working_pulse(at(1600)));
+    assert_eq!(state.config.working_pulse_color, Some(full));
+
+    // No working agent: the pulse stops.
+    let mut idle = working.clone();
+    idle.revision = 2;
+    idle.agents[0].agent_status = AgentStatus::Idle;
+    idle.agents[0].state_change_seq = 2;
+    state.set_snapshot(Box::new(idle));
+    state.tick_working_pulse(at(800));
+    assert_eq!(state.config.working_pulse_color, None);
+
+    // Setting off: the pulse stops even while an agent works.
+    working.revision = 3;
+    working.agents[0].state_change_seq = 3;
+    state.set_snapshot(Box::new(working));
+    state.config.pulse_working = false;
+    assert!(!state.tick_working_pulse(at(800)));
+    assert_eq!(state.config.working_pulse_color, None);
+}
+
+#[test]
+fn working_pulse_blends_named_theme_colors_through_the_host_palette() {
+    let mut working = snapshot();
+    working.agents = vec![ClientShellAgent {
+        pane_id: "pane_1".into(),
+        workspace_id: "ws_1".into(),
+        tab_id: "tab_1".into(),
+        name: None,
+        display_agent: None,
+        agent: Some("claude".into()),
+        title: None,
+        terminal_title: None,
+        terminal_title_stripped: None,
+        agent_status: AgentStatus::Working,
+        state_change_seq: 1,
+        state_labels: Vec::new(),
+        tokens: Vec::new(),
+        focused: true,
+    }];
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.config.palette.yellow = ratatui::style::Color::Yellow;
+    state.config.palette.sidebar_bg = ratatui::style::Color::Rgb(0, 0, 0);
+    state.set_snapshot(Box::new(working));
+    let at = |ms| state.working_pulse_epoch + std::time::Duration::from_millis(ms);
+    let dim_at = at(800);
+
+    // Without the host palette the named color cannot blend.
+    assert!(!state.tick_working_pulse(dim_at));
+    assert_eq!(state.config.working_pulse_color, None);
+
+    state.handle_raw_events(vec![RawInputEvent::HostPaletteColors {
+        colors: vec![(
+            3,
+            crate::terminal_theme::RgbColor {
+                r: 200,
+                g: 100,
+                b: 0,
+            },
+        )],
+    }]);
+    assert!(state.tick_working_pulse(dim_at));
+    assert_eq!(
+        state.config.working_pulse_color,
+        Some(ratatui::style::Color::Rgb(70, 35, 0))
+    );
 }

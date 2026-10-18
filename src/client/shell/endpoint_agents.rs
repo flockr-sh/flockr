@@ -29,7 +29,7 @@ pub(super) fn render_collapsed(
                 .fg(if row.stale {
                     config.palette.overlay0
                 } else {
-                    status_color(row.agent.status, &config.palette)
+                    status_icon_color(row.agent.status, config)
                 })
                 .add_modifier(if row.stale {
                     Modifier::DIM
@@ -52,16 +52,17 @@ pub(super) fn render_expanded(
     agent_scroll: &mut usize,
     hits: &mut ShellHitMap,
 ) {
+    let rows = agent_rows(endpoints, active_endpoint_id, config);
     if !super::agent_sidebar::render_agent_panel_header(
         buffer,
         area,
         agent_view_label,
+        rows.len(),
         config,
         hits,
     ) {
         return;
     }
-    let rows = agent_rows(endpoints, active_endpoint_id, config);
     super::agent_sidebar::render_agent_list(
         buffer,
         area,
@@ -70,9 +71,9 @@ pub(super) fn render_expanded(
         config,
         agent_scroll,
         hits,
-        |row| row.agent.rows.len(),
+        |row| row.agent.lines(),
         |buffer, rect, row, hits| {
-            super::agent_sidebar::render_agent_row(buffer, rect, &row.agent, config);
+            let rect = super::agent_sidebar::render_agent_row(buffer, rect, &row.agent, config);
             if row.stale {
                 buffer.set_style(
                     rect,
@@ -106,7 +107,7 @@ impl ClientShellState {
         };
         let heights = rows
             .iter()
-            .map(|row| row.agent.rows.len().max(1).min(u16::MAX as usize) as u16)
+            .map(|row| row.agent.lines().min(u16::MAX as usize) as u16)
             .collect::<Vec<_>>();
         let mut gaps = vec![self.config.agents.row_gap; rows.len()];
         if let Some(last) = gaps.last_mut() {
@@ -134,37 +135,29 @@ fn agent_rows(
     active_endpoint_id: &ClientEndpointId,
     config: &ClientShellConfig,
 ) -> Vec<EndpointAgentRow> {
-    let mut rendered_rows = endpoints
-        .iter()
-        .filter_map(|endpoint| {
-            endpoint.snapshot.as_deref().map(|snapshot| {
-                snapshot
-                    .agents
-                    .iter()
-                    .filter_map(|agent| {
-                        super::agent_sidebar::agent_row(
-                            snapshot,
-                            &agent.pane_id,
-                            config,
-                            Some(&endpoint.label),
-                        )
-                    })
-                    .map(|agent| ((endpoint.endpoint_id.clone(), agent.pane_id.clone()), agent))
-                    .collect::<Vec<_>>()
-            })
-        })
-        .flatten()
-        .collect::<HashMap<_, _>>();
-
-    super::aggregate_navigation::aggregate_agent_rows(
+    let focus_agent = &config.keybinds.keybinds.focus_agent;
+    // Numbers count online agents only, matching `online_agent_targets`.
+    let mut online_index = 0;
+    let mut rows = super::aggregate_navigation::aggregate_agent_rows(
         endpoints,
         active_endpoint_id,
         config.agent_panel_sort,
     )
     .into_iter()
     .filter_map(|row| {
-        let key = (row.endpoint.endpoint_id.clone(), row.agent.pane_id.clone());
-        let mut agent = rendered_rows.remove(&key)?;
+        let number = if row.endpoint.stale() {
+            None
+        } else {
+            online_index += 1;
+            crate::config::indexed_key(focus_agent, online_index - 1)
+        };
+        let mut agent = super::agent_sidebar::agent_row(
+            row.endpoint.snapshot,
+            &row.agent.pane_id,
+            config,
+            Some(row.endpoint.label),
+            number,
+        )?;
         agent.focused &= row.endpoint.endpoint_id == active_endpoint_id;
         Some(EndpointAgentRow {
             endpoint_id: row.endpoint.endpoint_id.clone(),
@@ -173,5 +166,19 @@ fn agent_rows(
             agent,
         })
     })
-    .collect()
+    .collect::<Vec<_>>();
+    let agent_view = endpoints
+        .iter()
+        .find(|endpoint| &endpoint.endpoint_id == active_endpoint_id)
+        .and_then(|endpoint| endpoint.snapshot.as_deref())
+        .is_some_and(|snapshot| snapshot.agent_view_label.is_some());
+    if config.agent_panel_sort == crate::config::AgentPanelSortConfig::Spaces && !agent_view {
+        super::agent_sidebar::mark_space_groups(rows.iter_mut().map(|row| {
+            (
+                (row.endpoint_id.clone(), row.agent.workspace_id.clone()),
+                &mut row.agent,
+            )
+        }));
+    }
+    rows
 }

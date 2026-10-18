@@ -123,8 +123,11 @@ impl ClientShellConfig {
             hide_tab_bar_when_single_tab: config.ui.hide_tab_bar_when_single_tab,
             spaces: config.ui.sidebar.spaces.clone(),
             agents: config.ui.sidebar.agents.clone(),
+            sidebar_chrome: config.ui.sidebar.chrome(),
             agent_panel_sort: config.ui.agent_panel_sort,
             status_indicators: config.ui.status_indicators,
+            pulse_working: config.ui.pulse_working,
+            working_pulse_color: None,
             sound_enabled: config.ui.sound.enabled,
             toast_delivery: config.ui.toast.delivery,
             toast_delay_seconds: config.ui.toast.delay_seconds,
@@ -350,8 +353,10 @@ impl ClientShellConfig {
                 self.hide_tab_bar_when_single_tab = ui.hide_tab_bar_when_single_tab;
                 self.spaces = ui.sidebar.spaces.clone();
                 self.agents = ui.sidebar.agents.clone();
+                self.sidebar_chrome = ui.sidebar.chrome();
                 self.agent_panel_sort = ui.agent_panel_sort;
                 self.status_indicators = ui.status_indicators;
+                self.pulse_working = ui.pulse_working;
                 self.sound_enabled = ui.sound.enabled;
                 self.toast_delivery = ui.toast.delivery;
                 self.toast_delay_seconds = ui.toast.delay_seconds;
@@ -483,6 +488,7 @@ mod tests {
         next.ui.tab_bar_position = TabBarPositionConfig::Bottom;
         next.ui.agent_panel_sort = crate::config::AgentPanelSortConfig::Priority;
         next.ui.status_indicators = crate::config::StatusIndicatorStyle::Symbols;
+        next.ui.pulse_working = false;
         next.ui.sidebar.agents = toml::from_str("rows = [[{ token = 'machine', rules = [{ equals = 'Local', bold = true }] }]]\nrow_gap = 2").unwrap();
         next.keys.prefix = crate::config::BindingConfig::one("ctrl+a");
 
@@ -499,6 +505,7 @@ mod tests {
             shell.status_indicators,
             crate::config::StatusIndicatorStyle::Symbols
         );
+        assert!(!shell.pulse_working);
         assert_eq!(shell.agents.row_gap, 2);
         assert_eq!(
             shell.agents.rows[0][0]

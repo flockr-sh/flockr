@@ -24,6 +24,262 @@ pub(in crate::client::shell) fn workspace_active_background(
     }
 }
 
+/// Background for header bands and chips. Themes like `terminal` leave
+/// surface0 unset, so fall back to the next surface.
+fn chrome_fill(palette: &Palette) -> ratatui::style::Color {
+    if matches!(palette.surface0, ratatui::style::Color::Reset)
+        || palette.surface0 == palette.sidebar_bg
+    {
+        palette.surface1
+    } else {
+        palette.surface0
+    }
+}
+
+/// Draw a section header row: the title, an optional count, and the
+/// configured band.
+pub(in crate::client::shell) fn render_section_header(
+    buffer: &mut Buffer,
+    row: Rect,
+    title: &str,
+    count: Option<usize>,
+    config: &ClientShellConfig,
+) {
+    use crate::config::SidebarHeaderStyle;
+
+    if row.is_empty() {
+        return;
+    }
+    let palette = &config.palette;
+    let chrome = config.sidebar_chrome;
+    let row = Rect::new(row.x, row.y, row.width, 1);
+    let (title_style, count_style) = match chrome.header {
+        SidebarHeaderStyle::Band => {
+            buffer.set_style(row, Style::default().bg(chrome_fill(palette)));
+            (
+                Style::default()
+                    .fg(palette.text)
+                    .add_modifier(Modifier::BOLD),
+                Style::default().fg(palette.subtext0),
+            )
+        }
+        SidebarHeaderStyle::Plain => (
+            Style::default()
+                .fg(palette.overlay0)
+                .add_modifier(Modifier::BOLD),
+            Style::default().fg(palette.overlay0),
+        ),
+    };
+    let x = put_segment(buffer, row.x, row.y, row.right(), " ", title_style);
+    let x = put_segment(buffer, x, row.y, row.right(), title, title_style);
+    if let Some(count) = count.filter(|_| chrome.header_counts) {
+        put_segment(
+            buffer,
+            x,
+            row.y,
+            row.right(),
+            &format!(" {count}"),
+            count_style,
+        );
+    }
+}
+
+/// A sidebar button's label in chip style and in plain text style.
+#[derive(Clone, Copy)]
+pub(in crate::client::shell) struct SidebarButtonLabel<'a> {
+    pub(in crate::client::shell) chip: &'a str,
+    pub(in crate::client::shell) text: &'a str,
+}
+
+/// Draw a clickable label at `x` and return the rect it covers. Chips get a
+/// space of padding on each side; `attention` draws the accent version.
+pub(in crate::client::shell) fn render_sidebar_button(
+    buffer: &mut Buffer,
+    x: u16,
+    y: u16,
+    max_right: u16,
+    label: SidebarButtonLabel<'_>,
+    attention: bool,
+    on_band: bool,
+    config: &ClientShellConfig,
+) -> Rect {
+    let palette = &config.palette;
+    let (text, style) = match config.sidebar_chrome.buttons {
+        crate::config::SidebarButtonStyle::Text => (
+            label.text.to_owned(),
+            Style::default()
+                .fg(if attention {
+                    palette.accent
+                } else {
+                    palette.overlay0
+                })
+                .add_modifier(if on_band {
+                    Modifier::BOLD
+                } else {
+                    Modifier::empty()
+                }),
+        ),
+        crate::config::SidebarButtonStyle::Chip => {
+            let style = if attention {
+                Style::default()
+                    .fg(chrome_fill(palette))
+                    .bg(palette.accent)
+                    .add_modifier(Modifier::BOLD)
+            } else if on_band
+                && config.sidebar_chrome.header == crate::config::SidebarHeaderStyle::Band
+            {
+                // A chip in the band color would vanish, so flip it.
+                Style::default()
+                    .fg(chrome_fill(palette))
+                    .bg(palette.subtext0)
+            } else {
+                Style::default().fg(palette.text).bg(chrome_fill(palette))
+            };
+            (format!(" {} ", label.chip), style)
+        }
+    };
+    let width = display_width(&text).min(max_right.saturating_sub(x));
+    let rect = Rect::new(x, y, width, 1);
+    put_text(buffer, x, y, width, &text, style);
+    rect
+}
+
+/// Width `render_sidebar_button` will use for `label`.
+pub(in crate::client::shell) fn sidebar_button_width(
+    label: SidebarButtonLabel<'_>,
+    config: &ClientShellConfig,
+) -> u16 {
+    match config.sidebar_chrome.buttons {
+        crate::config::SidebarButtonStyle::Chip => display_width(label.chip) + 2,
+        crate::config::SidebarButtonStyle::Text => display_width(label.text),
+    }
+}
+
+/// Draw the line between the sidebar's two sections.
+pub(in crate::client::shell) fn render_section_divider(
+    buffer: &mut Buffer,
+    row: Rect,
+    grip: bool,
+    config: &ClientShellConfig,
+) {
+    use crate::config::SidebarDividerStyle;
+
+    let palette = &config.palette;
+    let divider = config.sidebar_chrome.divider;
+    let color = match divider {
+        SidebarDividerStyle::Dim => palette.surface_dim,
+        SidebarDividerStyle::Line | SidebarDividerStyle::Handle => palette.surface1,
+    };
+    put_text(
+        buffer,
+        row.x,
+        row.y,
+        row.width,
+        &"─".repeat(row.width as usize),
+        Style::default().fg(color),
+    );
+    if grip && divider == SidebarDividerStyle::Handle && row.width >= 7 {
+        put_text(
+            buffer,
+            row.x + (row.width - 3) / 2,
+            row.y,
+            3,
+            "━━━",
+            Style::default().fg(palette.overlay0),
+        );
+    }
+}
+
+/// Mark a space grabbed in navigate mode, with the marker at `marker_x`.
+pub(in crate::client::shell) fn render_grab_marker(
+    buffer: &mut Buffer,
+    rect: Rect,
+    marker_x: u16,
+    config: &ClientShellConfig,
+) {
+    let palette = &config.palette;
+    match config.sidebar_chrome.grab {
+        crate::config::SidebarGrabStyle::Fill => {
+            buffer.set_style(rect, Style::default().bg(palette.accent));
+        }
+        crate::config::SidebarGrabStyle::Marker => {
+            if marker_x < rect.right() {
+                put_text(
+                    buffer,
+                    marker_x,
+                    rect.y,
+                    1,
+                    "↕",
+                    Style::default()
+                        .fg(palette.peach)
+                        .add_modifier(Modifier::BOLD),
+                );
+            }
+        }
+    }
+}
+
+/// Indent for rows after the first: under the first text token after the
+/// icon and number, or the usual 3 columns when the first row starts with text.
+pub(in crate::client::shell) fn continuation_indent(
+    rows: &[Vec<crate::ui::ResolvedToken>],
+    state_icon: &str,
+) -> u16 {
+    match rows
+        .first()
+        .map(|row| crate::ui::leading_gutter_width(row, state_icon))
+    {
+        Some(width) if width > 0 => 1 + width.min(u16::MAX as usize - 1) as u16,
+        _ => 3,
+    }
+}
+
+/// Marks the edges of one sidebar group (a space with its worktrees, or the
+/// agents of one space) inside `rect`.
+pub(in crate::client::shell) fn render_group_border(
+    buffer: &mut Buffer,
+    rect: Rect,
+    border: crate::config::SidebarBorder,
+    group_start: bool,
+    group_end: bool,
+    palette: &Palette,
+) {
+    if rect.is_empty() {
+        return;
+    }
+    match border {
+        crate::config::SidebarBorder::None => {}
+        crate::config::SidebarBorder::Underline => {
+            if group_end {
+                buffer.set_style(
+                    Rect::new(rect.x, rect.bottom() - 1, rect.width, 1),
+                    Style::default()
+                        .add_modifier(Modifier::UNDERLINED)
+                        .underline_color(palette.surface1),
+                );
+            }
+        }
+        crate::config::SidebarBorder::Bracket => {
+            let last = rect.bottom() - 1;
+            for y in rect.top()..rect.bottom() {
+                let symbol = match (y == rect.top() && group_start, y == last && group_end) {
+                    (true, true) => "╶",
+                    (true, false) => "╭",
+                    (false, true) => "╰",
+                    (false, false) => "│",
+                };
+                buffer[(rect.x, y)]
+                    .set_symbol(symbol)
+                    .set_fg(palette.overlay0);
+            }
+        }
+    }
+}
+
+fn number_label(key: Option<char>) -> String {
+    key.map_or_else(|| "  ".to_owned(), |key| format!("{key:<2}"))
+}
+
 pub(in crate::client::shell) fn collapsed_sidebar_sections(
     area: Rect,
 ) -> (Rect, Option<u16>, Rect) {
@@ -50,6 +306,8 @@ pub(crate) fn render_collapsed_sidebar(
     snapshot: &ClientShellSnapshot,
     config: &ClientShellConfig,
     selected_workspace_id: Option<&str>,
+    dragged_workspace_id: Option<&str>,
+    collapsed_groups: &HashSet<String>,
     hits: &mut ShellHitMap,
 ) {
     let palette = &config.palette;
@@ -57,6 +315,17 @@ pub(crate) fn render_collapsed_sidebar(
     let active_background = workspace_active_background(palette, selected_workspace_id.is_some());
     render_sidebar_background(buffer, area, palette);
     let (workspace_area, divider_y, detail_area) = collapsed_sidebar_sections(area);
+    // Numbers follow navigation order, which the switch keys use.
+    let mut navigation_position = vec![None; snapshot.workspaces.len()];
+    for (position, entry) in workspace_entries(snapshot, collapsed_groups)
+        .iter()
+        .enumerate()
+    {
+        if let Some(slot) = navigation_position.get_mut(entry.index) {
+            *slot = Some(position);
+        }
+    }
+    let switch_workspace = &config.keybinds.keybinds.switch_workspace;
     for (index, workspace) in snapshot
         .workspaces
         .iter()
@@ -89,7 +358,10 @@ pub(crate) fn render_collapsed_sidebar(
             rect.x,
             rect.y,
             rect.width.min(2),
-            &format!("{:<2}", index + 1),
+            &number_label(
+                navigation_position[index]
+                    .and_then(|position| crate::config::indexed_key(switch_workspace, position)),
+            ),
             number_style,
         );
         let status = workspace.agent_status;
@@ -99,8 +371,12 @@ pub(crate) fn render_collapsed_sidebar(
             rect.y,
             rect.width.saturating_sub(2),
             status_icon(status, config.status_indicators),
-            Style::default().fg(status_color(status, palette)),
+            Style::default().fg(status_icon_color(status, config)),
         );
+        if selected && dragged_workspace_id == Some(workspace.workspace_id.as_str()) {
+            // Grabbed in navigate mode: the marker replaces the status icon.
+            render_grab_marker(buffer, rect, rect.x.saturating_add(2), config);
+        }
         hits.workspaces.push(WorkspaceHit {
             rect,
             endpoint_id: ClientEndpointId::Local,
@@ -111,13 +387,11 @@ pub(crate) fn render_collapsed_sidebar(
     }
 
     if let Some(divider_y) = divider_y {
-        put_text(
+        render_section_divider(
             buffer,
-            workspace_area.x,
-            divider_y,
-            workspace_area.width,
-            &"─".repeat(workspace_area.width as usize),
-            Style::default().fg(palette.surface_dim),
+            Rect::new(workspace_area.x, divider_y, workspace_area.width, 1),
+            false,
+            config,
         );
     }
 
@@ -153,7 +427,10 @@ pub(crate) fn render_collapsed_sidebar(
             rect.x,
             rect.y,
             rect.width.min(2),
-            &format!("{:<2}", index + 1),
+            &number_label(crate::config::indexed_key(
+                &config.keybinds.keybinds.focus_agent,
+                index,
+            )),
             Style::default().fg(if agent.focused {
                 palette.text
             } else {
@@ -166,34 +443,65 @@ pub(crate) fn render_collapsed_sidebar(
             rect.y,
             rect.width.saturating_sub(2),
             status_icon(agent.agent_status, config.status_indicators),
-            Style::default().fg(status_color(agent.agent_status, palette)),
+            Style::default().fg(status_icon_color(agent.agent_status, config)),
         );
         hits.agents.push((rect, pane_id));
     }
-    hits.sidebar_toggle = if area.is_empty() || workspace_area.width == 0 {
-        Rect::default()
-    } else {
-        Rect::new(
-            workspace_area.x + workspace_area.width / 2,
-            area.bottom().saturating_sub(1),
-            1,
-            1,
-        )
-    };
-    put_text(
+    hits.sidebar_toggle = render_collapsed_toggle(
         buffer,
-        hits.sidebar_toggle.x,
-        hits.sidebar_toggle.y,
-        hits.sidebar_toggle.width,
-        "»",
-        if super::super::global_menu::global_menu_attention(snapshot) {
-            Style::default()
-                .fg(palette.accent)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(palette.overlay0)
-        },
+        area,
+        workspace_area,
+        super::super::global_menu::global_menu_attention(snapshot),
+        config,
     );
+}
+
+/// Draw the collapsed sidebar's expand button, centered on the bottom row.
+pub(in crate::client::shell) fn render_collapsed_toggle(
+    buffer: &mut Buffer,
+    area: Rect,
+    workspace_area: Rect,
+    attention: bool,
+    config: &ClientShellConfig,
+) -> Rect {
+    if area.is_empty() || workspace_area.width == 0 {
+        return Rect::default();
+    }
+    let label = SidebarButtonLabel {
+        chip: "»",
+        text: "»",
+    };
+    let width = sidebar_button_width(label, config).min(workspace_area.width);
+    let x = workspace_area.x + (workspace_area.width - width).div_ceil(2);
+    let y = area.bottom().saturating_sub(1);
+    if config.sidebar_chrome.buttons == crate::config::SidebarButtonStyle::Text {
+        let palette = &config.palette;
+        put_text(
+            buffer,
+            x,
+            y,
+            1,
+            "»",
+            if attention {
+                Style::default()
+                    .fg(palette.accent)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(palette.overlay0)
+            },
+        );
+        return Rect::new(x, y, 1, 1);
+    }
+    render_sidebar_button(
+        buffer,
+        x,
+        y,
+        workspace_area.right(),
+        label,
+        attention,
+        false,
+        config,
+    )
 }
 
 pub(crate) fn render_sidebar(
@@ -215,18 +523,16 @@ pub(crate) fn render_sidebar(
         crate::ui::expanded_sidebar_sections(area, state.sidebar_section_split);
     hits.sidebar_section_divider =
         crate::ui::sidebar_section_divider_rect(area, state.sidebar_section_split);
-    put_text(
+    render_section_header(
         buffer,
-        workspace_area.x,
-        workspace_area.y,
-        workspace_area.width,
-        " spaces",
-        Style::default()
-            .fg(palette.overlay0)
-            .add_modifier(Modifier::BOLD),
+        workspace_area,
+        "spaces",
+        Some(snapshot.workspaces.len()),
+        config,
     );
 
     let entries = workspace_entries(snapshot, state.collapsed_groups);
+    let switch_workspace = &config.keybinds.keybinds.switch_workspace;
     let body = Rect::new(
         workspace_area.x,
         workspace_area.y.saturating_add(WORKSPACE_HEADER_ROWS),
@@ -238,7 +544,8 @@ pub(crate) fn render_sidebar(
     hits.workspace_body = body;
     let row_heights = entries
         .iter()
-        .map(|entry| {
+        .enumerate()
+        .map(|(position, entry)| {
             snapshot
                 .workspaces
                 .get(entry.index)
@@ -247,6 +554,7 @@ pub(crate) fn render_sidebar(
                         workspace,
                         displayed_workspace_status(snapshot, workspace, state.collapsed_groups),
                         entry.indented,
+                        crate::config::indexed_key(switch_workspace, position),
                         &config.spaces,
                     )
                     .len()
@@ -304,7 +612,8 @@ pub(crate) fn render_sidebar(
             continue;
         };
         let status = displayed_workspace_status(snapshot, workspace, state.collapsed_groups);
-        let rows = workspace_rows(workspace, status, entry.indented, &config.spaces);
+        let number = crate::config::indexed_key(switch_workspace, entry_position);
+        let rows = workspace_rows(workspace, status, entry.indented, number, &config.spaces);
         let row_height = (rows.len().max(1).min(u16::MAX as usize) as u16).min(body.height);
         if y.saturating_add(row_height) > body.bottom() {
             break;
@@ -321,17 +630,44 @@ pub(crate) fn render_sidebar(
         } else if workspace.focused {
             buffer.set_style(rect, Style::default().bg(palette.active_row_bg));
         }
+        let content = if config.spaces.border == crate::config::SidebarBorder::Bracket {
+            Rect::new(
+                rect.x + 1,
+                rect.y,
+                rect.width.saturating_sub(1),
+                rect.height,
+            )
+        } else {
+            rect
+        };
         render_workspace_rows(
             buffer,
-            rect,
+            content,
             status,
-            config.status_indicators,
+            config,
             entry,
             rows,
             workspace.focused,
             selected,
             state.selected_workspace_id.is_some(),
             dragged,
+            palette,
+        );
+        if selected && dragged {
+            // Grabbed in navigate mode: the workspace keys move it.
+            // Left of the group toggle column.
+            if rect.width >= 4 {
+                render_grab_marker(buffer, rect, rect.right().saturating_sub(2), config);
+            }
+        }
+        render_group_border(
+            buffer,
+            rect,
+            config.spaces.border,
+            !entry.indented,
+            entries
+                .get(entry_position + 1)
+                .is_none_or(|next| !next.indented),
             palette,
         );
         let group_toggle = render_parent_group_toggle(
@@ -376,58 +712,38 @@ pub(crate) fn render_sidebar(
     }
 
     let footer_y = workspace_area.bottom().saturating_sub(1);
-    if config.mouse_capture {
-        hits.new_workspace = Rect::new(
-            workspace_area.x,
-            footer_y,
-            5.min(workspace_area.width),
-            u16::from(workspace_area.height > 0),
-        );
-        put_text(
+    if config.mouse_capture && workspace_area.height > 0 {
+        hits.new_workspace = render_sidebar_button(
             buffer,
             workspace_area.x,
             footer_y,
-            workspace_area.width,
-            " new",
-            Style::default().fg(palette.overlay0),
+            workspace_area.right(),
+            SidebarButtonLabel {
+                chip: "+ new",
+                text: " new",
+            },
+            false,
+            false,
+            config,
         );
         let attention = super::super::global_menu::global_menu_attention(snapshot);
-        let launcher_width = if attention { 8 } else { 6 }.min(workspace_area.width);
-        hits.global_launcher = Rect::new(
-            workspace_area.right().saturating_sub(launcher_width),
+        let label = SidebarButtonLabel {
+            chip: if attention { "● menu" } else { "≡ menu" },
+            text: if attention { "● menu" } else { "menu" },
+        };
+        hits.global_launcher = render_sidebar_button(
+            buffer,
+            workspace_area
+                .right()
+                .saturating_sub(sidebar_button_width(label, config))
+                .max(workspace_area.x),
             footer_y,
-            launcher_width,
-            1,
+            workspace_area.right(),
+            label,
+            attention,
+            false,
+            config,
         );
-        if attention {
-            let start_x = workspace_area.right().saturating_sub(6);
-            put_text(
-                buffer,
-                start_x,
-                footer_y,
-                2,
-                "● ",
-                Style::default()
-                    .fg(palette.accent)
-                    .add_modifier(Modifier::BOLD),
-            );
-            put_text(
-                buffer,
-                start_x.saturating_add(2),
-                footer_y,
-                4,
-                "menu",
-                Style::default().fg(palette.overlay0),
-            );
-        } else {
-            put_right_text(
-                buffer,
-                workspace_area,
-                footer_y,
-                "menu",
-                Style::default().fg(palette.overlay0),
-            );
-        }
     }
 
     super::render_agent_panel(
@@ -664,6 +980,7 @@ pub(in crate::client::shell) fn workspace_rows(
     workspace: &ClientShellWorkspace,
     status: crate::api::schema::AgentStatus,
     indented: bool,
+    number: Option<char>,
     config: &SpacesSidebarConfig,
 ) -> Vec<Vec<crate::ui::ResolvedToken>> {
     let label = if indented && !workspace.custom_label {
@@ -683,6 +1000,7 @@ pub(in crate::client::shell) fn workspace_rows(
             branch: workspace.branch.as_deref(),
             state_text: status_text(status),
             ahead_behind: workspace.git_ahead_behind,
+            number,
             tokens: &token_values,
             suppress_git_details: indented,
         },
@@ -693,7 +1011,7 @@ pub(in crate::client::shell) fn render_workspace_rows(
     buffer: &mut Buffer,
     area: Rect,
     status: crate::api::schema::AgentStatus,
-    indicators: crate::config::StatusIndicatorStyle,
+    config: &ClientShellConfig,
     entry: &WorkspaceEntry,
     rows: Vec<Vec<crate::ui::ResolvedToken>>,
     focused: bool,
@@ -731,7 +1049,10 @@ pub(in crate::client::shell) fn render_workspace_rows(
         } else if row_index == 0 {
             x = x.saturating_add(1);
         } else {
-            x = x.saturating_add(3);
+            x = x.saturating_add(continuation_indent(
+                &rows,
+                status_icon(status, config.status_indicators),
+            ));
         }
         let highlighted = focused || dragged;
         let workspace_style = Style::default()
@@ -753,8 +1074,8 @@ pub(in crate::client::shell) fn render_workspace_rows(
         let spans = crate::ui::resolved_token_spans(
             row,
             (
-                status_icon(status, indicators),
-                Style::default().fg(status_color(status, palette)),
+                status_icon(status, config.status_indicators),
+                Style::default().fg(status_icon_color(status, config)),
             ),
             Style::default().fg(status_color(status, palette)),
             workspace_style,

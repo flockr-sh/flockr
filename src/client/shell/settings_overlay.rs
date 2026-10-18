@@ -170,6 +170,18 @@ pub(super) fn render_settings_overlay(
                 &mut choice_hits,
             );
         }
+        ClientSettingsSection::Pulse => {
+            render_choice_section(
+                buffer,
+                content,
+                "working pulse",
+                "pulse the status indicator while an agent is working",
+                &["on", "off"],
+                settings.selected,
+                palette,
+                &mut choice_hits,
+            );
+        }
         ClientSettingsSection::Sound => {
             render_choice_section(
                 buffer,

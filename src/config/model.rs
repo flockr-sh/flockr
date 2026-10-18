@@ -369,6 +369,17 @@ pub struct KeysConfig {
     pub navigate_pane_up: BindingConfig,
     /// Focus the pane to the right in navigate mode. Default: "l". Right arrow is always an alias.
     pub navigate_pane_right: BindingConfig,
+    /// Focus the previous agent in navigate mode and stay in it. Unset by default.
+    pub navigate_agent_up: BindingConfig,
+    /// Focus the next agent in navigate mode and stay in it. Unset by default.
+    pub navigate_agent_down: BindingConfig,
+    /// Focus an agent by its number from navigate mode. Unset by default.
+    pub navigate_focus_agent: BindingConfig,
+    /// Switch to a workspace by its number from navigate mode. Default: "1..9".
+    pub navigate_switch_workspace: BindingConfig,
+    /// Grab the selected workspace in navigate mode so the workspace keys move it.
+    /// Press again or Enter to drop it, Esc to put it back. Default: "m".
+    pub navigate_move_workspace: BindingConfig,
     /// Detach the current client from its Flockr server. Default: "prefix+q".
     pub detach: BindingConfig,
     /// Reload config.toml in the running app/server. Default: "prefix+shift+r".
@@ -383,7 +394,7 @@ pub struct KeysConfig {
     pub previous_agent: BindingConfig,
     /// Focus the next agent shown in the agent panel. Unset by default.
     pub next_agent: BindingConfig,
-    /// Focus an agent by index 1-9. Unset by default.
+    /// Focus an agent by its number. Default: "alt+1..9".
     pub focus_agent: BindingConfig,
     /// Local-client shortcut that sends a clipboard image to a remote Flockr session. Default: "ctrl+v".
     pub remote_image_paste: String,
@@ -401,7 +412,8 @@ pub struct KeysConfig {
     pub move_tab_next: BindingConfig,
     /// Switch to tab 1-9. Default: "prefix+1..9".
     pub switch_tab: BindingConfig,
-    /// Switch to workspace 1-9 from prefix mode. Unset by default.
+    /// Switch to a workspace by its number; keys after 1..9 cover 10 and up.
+    /// Default: "alt+shift+1..9".
     pub switch_workspace: BindingConfig,
     /// Close the active tab. Default: "prefix+shift+x".
     pub close_tab: BindingConfig,
@@ -506,6 +518,16 @@ pub(crate) struct KeysConfigOverlay {
     navigate_pane_up: Option<BindingConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     navigate_pane_right: Option<BindingConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    navigate_agent_up: Option<BindingConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    navigate_agent_down: Option<BindingConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    navigate_focus_agent: Option<BindingConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    navigate_switch_workspace: Option<BindingConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    navigate_move_workspace: Option<BindingConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     detach: Option<BindingConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -660,6 +682,11 @@ impl<'de> Deserialize<'de> for KeysConfig {
         apply_field!(navigate_pane_down);
         apply_field!(navigate_pane_up);
         apply_field!(navigate_pane_right);
+        apply_field!(navigate_agent_up);
+        apply_field!(navigate_agent_down);
+        apply_field!(navigate_focus_agent);
+        apply_field!(navigate_switch_workspace);
+        apply_field!(navigate_move_workspace);
         apply_field!(detach);
         apply_field!(reload_config);
         apply_field!(open_notification_target);
@@ -765,6 +792,14 @@ impl KeysConfig {
         copy_effective_action_field!(navigate_pane_down, keybinds.navigate.pane_down);
         copy_effective_action_field!(navigate_pane_up, keybinds.navigate.pane_up);
         copy_effective_action_field!(navigate_pane_right, keybinds.navigate.pane_right);
+        copy_effective_action_field!(navigate_agent_up, keybinds.navigate.agent_up);
+        copy_effective_action_field!(navigate_agent_down, keybinds.navigate.agent_down);
+        copy_effective_indexed_field!(navigate_focus_agent, keybinds.navigate.focus_agent);
+        copy_effective_indexed_field!(
+            navigate_switch_workspace,
+            keybinds.navigate.switch_workspace
+        );
+        copy_effective_action_field!(navigate_move_workspace, keybinds.navigate.move_workspace);
         copy_effective_action_field!(detach, keybinds.detach);
         copy_effective_action_field!(reload_config, keybinds.reload_config);
         copy_effective_action_field!(open_notification_target, keybinds.open_notification_target);
@@ -998,6 +1033,8 @@ pub struct UiConfig {
     _legacy_agent_panel_scope: Option<LegacyAgentPanelScopeConfig>,
     /// Agent status indicator style. Saved values are "dots" or "symbols". Default: "dots".
     pub status_indicators: StatusIndicatorStyle,
+    /// Pulse the working status indicator. Default: true.
+    pub pulse_working: bool,
     /// Expanded sidebar row composition.
     pub sidebar: SidebarConfig,
     /// Accent color for highlights, borders, and navigation UI.
@@ -1137,6 +1174,11 @@ impl Default for KeysConfig {
             navigate_pane_down: BindingConfig::one("j"),
             navigate_pane_up: BindingConfig::one("k"),
             navigate_pane_right: BindingConfig::one("l"),
+            navigate_agent_up: BindingConfig::empty(),
+            navigate_agent_down: BindingConfig::empty(),
+            navigate_focus_agent: BindingConfig::empty(),
+            navigate_switch_workspace: BindingConfig::one("1..9"),
+            navigate_move_workspace: BindingConfig::one("m"),
             detach: BindingConfig::one("prefix+q"),
             reload_config: BindingConfig::one("prefix+shift+r"),
             open_notification_target: BindingConfig::one("prefix+o"),
@@ -1144,7 +1186,9 @@ impl Default for KeysConfig {
             next_workspace: BindingConfig::empty(),
             previous_agent: BindingConfig::empty(),
             next_agent: BindingConfig::empty(),
-            focus_agent: BindingConfig::empty(),
+            // Terminals with tabs (Ghostty, GNOME Terminal, Konsole) take alt+1..9
+            // first; their users rebind it there or here.
+            focus_agent: BindingConfig::one("alt+1..9"),
             remote_image_paste: "ctrl+v".into(),
             new_tab: BindingConfig::one("prefix+c"),
             rename_tab: BindingConfig::one("prefix+shift+t"),
@@ -1153,7 +1197,7 @@ impl Default for KeysConfig {
             move_tab_previous: BindingConfig::empty(),
             move_tab_next: BindingConfig::empty(),
             switch_tab: BindingConfig::one("prefix+1..9"),
-            switch_workspace: BindingConfig::empty(),
+            switch_workspace: BindingConfig::one("alt+shift+1..9"),
             close_tab: BindingConfig::one("prefix+shift+x"),
             rename_pane: BindingConfig::one("prefix+shift+p"),
             edit_scrollback: BindingConfig::one("prefix+e"),
@@ -1170,15 +1214,16 @@ impl Default for KeysConfig {
             cycle_pane_next: BindingConfig::one("prefix+tab"),
             cycle_pane_previous: BindingConfig::one("prefix+shift+tab"),
             last_pane: BindingConfig::empty(),
-            split_vertical: BindingConfig::one("prefix+v"),
-            split_horizontal: BindingConfig::one("prefix+minus"),
+            // tmux's % and " alongside the vim-style keys.
+            split_vertical: BindingConfig::Many(vec!["prefix+v".into(), "prefix+%".into()]),
+            split_horizontal: BindingConfig::Many(vec!["prefix+minus".into(), "prefix+\"".into()]),
             close_pane: BindingConfig::one("prefix+x"),
             zoom: BindingConfig::one("prefix+z"),
             resize_mode: BindingConfig::one("prefix+r"),
-            resize_pane_left: BindingConfig::empty(),
-            resize_pane_down: BindingConfig::empty(),
-            resize_pane_up: BindingConfig::empty(),
-            resize_pane_right: BindingConfig::empty(),
+            resize_pane_left: BindingConfig::one("prefix+ctrl+h"),
+            resize_pane_down: BindingConfig::one("prefix+ctrl+j"),
+            resize_pane_up: BindingConfig::one("prefix+ctrl+k"),
+            resize_pane_right: BindingConfig::one("prefix+ctrl+l"),
             toggle_sidebar: BindingConfig::one("prefix+b"),
             indexed: IndexedKeysConfig::default(),
             command: Vec::new(),
@@ -1226,6 +1271,7 @@ impl Default for UiConfig {
             agent_panel_sort: AgentPanelSortConfig::Spaces,
             _legacy_agent_panel_scope: None,
             status_indicators: StatusIndicatorStyle::Dots,
+            pulse_working: true,
             sidebar: SidebarConfig::default(),
             accent: "cyan".into(),
             toast: ToastConfig::default(),
@@ -1490,6 +1536,20 @@ status_indicators = "symbols"
         )
         .unwrap();
         assert_eq!(config.ui.status_indicators, StatusIndicatorStyle::Symbols);
+    }
+
+    #[test]
+    fn pulse_working_defaults_on_and_parses_off() {
+        assert!(Config::default().ui.pulse_working);
+
+        let config: Config = toml::from_str(
+            r#"
+[ui]
+pulse_working = false
+"#,
+        )
+        .unwrap();
+        assert!(!config.ui.pulse_working);
     }
 
     #[test]

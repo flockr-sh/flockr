@@ -202,7 +202,13 @@ impl ClientShellState {
                 Some(source_workspace_id.as_str()),
                 target.as_ref().map(|(_, row)| *row),
             ),
-            _ => (None, None),
+            _ => (
+                self.navigate_grab
+                    .as_ref()
+                    .filter(|_| self.mode == ClientShellMode::Navigate)
+                    .map(|grab| grab.workspace_id.as_str()),
+                None,
+            ),
         };
         let mut buffer = Buffer::empty(Rect::new(0, 0, cols, rows));
         self.hits = render::render_shell(

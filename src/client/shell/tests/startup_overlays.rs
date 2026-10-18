@@ -676,24 +676,22 @@ fn update_ready_menu_opens_client_owned_release_notes_and_dismisses_by_version()
     state.set_snapshot(Box::new(endpoint_snapshot.clone()));
     state.set_pane_surface(surface());
     let shell = state.compose(106, 30).expect("shell frame");
+    // " ● menu " chip in the accent color.
     assert_eq!(state.hits.global_launcher.width, 8);
     let launcher = state.hits.global_launcher;
     let shell_buffer = shell.to_ratatui_buffer().expect("shell buffer");
-    let badge_x = launcher.right().saturating_sub(6);
+    assert_eq!(shell_buffer[(launcher.x + 1, launcher.y)].symbol(), "●");
     assert_eq!(
-        shell_buffer[(badge_x, launcher.y)].fg,
+        shell_buffer[(launcher.x + 1, launcher.y)].bg,
         state.config.palette.accent
-    );
-    assert_eq!(
-        shell_buffer[(badge_x + 2, launcher.y)].fg,
-        state.config.palette.overlay0
     );
 
     state.sidebar_collapsed = true;
     let collapsed = state.compose(106, 30).expect("collapsed update shell");
     let collapsed_buffer = collapsed.to_ratatui_buffer().expect("collapsed buffer");
+    // The collapsed » chip carries the attention accent.
     assert_eq!(
-        collapsed_buffer[(state.hits.sidebar_toggle.x, state.hits.sidebar_toggle.y)].fg,
+        collapsed_buffer[(state.hits.sidebar_toggle.x, state.hits.sidebar_toggle.y)].bg,
         state.config.palette.accent
     );
     state.sidebar_collapsed = false;
@@ -890,8 +888,13 @@ fn update_ready_menu_opens_client_owned_release_notes_and_dismisses_by_version()
     installed_surface.boot_id = "boot-2".into();
     installed_surface.projection_revision = 2;
     state.set_pane_surface(installed_surface);
-    state.compose(106, 30).expect("installed shell");
-    assert_eq!(state.hits.global_launcher.width, 6);
+    let installed_shell = state.compose(106, 30).expect("installed shell");
+    let launcher = state.hits.global_launcher;
+    let installed_buffer = installed_shell
+        .to_ratatui_buffer()
+        .expect("installed buffer");
+    // The attention badge is gone once the update is installed.
+    assert_eq!(installed_buffer[(launcher.x + 1, launcher.y)].symbol(), "≡");
     state.toggle_global_menu();
     let installed = state.compose(106, 30).expect("installed menu");
     let installed_text = installed
@@ -1139,8 +1142,15 @@ fn current_release_notes_use_whats_new_without_attention_badge() {
     });
     state.set_snapshot(Box::new(endpoint_snapshot));
     state.set_pane_surface(surface());
-    state.compose(106, 30).expect("shell frame");
-    assert_eq!(state.hits.global_launcher.width, 6);
+    let shell = state.compose(106, 30).expect("shell frame");
+    // " ≡ menu " chip without the accent.
+    assert_eq!(state.hits.global_launcher.width, 8);
+    let launcher = state.hits.global_launcher;
+    let shell_buffer = shell.to_ratatui_buffer().expect("shell buffer");
+    assert_ne!(
+        shell_buffer[(launcher.x + 1, launcher.y)].bg,
+        state.config.palette.accent
+    );
     state.toggle_global_menu();
     let menu = state.compose(106, 30).expect("what's new menu");
     let text = menu
@@ -1196,7 +1206,7 @@ fn client_settings_preview_restore_and_endpoint_integrations_are_owned_by_overla
 
     state.open_settings_overlay();
     state.compose(106, 30).expect("settings overlay");
-    for _ in 0..3 {
+    for _ in 0..4 {
         let next = state.handle_input_bytes(b"\t");
         assert!(next.actions.is_empty());
     }

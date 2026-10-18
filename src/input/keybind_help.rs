@@ -50,8 +50,20 @@ fn indexed_label(bindings: &[IndexedKeybind]) -> String {
     let mut index = 0;
     while index < bindings.len() {
         if let Some(prefix) = indexed_range_prefix(&bindings[index..]) {
-            parts.push(format!("{prefix}1..9"));
+            let mut label = format!("{prefix}1..9");
             index += 9;
+            // Keys past 9 in the same range, as in `1..9,0,y`.
+            while let Some(key) = bindings.get(index).and_then(|binding| {
+                binding
+                    .label
+                    .strip_prefix(prefix)
+                    .filter(|key| key.chars().count() == 1)
+            }) {
+                label.push(',');
+                label.push_str(key);
+                index += 1;
+            }
+            parts.push(label);
         } else {
             parts.push(bindings[index].label.clone());
             index += 1;

@@ -364,7 +364,9 @@ impl FlockrPath {
                         }
                     }
                 }
-                ClientShellAction::Endpoint { .. } => {}
+                // A binding that acts through the server, such as next_workspace,
+                // still means Flockr kept the key.
+                ClientShellAction::Endpoint { .. } => owned = true,
                 ClientShellAction::ReplayMouse(mouse) => replay.extend(mouse),
                 _ => owned = true,
             }

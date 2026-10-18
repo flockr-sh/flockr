@@ -115,6 +115,8 @@ pub enum AgentSidebarToken {
     Agent,
     TerminalTitle,
     TerminalTitleStripped,
+    /// The key that focuses this agent.
+    Number,
     Custom(String),
     Styled {
         token: Box<AgentSidebarToken>,
@@ -130,6 +132,8 @@ pub enum SpaceSidebarToken {
     Workspace,
     Branch,
     GitStatus,
+    /// The key that switches to this space.
+    Number,
     Custom(String),
     Styled {
         token: Box<SpaceSidebarToken>,
@@ -279,6 +283,7 @@ fn agent_token_name(token: &AgentSidebarToken) -> String {
         AgentSidebarToken::Agent => "agent".into(),
         AgentSidebarToken::TerminalTitle => "terminal_title".into(),
         AgentSidebarToken::TerminalTitleStripped => "terminal_title_stripped".into(),
+        AgentSidebarToken::Number => "number".into(),
         AgentSidebarToken::Custom(name) => format!("${name}"),
         AgentSidebarToken::Styled { token, .. } => agent_token_name(token),
     }
@@ -291,6 +296,7 @@ fn space_token_name(token: &SpaceSidebarToken) -> String {
         SpaceSidebarToken::Workspace => "workspace".into(),
         SpaceSidebarToken::Branch => "branch".into(),
         SpaceSidebarToken::GitStatus => "git_status".into(),
+        SpaceSidebarToken::Number => "number".into(),
         SpaceSidebarToken::Custom(name) => format!("${name}"),
         SpaceSidebarToken::Styled { token, .. } => space_token_name(token),
     }
@@ -338,6 +344,7 @@ impl<'de> Deserialize<'de> for AgentSidebarToken {
                 ("agent", Self::Agent),
                 ("terminal_title", Self::TerminalTitle),
                 ("terminal_title_stripped", Self::TerminalTitleStripped),
+                ("number", Self::Number),
             ],
         )
         .map_err(serde::de::Error::custom)?;
@@ -387,6 +394,7 @@ impl<'de> Deserialize<'de> for SpaceSidebarToken {
                 ("workspace", Self::Workspace),
                 ("branch", Self::Branch),
                 ("git_status", Self::GitStatus),
+                ("number", Self::Number),
             ],
         )
         .map_err(serde::de::Error::custom)?;
@@ -419,6 +427,18 @@ where
     Ok(rows_by_agent)
 }
 
+/// How the sidebar marks where one space (or space group of agents) ends.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SidebarBorder {
+    #[default]
+    None,
+    /// Underlines the last line of each group. Takes no extra rows.
+    Underline,
+    /// Draws a bracket in the left column around each group.
+    Bracket,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default)]
 pub struct AgentsSidebarConfig {
@@ -427,6 +447,7 @@ pub struct AgentsSidebarConfig {
     #[serde(default, deserialize_with = "deserialize_rows_by_agent")]
     pub rows_by_agent: BTreeMap<String, AgentSidebarRows>,
     pub row_gap: u16,
+    pub border: SidebarBorder,
 }
 
 impl AgentsSidebarConfig {
@@ -443,6 +464,7 @@ impl Default for AgentsSidebarConfig {
             rows: vec![
                 vec![
                     AgentSidebarToken::StateIcon,
+                    AgentSidebarToken::Number,
                     AgentSidebarToken::Machine,
                     AgentSidebarToken::Workspace,
                     AgentSidebarToken::Tab,
@@ -451,6 +473,7 @@ impl Default for AgentsSidebarConfig {
             ],
             rows_by_agent: BTreeMap::new(),
             row_gap: DEFAULT_SIDEBAR_ROW_GAP,
+            border: SidebarBorder::None,
         }
     }
 }
@@ -461,25 +484,118 @@ pub struct SpacesSidebarConfig {
     #[serde(deserialize_with = "deserialize_sidebar_rows")]
     pub rows: SpaceSidebarRows,
     pub row_gap: u16,
+    pub border: SidebarBorder,
 }
 
 impl Default for SpacesSidebarConfig {
     fn default() -> Self {
         Self {
             rows: vec![
-                vec![SpaceSidebarToken::StateIcon, SpaceSidebarToken::Workspace],
+                vec![
+                    SpaceSidebarToken::StateIcon,
+                    SpaceSidebarToken::Number,
+                    SpaceSidebarToken::Workspace,
+                ],
                 vec![SpaceSidebarToken::Branch, SpaceSidebarToken::GitStatus],
             ],
             row_gap: DEFAULT_SIDEBAR_ROW_GAP,
+            border: SidebarBorder::None,
         }
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize, Serialize)]
+/// How the sidebar draws its section headers (spaces, machines, agents).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SidebarHeaderStyle {
+    /// Fills the header row with a surface color.
+    #[default]
+    Band,
+    /// Bold text only.
+    Plain,
+}
+
+/// How the sidebar draws the line between spaces and agents.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SidebarDividerStyle {
+    /// A visible line with a grip in the middle, since the line can be dragged.
+    #[default]
+    Handle,
+    /// A visible line.
+    Line,
+    /// A line in the dimmest surface color.
+    Dim,
+}
+
+/// How the sidebar draws its clickable labels (new, menu, sort).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SidebarButtonStyle {
+    /// Padded labels on a surface background.
+    #[default]
+    Chip,
+    /// Plain muted text.
+    Text,
+}
+
+/// How the sidebar marks a space grabbed in navigate mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SidebarGrabStyle {
+    /// Keeps the selection color and adds a ↕ marker.
+    #[default]
+    Marker,
+    /// Fills the row with the accent color.
+    Fill,
+}
+
+/// The sidebar's look apart from its rows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SidebarChrome {
+    pub header: SidebarHeaderStyle,
+    pub header_counts: bool,
+    pub divider: SidebarDividerStyle,
+    pub buttons: SidebarButtonStyle,
+    pub grab: SidebarGrabStyle,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default)]
 pub struct SidebarConfig {
+    pub header: SidebarHeaderStyle,
+    pub header_counts: bool,
+    pub divider: SidebarDividerStyle,
+    pub buttons: SidebarButtonStyle,
+    pub grab: SidebarGrabStyle,
     pub agents: AgentsSidebarConfig,
     pub spaces: SpacesSidebarConfig,
+}
+
+impl Default for SidebarConfig {
+    fn default() -> Self {
+        Self {
+            header: SidebarHeaderStyle::default(),
+            header_counts: true,
+            divider: SidebarDividerStyle::default(),
+            buttons: SidebarButtonStyle::default(),
+            grab: SidebarGrabStyle::default(),
+            agents: AgentsSidebarConfig::default(),
+            spaces: SpacesSidebarConfig::default(),
+        }
+    }
+}
+
+impl SidebarConfig {
+    pub fn chrome(&self) -> SidebarChrome {
+        SidebarChrome {
+            header: self.header,
+            header_counts: self.header_counts,
+            divider: self.divider,
+            buttons: self.buttons,
+            grab: self.grab,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -494,6 +610,7 @@ mod tests {
             vec![
                 vec![
                     AgentSidebarToken::StateIcon,
+                    AgentSidebarToken::Number,
                     AgentSidebarToken::Machine,
                     AgentSidebarToken::Workspace,
                     AgentSidebarToken::Tab,
@@ -506,11 +623,60 @@ mod tests {
         assert_eq!(
             config.spaces.rows,
             vec![
-                vec![SpaceSidebarToken::StateIcon, SpaceSidebarToken::Workspace],
+                vec![
+                    SpaceSidebarToken::StateIcon,
+                    SpaceSidebarToken::Number,
+                    SpaceSidebarToken::Workspace,
+                ],
                 vec![SpaceSidebarToken::Branch, SpaceSidebarToken::GitStatus],
             ]
         );
         assert_eq!(config.spaces.row_gap, 0);
+        assert_eq!(config.agents.border, SidebarBorder::None);
+        assert_eq!(config.spaces.border, SidebarBorder::None);
+        assert_eq!(
+            config.chrome(),
+            SidebarChrome {
+                header: SidebarHeaderStyle::Band,
+                header_counts: true,
+                divider: SidebarDividerStyle::Handle,
+                buttons: SidebarButtonStyle::Chip,
+                grab: SidebarGrabStyle::Marker,
+            }
+        );
+    }
+
+    #[test]
+    fn parses_chrome_styles() {
+        let config: crate::config::Config = toml::from_str(
+            r#"
+[ui.sidebar]
+header = "plain"
+header_counts = false
+divider = "dim"
+buttons = "text"
+grab = "fill"
+
+[ui.sidebar.spaces]
+row_gap = 1
+"#,
+        )
+        .expect("sidebar chrome config");
+
+        assert_eq!(
+            config.ui.sidebar.chrome(),
+            SidebarChrome {
+                header: SidebarHeaderStyle::Plain,
+                header_counts: false,
+                divider: SidebarDividerStyle::Dim,
+                buttons: SidebarButtonStyle::Text,
+                grab: SidebarGrabStyle::Fill,
+            }
+        );
+        assert_eq!(config.ui.sidebar.spaces.row_gap, 1);
+        let line: crate::config::Config =
+            toml::from_str("[ui.sidebar]\ndivider = \"line\"\n").expect("sidebar chrome config");
+        assert_eq!(line.ui.sidebar.divider, SidebarDividerStyle::Line);
     }
 
     #[test]
@@ -520,6 +686,7 @@ mod tests {
 [ui.sidebar.agents]
 rows = [["state_icon", "workspace"], ["state_text", "agent", "$summary"], ["terminal_title", "terminal_title_stripped", "$terminal_title"]]
 row_gap = 1
+border = "underline"
 
 [ui.sidebar.agents.rows_by_agent]
 claude = [["terminal_title_stripped"], ["agent", "$model"]]
@@ -527,6 +694,7 @@ claude = [["terminal_title_stripped"], ["agent", "$model"]]
 [ui.sidebar.spaces]
 rows = [["workspace"], ["$jj_status"]]
 row_gap = 3
+border = "bracket"
 "#,
         )
         .expect("sidebar token config");
@@ -563,6 +731,8 @@ row_gap = 3
             vec![SpaceSidebarToken::Custom("jj_status".into())]
         );
         assert_eq!(config.ui.sidebar.spaces.row_gap, 3);
+        assert_eq!(config.ui.sidebar.agents.border, SidebarBorder::Underline);
+        assert_eq!(config.ui.sidebar.spaces.border, SidebarBorder::Bracket);
     }
 
     #[test]

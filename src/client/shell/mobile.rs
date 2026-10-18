@@ -112,7 +112,7 @@ fn render_header_status(
             status_icon(workspace.agent_status, config.status_indicators)
         ),
         Style::default()
-            .fg(status_color(workspace.agent_status, palette))
+            .fg(status_icon_color(workspace.agent_status, config))
             .bg(palette.panel_bg),
     );
     put_text(
@@ -324,7 +324,7 @@ fn render_agent_summary(
         let color = if shown == 0 {
             match status {
                 AgentStatus::Done => config.palette.blue,
-                _ => status_color(status, &config.palette),
+                _ => status_icon_color(status, config),
             }
         } else {
             config.palette.overlay1
@@ -710,7 +710,7 @@ fn mobile_items(
                                 .fg(if endpoint.stale() {
                                     palette.overlay0
                                 } else {
-                                    status_color(agent.agent_status, palette)
+                                    status_icon_color(agent.agent_status, config)
                                 })
                                 .bg(background)
                                 .add_modifier(dim),
@@ -819,7 +819,7 @@ fn mobile_items(
             let status = if endpoint.stale() {
                 palette.overlay0
             } else {
-                status_color(workspace.agent_status, palette)
+                status_icon_color(workspace.agent_status, config)
             };
             let stale_detail = if endpoint.stale() {
                 format!(" · {}", mobile_endpoint_state(endpoint.status))
@@ -966,6 +966,8 @@ impl ClientShellState {
                 self.pending_workspace_highlight = None;
                 self.mode = ClientShellMode::Navigate;
                 self.navigate_workspace_id = self.focused_navigation_target();
+                self.navigate_grab = None;
+                self.navigate_follow_focus = false;
                 outcome.repaint = true;
                 return true;
             }

@@ -527,3 +527,94 @@ fn close_confirmation_error_becomes_client_owned_overlay_and_stable_workspace_cl
             if params.workspace_id == "ws_1" && !params.close_group
     ));
 }
+
+fn sidebar_row(buffer: &ratatui::buffer::Buffer, y: u16, width: u16) -> String {
+    (0..width)
+        .map(|x| buffer[(x, y)].symbol())
+        .collect::<String>()
+}
+
+#[test]
+fn sidebar_chrome_defaults_draw_header_bands_counts_chips_and_a_grip() {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.set_snapshot(Box::new(snapshot()));
+    state.set_pane_surface(surface());
+    let frame = state.compose(106, 30).expect("sidebar");
+    let buffer = frame.to_ratatui_buffer().expect("sidebar buffer");
+    let width = state.hits.sidebar_divider.x;
+    let palette = &state.config.palette;
+
+    let header = sidebar_row(&buffer, 0, width);
+    assert!(header.starts_with(" spaces 1"), "{header:?}");
+    assert_eq!(buffer[(width - 1, 0)].bg, palette.surface0);
+
+    let new = state.hits.new_workspace;
+    assert_eq!(sidebar_row(&buffer, new.y, new.right()).trim(), "+ new");
+    assert_eq!(buffer[(new.x, new.y)].bg, palette.surface0);
+    let menu = state.hits.global_launcher;
+    assert_eq!(menu.right(), width);
+    assert_eq!(buffer[(menu.x + 1, menu.y)].symbol(), "≡");
+
+    let split = state.hits.sidebar_section_divider;
+    assert!(sidebar_row(&buffer, split.y, width).contains("━━━"));
+    let agents = sidebar_row(&buffer, split.y + 1, width);
+    assert!(agents.starts_with(" agents 0"), "{agents:?}");
+    assert!(agents.trim_end().ends_with("grouped ▾"), "{agents:?}");
+    assert_eq!(state.hits.agent_sort_toggle.right(), width);
+}
+
+#[test]
+fn sidebar_chrome_text_styles_keep_the_plain_look() {
+    let config: Config = toml::from_str(
+        "[ui.sidebar]\nheader = \"plain\"\nheader_counts = false\ndivider = \"dim\"\nbuttons = \"text\"\n",
+    )
+    .expect("config");
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&config));
+    state.set_snapshot(Box::new(snapshot()));
+    state.set_pane_surface(surface());
+    let frame = state.compose(106, 30).expect("sidebar");
+    let buffer = frame.to_ratatui_buffer().expect("sidebar buffer");
+    let width = state.hits.sidebar_divider.x;
+    let palette = &state.config.palette;
+
+    assert_eq!(sidebar_row(&buffer, 0, width).trim_end(), " spaces");
+    assert_ne!(buffer[(width - 1, 0)].bg, palette.surface0);
+    let footer = sidebar_row(&buffer, state.hits.new_workspace.y, width);
+    assert!(footer.starts_with(" new"), "{footer:?}");
+    assert!(footer.trim_end().ends_with(" menu"), "{footer:?}");
+    let split = state.hits.sidebar_section_divider;
+    assert!(!sidebar_row(&buffer, split.y, width).contains('━'));
+    assert_eq!(buffer[(0, split.y)].fg, palette.surface_dim);
+    let agents = sidebar_row(&buffer, split.y + 1, width);
+    assert!(agents.starts_with(" agents "), "{agents:?}");
+    assert!(agents.trim_end().ends_with(" grouped"), "{agents:?}");
+}
+
+#[test]
+fn collapsed_sidebar_toggle_is_a_chip_unless_buttons_are_text() {
+    for (config, chip) in [("", true), ("[ui.sidebar]\nbuttons = \"text\"\n", false)] {
+        let config: Config = toml::from_str(config).expect("config");
+        let mut state = ClientShellState::new(ClientShellConfig::from_config(&config));
+        state.set_snapshot(Box::new(snapshot()));
+        state.set_pane_surface(surface());
+        state.sidebar_collapsed = true;
+        let frame = state.compose(106, 30).expect("collapsed sidebar");
+        let buffer = frame.to_ratatui_buffer().expect("collapsed buffer");
+        let toggle = state.hits.sidebar_toggle;
+        if chip {
+            assert_eq!((toggle.x, toggle.width), (0, 3));
+            assert_eq!(buffer[(toggle.x + 1, toggle.y)].symbol(), "»");
+            assert_eq!(
+                buffer[(toggle.x, toggle.y)].bg,
+                state.config.palette.surface0
+            );
+        } else {
+            assert_eq!(toggle.width, 1);
+            assert_eq!(buffer[(toggle.x, toggle.y)].symbol(), "»");
+            assert_ne!(
+                buffer[(toggle.x, toggle.y)].bg,
+                state.config.palette.surface0
+            );
+        }
+    }
+}

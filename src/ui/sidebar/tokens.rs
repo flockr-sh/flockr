@@ -20,7 +20,12 @@ pub(crate) enum ResolvedTokenKind {
     Agent(String),
     TerminalTitle(String),
     Branch(String),
-    GitStatus { ahead: usize, behind: usize },
+    GitStatus {
+        ahead: usize,
+        behind: usize,
+    },
+    /// The key that focuses or switches to this entry.
+    Number(char),
     Custom(String),
 }
 
@@ -36,7 +41,7 @@ impl ResolvedTokenKind {
             | Self::TerminalTitle(value)
             | Self::Branch(value)
             | Self::Custom(value) => Some(value),
-            Self::StateIcon | Self::GitStatus { .. } => None,
+            Self::StateIcon | Self::GitStatus { .. } | Self::Number(_) => None,
         }
     }
 }
@@ -61,6 +66,7 @@ pub(crate) struct AgentTokenContext<'a> {
     pub(crate) terminal_title: Option<&'a str>,
     pub(crate) terminal_title_stripped: Option<&'a str>,
     pub(crate) canonical_agent: Option<crate::detect::Agent>,
+    pub(crate) number: Option<char>,
     pub(crate) tokens: &'a std::collections::HashMap<String, String>,
 }
 
@@ -103,6 +109,7 @@ pub(crate) fn agent_rows(
                         AgentSidebarToken::TerminalTitleStripped => context
                             .terminal_title_stripped
                             .map(|value| ResolvedTokenKind::TerminalTitle(value.to_string())),
+                        AgentSidebarToken::Number => context.number.map(ResolvedTokenKind::Number),
                         AgentSidebarToken::Custom(name) => context
                             .tokens
                             .get(name)
@@ -126,6 +133,7 @@ pub(crate) struct SpaceTokenContext<'a> {
     pub(crate) branch: Option<&'a str>,
     pub(crate) state_text: &'a str,
     pub(crate) ahead_behind: Option<(usize, usize)>,
+    pub(crate) number: Option<char>,
     pub(crate) tokens: &'a std::collections::HashMap<String, String>,
     pub(crate) suppress_git_details: bool,
 }
@@ -159,6 +167,7 @@ pub(crate) fn space_rows(
                             .filter(|(ahead, behind)| *ahead > 0 || *behind > 0)
                             .map(|(ahead, behind)| ResolvedTokenKind::GitStatus { ahead, behind }),
                         SpaceSidebarToken::GitStatus => None,
+                        SpaceSidebarToken::Number => context.number.map(ResolvedTokenKind::Number),
                         SpaceSidebarToken::Custom(name) => context
                             .tokens
                             .get(name)
@@ -177,9 +186,28 @@ pub(crate) fn space_rows(
         .collect()
 }
 
+/// Width of a row's leading state icon and number, so the rows below can
+/// line up under the first text token. Zero when the row starts with text.
+pub(crate) fn leading_gutter_width(row: &[ResolvedToken], state_icon: &str) -> usize {
+    let mut width = 0;
+    for (index, token) in row.iter().enumerate() {
+        width += match token.kind {
+            ResolvedTokenKind::StateIcon => unicode_width::UnicodeWidthStr::width(state_icon),
+            ResolvedTokenKind::Number(_) => 1,
+            _ => break,
+        };
+        if let Some(next) = row.get(index + 1) {
+            width += unicode_width::UnicodeWidthStr::width(separator(token, next));
+        }
+    }
+    width
+}
+
 pub(crate) fn separator(previous: &ResolvedToken, current: &ResolvedToken) -> &'static str {
-    if matches!(previous.kind, ResolvedTokenKind::StateIcon)
-        || matches!(current.kind, ResolvedTokenKind::GitStatus { .. })
+    if matches!(
+        previous.kind,
+        ResolvedTokenKind::StateIcon | ResolvedTokenKind::Number(_)
+    ) || matches!(current.kind, ResolvedTokenKind::GitStatus { .. })
     {
         " "
     } else {
@@ -226,6 +254,7 @@ mod tests {
             terminal_title: entry.terminal_title.as_deref(),
             terminal_title_stripped: entry.terminal_title_stripped.as_deref(),
             canonical_agent: entry.canonical_agent,
+            number: None,
             tokens: &entry.tokens,
         }
     }
@@ -331,6 +360,7 @@ rows = [[{ token = "$load", rules = [{ lt = 50, dim = true }] }]]
                     state_text: "working",
                     ahead_behind: None,
                     suppress_git_details: false,
+                    number: None,
                     tokens: &entry.tokens,
                 },
             );
@@ -380,6 +410,7 @@ rows = [[{ token = "$load", rules = [{ lt = 50, hide = true }] }], ["workspace"]
                     state_text: "working",
                     ahead_behind: None,
                     suppress_git_details: false,
+                    number: None,
                     tokens: &entry.tokens,
                 },
             );
@@ -548,6 +579,7 @@ rows = [[{ token = "$load", rules = [{ lt = 50, hide = true }] }], ["workspace"]
                     branch: Some("worktree/feature"),
                     state_text: "idle",
                     ahead_behind: Some((2, 1)),
+                    number: None,
                     tokens: &std::collections::HashMap::new(),
                     suppress_git_details: true,
                 },
@@ -575,6 +607,7 @@ rows = [[{ token = "$load", rules = [{ lt = 50, hide = true }] }], ["workspace"]
                     branch: None,
                     state_text: "idle",
                     ahead_behind: None,
+                    number: None,
                     tokens: &tokens,
                     suppress_git_details: false,
                 },

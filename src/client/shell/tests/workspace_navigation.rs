@@ -1026,3 +1026,178 @@ fn kitty_ctrl_bracket_cancels_a_blocked_foreign_preview() {
     assert_ne!(state.mode, ClientShellMode::Navigate);
     assert!(state.navigate_workspace_id.is_none());
 }
+
+fn workspace_move(outcome: &ClientShellInput) -> (String, usize) {
+    let [ClientShellAction::Endpoint { request, .. }] = &outcome.actions[..] else {
+        panic!("expected one workspace move: {:?}", outcome.actions);
+    };
+    let crate::api::schema::Method::WorkspaceMove(params) = &request.method else {
+        panic!("expected workspace.move: {:?}", request.method);
+    };
+    (params.workspace_id.clone(), params.insert_index)
+}
+
+#[test]
+fn grabbed_workspace_moves_with_workspace_keys_and_esc_puts_it_back() {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.set_snapshot(Box::new(workspaces(3)));
+    state.set_pane_surface(surface());
+    enter_navigation(&mut state);
+
+    preview_key(&mut state, b"m");
+    assert!(state.navigate_grab.is_some());
+    let up_at_top = state.handle_input_bytes(b"\x1b[A");
+    assert!(up_at_top.actions.is_empty());
+    let down = state.handle_input_bytes(b"\x1b[B");
+    assert_eq!(workspace_move(&down), ("ws_1".into(), 2));
+
+    // The server applied the move.
+    let mut moved = workspaces(3);
+    moved.workspaces.swap(0, 1);
+    state.set_snapshot(Box::new(moved));
+
+    let restore = state.handle_input_bytes(b"\x1b");
+    assert_eq!(workspace_move(&restore), ("ws_1".into(), 0));
+    assert!(state.navigate_grab.is_none());
+    assert_eq!(state.mode, ClientShellMode::Navigate);
+
+    preview_key(&mut state, b"m");
+    preview_key(&mut state, b"\r");
+    assert!(state.navigate_grab.is_none());
+    assert_eq!(state.mode, ClientShellMode::Navigate);
+}
+
+#[test]
+fn grabbed_workspace_shows_a_marker_in_the_collapsed_sidebar() {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.set_snapshot(Box::new(workspaces(3)));
+    state.set_pane_surface(surface());
+    state.sidebar_collapsed = true;
+    enter_navigation(&mut state);
+    preview_key(&mut state, b"m");
+
+    let frame = state.compose(106, 30).expect("collapsed sidebar");
+    let buffer = frame.to_ratatui_buffer().expect("collapsed buffer");
+    let row = state
+        .hits
+        .workspaces
+        .iter()
+        .find(|hit| hit.workspace_id == "ws_1")
+        .expect("grabbed row")
+        .rect;
+    assert_eq!(buffer[(row.x + 2, row.y)].symbol(), "↕");
+    let other = state
+        .hits
+        .workspaces
+        .iter()
+        .find(|hit| hit.workspace_id == "ws_2")
+        .expect("other row")
+        .rect;
+    assert_ne!(buffer[(other.x + 2, other.y)].symbol(), "↕");
+}
+
+#[test]
+fn grabbed_workspace_shows_a_marker_or_accent_fill() {
+    for (config, marker) in [("", true), ("[ui.sidebar]\ngrab = \"fill\"\n", false)] {
+        let config: Config = toml::from_str(config).expect("config");
+        let mut state = ClientShellState::new(ClientShellConfig::from_config(&config));
+        state.set_snapshot(Box::new(workspaces(3)));
+        state.set_pane_surface(surface());
+        enter_navigation(&mut state);
+        preview_key(&mut state, b"m");
+
+        let frame = state.compose(106, 30).expect("grabbed sidebar");
+        let buffer = frame.to_ratatui_buffer().expect("grabbed buffer");
+        let row = state
+            .hits
+            .workspaces
+            .iter()
+            .find(|hit| hit.workspace_id == "ws_1")
+            .expect("grabbed row")
+            .rect;
+        let marker_cell = &buffer[(row.right() - 2, row.y)];
+        if marker {
+            assert_eq!(marker_cell.symbol(), "↕");
+            assert_ne!(marker_cell.bg, state.config.palette.accent);
+        } else {
+            assert_ne!(marker_cell.symbol(), "↕");
+            assert_eq!(buffer[(row.x, row.y)].bg, state.config.palette.accent);
+        }
+    }
+}
+
+fn two_agents_in_two_workspaces(config: &str) -> ClientShellState {
+    let mut projected = workspaces(2);
+    let mut second_pane = projected.panes[0].clone();
+    second_pane.pane_id = "pane_2".into();
+    second_pane.focused = false;
+    projected.panes.push(second_pane);
+    let agent = |pane_id: &str, workspace_id: &str, focused: bool| ClientShellAgent {
+        pane_id: pane_id.into(),
+        workspace_id: workspace_id.into(),
+        tab_id: "tab_1".into(),
+        name: None,
+        display_agent: None,
+        agent: Some("pi".into()),
+        title: None,
+        terminal_title: None,
+        terminal_title_stripped: None,
+        agent_status: AgentStatus::Idle,
+        state_change_seq: 0,
+        state_labels: Vec::new(),
+        tokens: Vec::new(),
+        focused,
+    };
+    projected.agents = vec![
+        agent("pane_1", "ws_1", true),
+        agent("pane_2", "ws_2", false),
+    ];
+    let config: Config = toml::from_str(config).expect("config");
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&config));
+    state.set_snapshot(Box::new(projected));
+    state.set_pane_surface(surface());
+    state
+}
+
+fn focused_pane(outcome: &ClientShellInput) -> String {
+    let [ClientShellAction::Endpoint { request, .. }] = &outcome.actions[..] else {
+        panic!("expected one pane focus: {:?}", outcome.actions);
+    };
+    let crate::api::schema::Method::PaneFocus(target) = &request.method else {
+        panic!("expected pane.focus: {:?}", request.method);
+    };
+    target.pane_id.clone()
+}
+
+#[test]
+fn navigate_agent_keys_focus_the_agent_and_selection_follows_its_workspace() {
+    let mut state = two_agents_in_two_workspaces(
+        "[keys]\nnavigate_agent_down = \"j\"\nnavigate_pane_down = \"ctrl+j\"\n",
+    );
+    enter_navigation(&mut state);
+
+    let next = state.handle_input_bytes(b"j");
+    assert_eq!(focused_pane(&next), "pane_2");
+    assert_eq!(state.mode, ClientShellMode::Navigate);
+
+    // Focus lands in a later snapshot; the selection follows it.
+    let mut focused = state.snapshot.as_deref().cloned().expect("snapshot");
+    focused.focused_workspace_id = Some("ws_2".into());
+    for workspace in &mut focused.workspaces {
+        workspace.focused = workspace.workspace_id == "ws_2";
+    }
+    state.set_snapshot(Box::new(focused));
+    assert_selected(&state, &ClientEndpointId::Local, "ws_2");
+}
+
+#[test]
+fn navigate_digits_can_focus_agents_by_number() {
+    let mut state = two_agents_in_two_workspaces(
+        "[keys]\nnavigate_focus_agent = \"1..9\"\nnavigate_switch_workspace = \"shift+1..9\"\n",
+    );
+    enter_navigation(&mut state);
+
+    let second = state.handle_input_bytes(b"2");
+    assert_eq!(focused_pane(&second), "pane_2");
+    assert_ne!(state.mode, ClientShellMode::Navigate);
+}

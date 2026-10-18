@@ -364,8 +364,14 @@ impl ClientShellState {
                         }
                     }
                 }
+                RawInputEvent::HostPaletteColors { colors } => {
+                    for (index, color) in colors {
+                        if let Some(slot) = self.host_ansi_colors.get_mut(usize::from(index)) {
+                            *slot = Some(color);
+                        }
+                    }
+                }
                 RawInputEvent::HostDefaultColor { .. }
-                | RawInputEvent::HostPaletteColors { .. }
                 | RawInputEvent::HostCellSizeReport { .. }
                 | RawInputEvent::Unsupported => {}
             }
@@ -756,32 +762,31 @@ impl ClientShellState {
         use crate::input::{KeybindAction, KeybindDispatch, KeybindMatch};
 
         self.pending_workspace_highlight = None;
+        if self.navigate_grab.is_some() {
+            self.route_navigate_grab_key(key, outcome);
+            return;
+        }
         if key.code == KeyCode::Esc || self.config.keybinds.matches_prefix(key) {
             self.cancel_navigate(outcome);
             return;
         }
 
-        if self
-            .config
-            .keybinds
-            .keybinds
-            .navigate
-            .workspace_up
-            .matches_direct_key(key)
-        {
-            self.move_navigate_workspace(-1);
+        let navigate = &self.config.keybinds.keybinds.navigate;
+        let workspace_delta = if navigate.workspace_up.matches_direct_key(key) {
+            Some(-1)
+        } else if navigate.workspace_down.matches_direct_key(key) {
+            Some(1)
+        } else {
+            None
+        };
+        if let Some(delta) = workspace_delta {
+            self.navigate_follow_focus = false;
+            self.move_navigate_workspace(delta);
             outcome.repaint = true;
             return;
         }
-        if self
-            .config
-            .keybinds
-            .keybinds
-            .navigate
-            .workspace_down
-            .matches_direct_key(key)
-        {
-            self.move_navigate_workspace(1);
+        if navigate.move_workspace.matches_direct_key(key) {
+            self.start_navigate_grab();
             outcome.repaint = true;
             return;
         }
@@ -808,12 +813,34 @@ impl ClientShellState {
             return;
         }
 
-        if let Some(index) = ('1'..='9').position(|digit| {
-            crate::config::terminal_key_matches_combo(
-                key,
-                (KeyCode::Char(digit), KeyModifiers::empty()),
-            )
-        }) {
+        let navigate = &self.config.keybinds.keybinds.navigate;
+        let agent_action = if navigate.agent_up.matches_direct_key(key) {
+            Some(KeybindAction::PreviousAgent)
+        } else if navigate.agent_down.matches_direct_key(key) {
+            Some(KeybindAction::NextAgent)
+        } else {
+            None
+        };
+        if let Some(action) = agent_action {
+            self.record_navigate_binding(KeybindMatch::Action(action), true, outcome);
+            self.navigate_follow_focus = true;
+            self.follow_navigate_focus();
+            return;
+        }
+        let matched_index = |bindings: &[crate::config::IndexedKeybind]| {
+            bindings
+                .iter()
+                .find_map(|binding| binding.matched_index(key))
+        };
+        if let Some(index) = matched_index(&navigate.focus_agent) {
+            self.record_navigate_binding(
+                KeybindMatch::Action(KeybindAction::FocusAgent(index)),
+                false,
+                outcome,
+            );
+            return;
+        }
+        if let Some(index) = matched_index(&navigate.switch_workspace) {
             let valid = self.snapshot.as_deref().is_some_and(|snapshot| {
                 self.navigation_workspace_entries(snapshot)
                     .get(index)
@@ -930,6 +957,30 @@ impl ClientShellState {
         } else if is_ctrl_bracket_key(key) {
             self.cancel_navigate(outcome);
         }
+    }
+
+    /// Keys while a workspace is grabbed: the workspace keys move it, the grab
+    /// key or Enter drops it, and Esc puts it back.
+    fn route_navigate_grab_key(
+        &mut self,
+        key: &crate::input::TerminalKey,
+        outcome: &mut ClientShellInput,
+    ) {
+        let navigate = &self.config.keybinds.keybinds.navigate;
+        let up = navigate.workspace_up.matches_direct_key(key);
+        let down = navigate.workspace_down.matches_direct_key(key);
+        let drop = key.code == KeyCode::Enter || navigate.move_workspace.matches_direct_key(key);
+        if key.code == KeyCode::Esc {
+            self.restore_navigate_grab(outcome);
+        } else if drop {
+            self.drop_navigate_grab();
+        } else if up || down {
+            self.move_grabbed_workspace(if up { -1 } else { 1 }, outcome);
+        } else if self.config.keybinds.matches_prefix(key) {
+            self.drop_navigate_grab();
+            self.cancel_navigate(outcome);
+        }
+        outcome.repaint = true;
     }
 
     fn cancel_navigate(&mut self, outcome: &mut ClientShellInput) {
