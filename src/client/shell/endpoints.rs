@@ -577,6 +577,7 @@ impl ClientShellState {
         self.endpoints[index]
             .agent_presentation
             .project_snapshot_for_generation(&mut snapshot, generation);
+        let seen_delay = self.seen_delay();
         let presented_surface = if acknowledge_surface && endpoint_id == &self.active_endpoint_id {
             self.pane_surface.as_ref()
         } else {
@@ -585,7 +586,14 @@ impl ClientShellState {
         if let Some(surface) = presented_surface {
             self.endpoints[index]
                 .agent_presentation
-                .acknowledge_surface(&mut snapshot, surface, self.outer_focused);
+                .acknowledge_surface(
+                    &mut snapshot,
+                    surface,
+                    self.outer_focused,
+                    std::time::Instant::now(),
+                    seen_delay,
+                    self.config.seen_scope,
+                );
         }
         let previous = self.endpoints[index].snapshot.as_deref();
         let mut next_recency = self
@@ -661,17 +669,71 @@ impl ClientShellState {
         else {
             return false;
         };
+        let seen_delay = self.seen_delay();
         let changed = {
             let endpoint = &mut self.endpoints[index];
             let Some(snapshot) = endpoint.snapshot.as_deref_mut() else {
                 return false;
             };
-            endpoint
-                .agent_presentation
-                .acknowledge_surface(snapshot, surface, self.outer_focused)
+            endpoint.agent_presentation.acknowledge_surface(
+                snapshot,
+                surface,
+                self.outer_focused,
+                std::time::Instant::now(),
+                seen_delay,
+                self.config.seen_scope,
+            )
         };
         if changed {
             self.snapshot = self.endpoints[index].snapshot.clone();
+        }
+        changed
+    }
+
+    fn seen_delay(&self) -> std::time::Duration {
+        std::time::Duration::from_millis(self.config.seen_delay_ms)
+    }
+
+    pub(super) fn active_seen_deadline(&self) -> Option<std::time::Instant> {
+        self.endpoints
+            .iter()
+            .find(|endpoint| endpoint.endpoint_id == self.active_endpoint_id)
+            .and_then(|endpoint| endpoint.agent_presentation.seen_deadline())
+    }
+
+    /// Acknowledge on-screen completions whose `seen_delay_ms` has run out
+    /// without waiting for another surface frame.
+    pub(crate) fn tick_seen_delay(&mut self, now: std::time::Instant) -> bool {
+        if self
+            .active_seen_deadline()
+            .is_none_or(|deadline| now < deadline)
+        {
+            return false;
+        }
+        let seen_delay = self.seen_delay();
+        let Some(surface) = self.pane_surface.as_ref() else {
+            return false;
+        };
+        let Some(endpoint) = self
+            .endpoints
+            .iter_mut()
+            .find(|endpoint| endpoint.endpoint_id == self.active_endpoint_id)
+        else {
+            return false;
+        };
+        let Some(snapshot) = endpoint.snapshot.as_deref_mut() else {
+            return false;
+        };
+        let changed = endpoint.agent_presentation.acknowledge_surface(
+            snapshot,
+            surface,
+            self.outer_focused,
+            now,
+            seen_delay,
+            self.config.seen_scope,
+        );
+        if changed {
+            self.snapshot = endpoint.snapshot.clone();
         }
         changed
     }

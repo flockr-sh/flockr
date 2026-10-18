@@ -786,6 +786,20 @@ pub enum TabBarStatusSegment {
     Text(Option<String>),
 }
 
+/// The active tab counting toward `ui.seen_delay_ms`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SeenView {
+    pub workspace_id: String,
+    pub tab_number: usize,
+    /// The focused pane when only it counts (`seen_scope = "pane"`).
+    pub pane_id: Option<PaneId>,
+    pub since: std::time::Instant,
+    /// When its unseen panes become seen, while any remain.
+    pub due: Option<std::time::Instant>,
+    /// A pane marked unread while shown; it stays unseen until it leaves.
+    pub held: Option<PaneId>,
+}
+
 pub struct AppState {
     pub terminals:
         std::collections::HashMap<crate::terminal::TerminalId, crate::terminal::TerminalState>,
@@ -853,6 +867,11 @@ pub struct AppState {
     pub pane_scrollback_limit_bytes: usize,
     pub sound: SoundConfig,
     pub toast_config: ToastConfig,
+    /// `ui.seen_delay_ms`: how long a tab stays active before its finished
+    /// agents count as seen.
+    pub seen_delay: std::time::Duration,
+    pub seen_scope: crate::config::SeenScopeConfig,
+    pub seen_view: Option<SeenView>,
     pub keybinds: Keybinds,
     /// UI color palette — all sidebar/UI colors centralized for theming.
     pub palette: Palette,
@@ -1093,6 +1112,9 @@ impl AppState {
                 ..SoundConfig::default()
             },
             toast_config: ToastConfig::default(),
+            seen_delay: std::time::Duration::ZERO,
+            seen_scope: crate::config::SeenScopeConfig::Pane,
+            seen_view: None,
             keybinds: Keybinds::default(),
             palette: Palette::catppuccin(),
             theme_name: "catppuccin".to_string(),

@@ -101,6 +101,11 @@ pub(crate) fn keybind_help_groups(
                     binding_label(&keybinds.open_notification_target),
                     "open notification target",
                 ),
+                entry(
+                    binding_label(&keybinds.focus_next_attention),
+                    "next agent that needs you",
+                ),
+                entry(binding_label(&keybinds.mark_unread), "mark agent unread"),
             ],
         ),
         (

@@ -903,6 +903,11 @@ impl App {
             });
             self.send_pane_focus_event(ws_idx, pane_id, event);
             self.emit_focus_api_events(ws_idx, pane_id);
+            if self.state.outer_terminal_focus != Some(false) {
+                // Moving between panes in one tab starts the newly focused
+                // pane's seen delay when seen_scope is "pane".
+                self.state.mark_active_tab_seen();
+            }
         }
 
         self.last_focus = current_focus;
@@ -1161,6 +1166,9 @@ impl App {
             Method::PaneResize(params) => return self.handle_pane_resize(request.id, params),
             Method::PaneScroll(params) => return self.handle_pane_scroll(request.id, params),
             Method::PaneClear(target) => return self.handle_pane_clear(request.id, target),
+            Method::PaneMarkUnread(target) => {
+                return self.handle_pane_mark_unread(request.id, target)
+            }
             Method::PaneEditScrollback(target) => {
                 return self.handle_pane_edit_scrollback(request.id, target);
             }

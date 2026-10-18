@@ -149,6 +149,8 @@ const DEFAULT_CONFIG: &str = r##"# flockr configuration
 # detach = "prefix+q"
 # reload_config = "prefix+shift+r"
 # open_notification_target = "prefix+o"
+# focus_next_attention = "prefix+a"   # blocked or unseen-done agents, oldest alert first
+# mark_unread = "prefix+u"            # show the focused pane's finished agent as done again
 # workspace_picker = "prefix+w"
 # goto = "prefix+g"
 # new_workspace = "prefix+shift+n"
@@ -282,6 +284,14 @@ const DEFAULT_CONFIG: &str = r##"# flockr configuration
 # Set false to reduce visible flashing when switching back to Flockr.
 # Trade-off: rare host terminal surface corruption may persist until the next full redraw.
 # redraw_on_focus_gained = true
+
+# Milliseconds a finished agent must stay on screen before its done badge clears.
+# Lets you cycle past done agents without marking them seen. 0 clears at once.
+# seen_delay_ms = 0
+
+# Which panes count toward seen: "pane" (only the focused one, so a finished
+# agent in a split stays done until you go into it) or "tab" (every pane in the tab).
+# seen_scope = "pane"
 
 # Pane scrollback lines to scroll per mouse wheel notch.
 # mouse_scroll_lines = 3

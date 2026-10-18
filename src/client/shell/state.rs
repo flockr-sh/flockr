@@ -55,6 +55,8 @@ pub(crate) struct ClientShellConfig {
     pub(super) mouse_scroll_lines: usize,
     pub(super) right_click_passthrough_modifiers: Option<crossterm::event::KeyModifiers>,
     pub(super) redraw_on_focus_gained: bool,
+    pub(super) seen_delay_ms: u64,
+    pub(super) seen_scope: crate::config::SeenScopeConfig,
     pub(super) switch_ascii_input_source_in_prefix: bool,
     pub(super) local_config_path: std::path::PathBuf,
     pub(super) preferences_path: Option<std::path::PathBuf>,
@@ -537,6 +539,7 @@ pub(super) enum ClientContextMenuAction {
     SplitDown,
     Zoom,
     ToggleRightClickPassthrough,
+    MarkUnread,
     ClosePane,
 }
 
@@ -560,6 +563,8 @@ pub(super) enum ClientContextMenuTarget {
         source_pane_id: Option<String>,
         has_manual_label: bool,
         right_click_passthrough: bool,
+        /// The pane holds a finished agent that has been seen.
+        can_mark_unread: bool,
     },
 }
 
@@ -702,6 +707,7 @@ pub(super) enum ClientEndpointNoticeKind {
     Rejected,
     Timeout,
     Unavailable,
+    Info,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -898,6 +904,8 @@ pub(crate) struct ClientShellState {
     pub(super) workspace_scroll: usize,
     pub(super) agent_scroll: usize,
     pub(super) pending_agent_reveal: Option<(ClientEndpointId, String)>,
+    /// The next-attention key stopped at the end of its queue; the next press wraps.
+    pub(super) attention_queue_ended: bool,
     pub(super) tab_scroll: usize,
     pub(super) mobile_switcher_scroll: usize,
     pub(super) reveal_focused_workspace: bool,
@@ -1080,6 +1088,7 @@ impl ClientShellState {
             workspace_scroll: 0,
             agent_scroll: 0,
             pending_agent_reveal: None,
+            attention_queue_ended: false,
             tab_scroll: 0,
             mobile_switcher_scroll: 0,
             reveal_focused_workspace: true,
@@ -1998,6 +2007,7 @@ impl ClientShellState {
         self.selection_autoscroll_deadline
             .into_iter()
             .chain(self.selection_repaint_deadline)
+            .chain(self.active_seen_deadline())
             .min()
             .map(|deadline| deadline.saturating_duration_since(now).min(default))
             .unwrap_or(default)

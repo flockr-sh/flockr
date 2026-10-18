@@ -1866,6 +1866,99 @@ fn semantic_notifications_use_client_policy_and_stable_navigation_targets() {
     assert!(state.visible_notification.is_none());
     assert_eq!(state.pending_notifications.len(), 1);
 }
+
+#[test]
+fn next_attention_steps_through_blocked_and_unseen_done_agents_oldest_first_then_stops() {
+    let agent = |pane_id: &str, status, seq| ClientShellAgent {
+        pane_id: pane_id.into(),
+        workspace_id: "ws_1".into(),
+        tab_id: "tab_1".into(),
+        name: None,
+        display_agent: None,
+        agent: Some("claude".into()),
+        title: None,
+        terminal_title: None,
+        terminal_title_stripped: None,
+        agent_status: status,
+        state_change_seq: seq,
+        state_labels: Vec::new(),
+        tokens: Vec::new(),
+        focused: false,
+    };
+    let frame = |revision, focused: &str, agents| {
+        let mut frame = snapshot();
+        frame.revision = revision;
+        frame.focused_pane_id = Some(focused.into());
+        frame.agents = agents;
+        frame
+    };
+    let press = |state: &mut ClientShellState| {
+        let mut input = ClientShellInput::default();
+        state.record_binding(
+            crate::input::KeybindMatch::Action(crate::input::KeybindAction::FocusNextAttention),
+            &mut input,
+        );
+        input.actions.iter().find_map(|action| match action {
+            ClientShellAction::Endpoint { request, .. } => match &request.method {
+                crate::api::schema::Method::PaneFocus(target) => Some(target.pane_id.clone()),
+                _ => None,
+            },
+            _ => None,
+        })
+    };
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.set_snapshot(Box::new(frame(
+        1,
+        "pane_4",
+        vec![
+            agent("pane_1", AgentStatus::Working, 1),
+            agent("pane_2", AgentStatus::Blocked, 2),
+            agent("pane_3", AgentStatus::Idle, 3),
+        ],
+    )));
+    assert_eq!(press(&mut state), Some("pane_2".into()));
+
+    // pane_1 finishes after pane_2 blocked, so it comes second even though
+    // it sits first in the agent list. Idle pane_3 is never a stop.
+    let agents = || {
+        vec![
+            agent("pane_1", AgentStatus::Done, 4),
+            agent("pane_2", AgentStatus::Blocked, 2),
+            agent("pane_3", AgentStatus::Idle, 3),
+        ]
+    };
+    state.set_snapshot(Box::new(frame(2, "pane_4", agents())));
+    assert_eq!(press(&mut state), Some("pane_2".into()));
+    state.set_snapshot(Box::new(frame(3, "pane_2", agents())));
+    assert_eq!(press(&mut state), Some("pane_1".into()));
+
+    // The last one stops with a notice, and the next press wraps.
+    let caught_up = |state: &ClientShellState| {
+        state
+            .visible_endpoint_notice
+            .as_ref()
+            .is_some_and(|notice| notice.body == "No more agents need attention")
+    };
+    state.set_snapshot(Box::new(frame(4, "pane_1", agents())));
+    assert!(!caught_up(&state));
+    assert_eq!(press(&mut state), None);
+    assert!(caught_up(&state));
+    assert_eq!(press(&mut state), Some("pane_2".into()));
+
+    state.visible_endpoint_notice = None;
+    state.set_snapshot(Box::new(frame(
+        5,
+        "pane_4",
+        vec![
+            agent("pane_1", AgentStatus::Idle, 5),
+            agent("pane_2", AgentStatus::Working, 6),
+        ],
+    )));
+    assert_eq!(press(&mut state), None);
+    assert!(caught_up(&state));
+    assert_eq!(press(&mut state), None);
+}
+
 #[test]
 fn working_pulse_cycles_only_while_an_agent_works_and_the_setting_is_on() {
     let mut working = snapshot();

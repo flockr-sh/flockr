@@ -66,6 +66,20 @@ impl ClientShellState {
                     self.focus_visible_notification(outcome);
                     return;
                 }
+                if action == crate::input::KeybindAction::FocusNextAttention {
+                    self.focus_next_attention(outcome);
+                    return;
+                }
+                if action == crate::input::KeybindAction::MarkUnread {
+                    if let Some(pane_id) = self
+                        .snapshot
+                        .as_deref()
+                        .and_then(|snapshot| snapshot.focused_pane_id.clone())
+                    {
+                        self.mark_unread(pane_id, outcome);
+                    }
+                    return;
+                }
                 if action == crate::input::KeybindAction::ReloadConfig {
                     self.push_endpoint_method_with_kind(
                         crate::api::schema::Method::ServerReloadConfig(
@@ -329,7 +343,10 @@ impl ClientShellState {
             code: code.into(),
         };
         let body = body.into();
-        if kind == ClientEndpointNoticeKind::Rejected {
+        if matches!(
+            kind,
+            ClientEndpointNoticeKind::Rejected | ClientEndpointNoticeKind::Info
+        ) {
             if self
                 .visible_endpoint_notice
                 .as_ref()
@@ -340,7 +357,10 @@ impl ClientShellState {
         } else if !self.endpoint_notice_seen.insert(key.clone()) {
             return false;
         }
-        let duration_seconds = if kind == ClientEndpointNoticeKind::Rejected {
+        let duration_seconds = if matches!(
+            kind,
+            ClientEndpointNoticeKind::Rejected | ClientEndpointNoticeKind::Info
+        ) {
             3
         } else {
             8

@@ -54,9 +54,13 @@ impl ClientContextMenuOverlay {
                 source_pane_id,
                 has_manual_label,
                 right_click_passthrough,
+                can_mark_unread,
                 ..
             } => {
                 let mut items = vec![item("Rename pane", Action::RenamePane)];
+                if *can_mark_unread {
+                    items.push(item("Mark unread", Action::MarkUnread));
+                }
                 if *has_manual_label {
                     items.push(item("Clear pane name", Action::ClearPaneName));
                 }
@@ -153,6 +157,9 @@ impl ClientShellState {
             .focused_pane_id
             .clone()
             .filter(|focused| focused != &pane_id);
+        let can_mark_unread = snapshot.agents.iter().any(|agent| {
+            agent.pane_id == pane_id && agent.agent_status == crate::api::schema::AgentStatus::Idle
+        });
         self.overlay = Some(ClientShellOverlay::ContextMenu(ClientContextMenuOverlay {
             target: ClientContextMenuTarget::Pane {
                 pane_id,
@@ -160,6 +167,7 @@ impl ClientShellState {
                 source_pane_id,
                 has_manual_label: pane.label.is_some(),
                 right_click_passthrough: pane.right_click_passthrough,
+                can_mark_unread,
             },
             x,
             y,
@@ -384,6 +392,7 @@ impl ClientShellState {
                     target: ClientRenameTarget::Pane { pane_id },
                 }));
             }
+            ClientContextMenuAction::MarkUnread => self.mark_unread(pane_id, outcome),
             ClientContextMenuAction::ClearPaneName => self.push_endpoint_method(
                 Method::PaneRename(PaneRenameParams {
                     pane_id,

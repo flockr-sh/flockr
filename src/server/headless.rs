@@ -844,6 +844,9 @@ impl HeadlessServer {
         self.sync_visible_server_config_diagnostic(false);
         if outer_terminal_focus == Some(true) {
             self.app.state.mark_active_tab_seen();
+        } else if outer_terminal_focus == Some(false) {
+            // Time away from the terminal does not count toward seen_delay_ms.
+            self.app.state.seen_view = None;
         }
         self.app.set_host_terminal_appearance_state(
             host_terminal_appearance,
@@ -3300,6 +3303,15 @@ impl HeadlessServer {
             self.app.toast_deadline = None;
             self.app.state.toast = None;
             changed = true;
+        }
+
+        if self
+            .app
+            .state
+            .next_seen_deadline()
+            .is_some_and(|deadline| now >= deadline)
+        {
+            changed |= self.app.state.view_active_tab(now);
         }
 
         if self

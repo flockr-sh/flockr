@@ -205,27 +205,87 @@ impl ClientShellState {
                 }
                 _ => unreachable!("endpoint agent navigation"),
             };
-            let target = &agents[next];
-            if self.focus_or_activate(
-                target.endpoint_id.clone(),
-                ClientEndpointFocusTarget::Pane(target.pane_id.clone()),
-                outcome,
-            ) {
-                if target.endpoint_id == self.active_endpoint_id {
-                    self.reveal_endpoint_agent(
-                        &target.endpoint_id,
-                        &target.pane_id,
-                        self.hits.agent_body.height,
-                    );
-                } else {
-                    self.pending_agent_reveal =
-                        Some((target.endpoint_id.clone(), target.pane_id.clone()));
-                }
-                outcome.repaint = true;
-            }
+            self.focus_agent_target(&agents[next], outcome);
             return true;
         }
         false
+    }
+
+    /// Steps through agents that are blocked or finished unseen, oldest alert
+    /// first. From one of them it moves to the next, so a blocked agent you
+    /// have not answered yet does not trap the key. The last one stops with a
+    /// notice; pressing again wraps to the oldest.
+    pub(super) fn focus_next_attention(&mut self, outcome: &mut ClientShellInput) {
+        let agents = super::aggregate_navigation::attention_agent_targets(&self.endpoints);
+        let focused = self
+            .snapshot
+            .as_deref()
+            .and_then(|snapshot| snapshot.focused_pane_id.as_deref());
+        let next = agents
+            .iter()
+            .position(|target| {
+                target.endpoint_id == self.active_endpoint_id
+                    && Some(target.pane_id.as_str()) == focused
+            })
+            .map_or(0, |index| index + 1);
+        let next = if next >= agents.len() && self.attention_queue_ended {
+            0
+        } else {
+            next
+        };
+        let Some(target) = agents.get(next) else {
+            self.attention_queue_ended = !agents.is_empty();
+            self.push_endpoint_notice(
+                ClientEndpointNoticeKind::Info,
+                "attention_queue_end",
+                "All caught up",
+                "No more agents need attention",
+            );
+            outcome.repaint = true;
+            return;
+        };
+        self.attention_queue_ended = false;
+        self.focus_agent_target(target, outcome);
+    }
+
+    /// Asks the server to show `pane_id`'s finished agent as done again, and
+    /// keeps this client from clearing it while the pane stays on screen.
+    pub(super) fn mark_unread(&mut self, pane_id: String, outcome: &mut ClientShellInput) {
+        if let Some(endpoint) = self
+            .endpoints
+            .iter_mut()
+            .find(|endpoint| endpoint.endpoint_id == self.active_endpoint_id)
+        {
+            endpoint.agent_presentation.hold_unread(pane_id.clone());
+        }
+        self.push_endpoint_method(
+            crate::api::schema::Method::PaneMarkUnread(crate::api::schema::PaneTarget { pane_id }),
+            outcome,
+        );
+    }
+
+    fn focus_agent_target(
+        &mut self,
+        target: &super::aggregate_navigation::AggregateAgentTarget,
+        outcome: &mut ClientShellInput,
+    ) {
+        if self.focus_or_activate(
+            target.endpoint_id.clone(),
+            ClientEndpointFocusTarget::Pane(target.pane_id.clone()),
+            outcome,
+        ) {
+            if target.endpoint_id == self.active_endpoint_id {
+                self.reveal_endpoint_agent(
+                    &target.endpoint_id,
+                    &target.pane_id,
+                    self.hits.agent_body.height,
+                );
+            } else {
+                self.pending_agent_reveal =
+                    Some((target.endpoint_id.clone(), target.pane_id.clone()));
+            }
+            outcome.repaint = true;
+        }
     }
 
     /// Selecting a machine that is waiting to reconnect asks for an attempt now.

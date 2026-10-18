@@ -399,6 +399,7 @@ impl AppState {
                     public_tab_id_for_index(ws, active_tab).unwrap_or_else(|| workspace_id.clone());
                 crate::logging::tab_focused(&workspace_id, &tab_id);
             }
+            self.mark_active_tab_seen();
             self.record_pane_focus_after_navigation(previous_focus);
         }
     }
@@ -430,6 +431,7 @@ impl AppState {
                 public_tab_id_for_index(ws, tab_idx).unwrap_or_else(|| workspace_id.clone());
             crate::logging::tab_focused(&workspace_id, &tab_id);
         }
+        self.mark_active_tab_seen();
         self.record_pane_focus_after_navigation(previous_focus);
         true
     }
@@ -445,31 +447,139 @@ impl AppState {
             let workspace_id = ws.id.clone();
             let tab_id = public_tab_id_for_index(ws, idx).unwrap_or_else(|| workspace_id.clone());
             crate::logging::tab_focused(&workspace_id, &tab_id);
+            self.mark_active_tab_seen();
             self.mark_session_dirty();
             self.record_pane_focus_after_navigation(previous_focus);
         }
     }
 
     pub(crate) fn mark_active_tab_seen(&mut self) -> bool {
-        let Some(ws_idx) = self.active else {
+        self.view_active_tab(Instant::now())
+    }
+
+    /// Marks the active tab's panes (or only its focused pane, per
+    /// `seen_scope`) seen once they have been shown for `seen_delay`, so
+    /// passing through does not clear done agents. Until then it records when
+    /// they become due.
+    pub(crate) fn view_active_tab(&mut self, now: Instant) -> bool {
+        let Some(ws) = self
+            .active
+            .and_then(|ws_idx| self.workspaces.get_mut(ws_idx))
+        else {
+            self.seen_view = None;
             return false;
         };
-        let Some(tab) = self
+        let workspace_id = &ws.id;
+        let Some(tab) = ws.tabs.get_mut(ws.active_tab) else {
+            self.seen_view = None;
+            return false;
+        };
+        let focused = match self.seen_scope {
+            crate::config::SeenScopeConfig::Pane => Some(tab.layout.focused()),
+            crate::config::SeenScopeConfig::Tab => None,
+        };
+        let current = self.seen_view.as_ref().filter(|view| {
+            view.workspace_id == *workspace_id
+                && view.tab_number == tab.number
+                && view.pane_id == focused
+        });
+        let since = current.map_or(now, |view| view.since);
+        let held = current.and_then(|view| view.held);
+        let due = since + self.seen_delay;
+        let viewed = now >= due;
+        let mut changed = false;
+        let mut pending = false;
+        for (pane_id, pane) in &mut tab.panes {
+            if pane.seen
+                || held == Some(*pane_id)
+                || focused.is_some_and(|focused| focused != *pane_id)
+            {
+                continue;
+            }
+            if viewed {
+                pane.seen = true;
+                changed = true;
+            } else {
+                pending = true;
+            }
+        }
+        self.seen_view = Some(super::state::SeenView {
+            workspace_id: workspace_id.clone(),
+            tab_number: tab.number,
+            pane_id: focused,
+            since,
+            due: pending.then_some(due),
+            held,
+        });
+        changed
+    }
+
+    /// Puts a finished agent back to unseen, as if it had just finished. A
+    /// pane marked while shown stays unseen until it leaves the screen.
+    pub(crate) fn mark_pane_unread(&mut self, pane_id: PaneId) -> bool {
+        let Some(ws_idx) = self
             .workspaces
-            .get_mut(ws_idx)
-            .and_then(crate::workspace::Workspace::active_tab_mut)
+            .iter()
+            .position(|ws| ws.pane_state(pane_id).is_some())
         else {
             return false;
         };
-
-        let mut changed = false;
-        for pane in tab.panes.values_mut() {
-            if !pane.seen {
-                pane.seen = true;
-                changed = true;
+        let Some(terminal_id) = self.workspaces[ws_idx]
+            .pane_state(pane_id)
+            .map(|pane| pane.attached_terminal_id.clone())
+        else {
+            return false;
+        };
+        let Some(terminal) = self.terminals.get_mut(&terminal_id) else {
+            return false;
+        };
+        if !terminal.is_agent_terminal() || terminal.state != AgentState::Idle {
+            return false;
+        }
+        // A new completion makes clients project the agent as done again.
+        self.next_agent_state_change_seq += 1;
+        terminal.last_agent_state_change_seq = Some(self.next_agent_state_change_seq);
+        terminal.last_agent_completion_seq = Some(self.next_agent_state_change_seq);
+        if self.pane_is_in_active_tab(ws_idx, pane_id) {
+            self.view_active_tab(Instant::now());
+            if let Some(view) = &mut self.seen_view {
+                view.held = Some(pane_id);
             }
         }
-        changed
+        if let Some(pane) = self.workspaces[ws_idx].pane_state_mut(pane_id) {
+            pane.seen = false;
+        }
+        self.mark_session_dirty();
+        true
+    }
+
+    /// Whether `pane_id` in the active tab has been shown for `seen_delay`
+    /// already. With `seen_scope = "pane"` only the focused pane counts.
+    fn active_tab_pane_viewed(&self, pane_id: PaneId, now: Instant) -> bool {
+        let Some(ws) = self.active.and_then(|ws_idx| self.workspaces.get(ws_idx)) else {
+            return false;
+        };
+        let Some(tab) = ws.active_tab() else {
+            return false;
+        };
+        let focused = match self.seen_scope {
+            crate::config::SeenScopeConfig::Pane => Some(tab.layout.focused()),
+            crate::config::SeenScopeConfig::Tab => None,
+        };
+        if focused.is_some_and(|focused| focused != pane_id) {
+            return false;
+        }
+        self.seen_delay.is_zero()
+            || self.seen_view.as_ref().is_some_and(|view| {
+                view.workspace_id == ws.id
+                    && view.tab_number == tab.number
+                    && view.pane_id == focused
+                    && now >= view.since + self.seen_delay
+            })
+    }
+
+    pub(crate) fn next_seen_deadline(&self) -> Option<Instant> {
+        self.seen_view.as_ref().and_then(|view| view.due)
     }
 
     pub fn move_workspace(&mut self, source_idx: usize, insert_idx: usize) -> bool {
@@ -1836,6 +1946,8 @@ impl AppState {
         let is_active_tab = self.pane_is_in_active_tab(ws_idx, pane_id);
         let suppress_active_tab_notifications =
             active_tab_suppresses_notifications(is_active_tab, self.outer_terminal_focus);
+        let now = Instant::now();
+        let viewed = self.active_tab_pane_viewed(pane_id, now);
         let pane = self.workspaces[ws_idx]
             .tabs
             .iter_mut()
@@ -1844,9 +1956,13 @@ impl AppState {
         if change.state != AgentState::Idle {
             pane.seen = true;
         } else if !suppress_completion && is_completion_transition(change) {
-            pane.seen = suppress_active_tab_notifications;
+            pane.seen = suppress_active_tab_notifications && viewed;
         }
         let seen = pane.seen;
+        if suppress_active_tab_notifications && !seen {
+            // Finished in view before the tab was shown long enough.
+            self.view_active_tab(now);
+        }
 
         if !suppress_completion {
             if let Some(delivery) =
@@ -2778,6 +2894,63 @@ mod tests {
     }
 
     #[test]
+    fn seen_delay_marks_a_tab_seen_only_after_it_stays_active() {
+        let mut state = app_with_workspaces(&["a", "b"]);
+        state.seen_delay = std::time::Duration::from_millis(750);
+        let id = *state.workspaces[1].panes.keys().next().unwrap();
+        state.workspaces[1].panes.get_mut(&id).unwrap().seen = false;
+        let seen = |state: &AppState| state.workspaces[1].panes.get(&id).unwrap().seen;
+
+        state.switch_workspace(1);
+        assert!(!seen(&state));
+        let due = state.next_seen_deadline().expect("seen deadline");
+
+        // Passing through: leaving before the deadline drops it, and coming
+        // back starts the wait over.
+        state.switch_workspace(0);
+        assert!(!state.view_active_tab(due));
+        assert!(!seen(&state));
+        state.switch_workspace(1);
+        let restarted = state.next_seen_deadline().expect("restarted deadline");
+        assert!(restarted >= due);
+        assert!(!state.view_active_tab(restarted - std::time::Duration::from_millis(1)));
+        assert!(!seen(&state));
+
+        assert!(state.view_active_tab(restarted));
+        assert!(seen(&state));
+        assert_eq!(state.next_seen_deadline(), None);
+    }
+
+    #[test]
+    fn seen_scope_pane_marks_only_the_focused_split() {
+        for scope in [
+            crate::config::SeenScopeConfig::Pane,
+            crate::config::SeenScopeConfig::Tab,
+        ] {
+            let mut state = app_with_workspaces(&["a", "b"]);
+            state.seen_scope = scope;
+            let first = state.workspaces[1].focused_pane_id().unwrap();
+            let split = state.workspaces[1].test_split(ratatui::layout::Direction::Horizontal);
+            state.workspaces[1].tabs[0].layout.focus_pane(first);
+            for pane in state.workspaces[1].tabs[0].panes.values_mut() {
+                pane.seen = false;
+            }
+            let seen = |state: &AppState, pane| state.workspaces[1].panes.get(&pane).unwrap().seen;
+
+            state.switch_workspace(1);
+            assert!(seen(&state, first));
+            assert_eq!(
+                seen(&state, split),
+                scope == crate::config::SeenScopeConfig::Tab
+            );
+
+            state.workspaces[1].tabs[0].layout.focus_pane(split);
+            state.mark_active_tab_seen();
+            assert!(seen(&state, split));
+        }
+    }
+
+    #[test]
     fn switch_workspace_out_of_bounds_is_noop() {
         let mut state = app_with_workspaces(&["a"]);
         state.switch_workspace(5);
@@ -3062,6 +3235,84 @@ mod tests {
             state.toast.as_ref().map(|toast| toast.kind),
             Some(ToastKind::Finished)
         ));
+    }
+
+    #[test]
+    fn seen_delay_holds_a_completion_in_a_tab_that_was_just_opened() {
+        let mut state = app_with_workspaces(&["active"]);
+        state.active = Some(0);
+        state.outer_terminal_focus = Some(true);
+        state.seen_delay = std::time::Duration::from_secs(60);
+        let pane_id = *state.workspaces[0].panes.keys().next().unwrap();
+        let terminal_id = state.workspaces[0]
+            .panes
+            .get(&pane_id)
+            .unwrap()
+            .attached_terminal_id
+            .clone();
+        state.terminals.get_mut(&terminal_id).unwrap().state = AgentState::Working;
+        state.mark_active_tab_seen();
+
+        state.handle_app_event(AppEvent::StateChanged {
+            pane_id,
+            agent: Some(Agent::Pi),
+            state: AgentState::Idle,
+            visible_blocker: false,
+            visible_working: false,
+            process_exited: false,
+            observed_at: std::time::Instant::now(),
+        });
+
+        assert!(!state.workspaces[0].panes.get(&pane_id).unwrap().seen);
+        let due = state.next_seen_deadline().expect("seen deadline");
+        assert!(state.view_active_tab(due));
+        assert!(state.workspaces[0].panes.get(&pane_id).unwrap().seen);
+    }
+
+    #[test]
+    fn mark_unread_shows_a_finished_agent_as_done_until_its_pane_is_left() {
+        let mut state = app_with_workspaces(&["agent", "other"]);
+        state.switch_workspace(0);
+        state.outer_terminal_focus = Some(true);
+        let pane_id = *state.workspaces[0].panes.keys().next().unwrap();
+        let terminal_id = state.workspaces[0]
+            .panes
+            .get(&pane_id)
+            .unwrap()
+            .attached_terminal_id
+            .clone();
+        state.terminals.get_mut(&terminal_id).unwrap().state = AgentState::Working;
+        state.handle_app_event(AppEvent::StateChanged {
+            pane_id,
+            agent: Some(Agent::Pi),
+            state: AgentState::Idle,
+            visible_blocker: false,
+            visible_working: false,
+            process_exited: false,
+            observed_at: std::time::Instant::now(),
+        });
+        let seen = |state: &AppState| state.workspaces[0].panes.get(&pane_id).unwrap().seen;
+        assert!(seen(&state));
+        let before = state.terminals[&terminal_id].last_agent_state_change_seq;
+
+        assert!(state.mark_pane_unread(pane_id));
+        assert!(!seen(&state));
+        let terminal = &state.terminals[&terminal_id];
+        assert!(terminal.last_agent_state_change_seq > before);
+        assert_eq!(
+            terminal.last_agent_completion_seq,
+            terminal.last_agent_state_change_seq
+        );
+
+        // Still on it: the seen timer leaves it alone until the pane is left.
+        state.mark_active_tab_seen();
+        assert!(!seen(&state));
+        state.switch_workspace(1);
+        state.switch_workspace(0);
+        assert!(seen(&state));
+
+        state.terminals.get_mut(&terminal_id).unwrap().state = AgentState::Working;
+        assert!(!state.mark_pane_unread(pane_id));
     }
 
     #[test]

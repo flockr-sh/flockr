@@ -190,6 +190,24 @@ impl App {
         }
     }
 
+    pub(super) fn handle_pane_mark_unread(&mut self, id: String, target: PaneTarget) -> String {
+        let Some((_, pane_id)) = self.parse_pane_id(&target.pane_id) else {
+            return pane_not_found(id, &target.pane_id);
+        };
+        if self.state.mark_pane_unread(pane_id) {
+            encode_success(id, ResponseResult::Ok {})
+        } else {
+            encode_error(
+                id,
+                "pane_not_finished",
+                format!(
+                    "pane {} has no finished agent to mark unread",
+                    target.pane_id
+                ),
+            )
+        }
+    }
+
     pub(super) fn handle_pane_scroll(&mut self, id: String, params: PaneScrollParams) -> String {
         let Some((ws_idx, pane_id)) = self.parse_pane_id(&params.pane_id) else {
             return pane_not_found(id, &params.pane_id);

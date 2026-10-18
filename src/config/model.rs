@@ -92,6 +92,17 @@ pub enum ToastClipboardPosition {
     BottomRight,
 }
 
+/// Which panes of the shown tab count toward seen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum SeenScopeConfig {
+    /// Only the focused pane, so a finished agent in a split stays done.
+    #[default]
+    Pane,
+    /// Every pane in the tab.
+    Tab,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum AgentPanelSortConfig {
@@ -386,6 +397,12 @@ pub struct KeysConfig {
     pub reload_config: BindingConfig,
     /// Focus the currently visible notification target. Default: "prefix+o".
     pub open_notification_target: BindingConfig,
+    /// Focus the next agent that is blocked or finished unseen, oldest alert
+    /// first; pressing again moves on through the queue. Default: "prefix+a".
+    pub focus_next_attention: BindingConfig,
+    /// Mark the focused pane's finished agent unread, so it shows as done
+    /// again. Default: "prefix+u".
+    pub mark_unread: BindingConfig,
     /// Select the previous workspace. Unset by default.
     pub previous_workspace: BindingConfig,
     /// Select the next workspace. Unset by default.
@@ -534,6 +551,10 @@ pub(crate) struct KeysConfigOverlay {
     reload_config: Option<BindingConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     open_notification_target: Option<BindingConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    focus_next_attention: Option<BindingConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    mark_unread: Option<BindingConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     previous_workspace: Option<BindingConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -690,6 +711,8 @@ impl<'de> Deserialize<'de> for KeysConfig {
         apply_field!(detach);
         apply_field!(reload_config);
         apply_field!(open_notification_target);
+        apply_field!(focus_next_attention);
+        apply_field!(mark_unread);
         apply_field!(previous_workspace);
         apply_field!(next_workspace);
         apply_field!(previous_agent);
@@ -803,6 +826,8 @@ impl KeysConfig {
         copy_effective_action_field!(detach, keybinds.detach);
         copy_effective_action_field!(reload_config, keybinds.reload_config);
         copy_effective_action_field!(open_notification_target, keybinds.open_notification_target);
+        copy_effective_action_field!(focus_next_attention, keybinds.focus_next_attention);
+        copy_effective_action_field!(mark_unread, keybinds.mark_unread);
         copy_effective_action_field!(previous_workspace, keybinds.previous_workspace);
         copy_effective_action_field!(next_workspace, keybinds.next_workspace);
         copy_effective_action_field!(previous_agent, keybinds.previous_agent);
@@ -993,6 +1018,12 @@ pub struct UiConfig {
     pub right_click_passthrough_modifier: RightClickPassthroughModifierConfig,
     /// Force a full host-terminal redraw when the outer terminal regains focus. Default: true.
     pub redraw_on_focus_gained: bool,
+    /// Milliseconds a finished agent must stay on screen before it counts as
+    /// seen, so cycling past it keeps its done badge. Default: 0.
+    pub seen_delay_ms: u64,
+    /// Which panes count toward seen: "pane" (the focused one) or "tab"
+    /// (every pane in the tab). Default: "pane".
+    pub seen_scope: SeenScopeConfig,
     /// Lines to scroll per mouse wheel notch. Default: 3.
     pub mouse_scroll_lines: Option<NonZeroUsize>,
     /// Ask for confirmation before closing a workspace. Default: true.
@@ -1182,6 +1213,8 @@ impl Default for KeysConfig {
             detach: BindingConfig::one("prefix+q"),
             reload_config: BindingConfig::one("prefix+shift+r"),
             open_notification_target: BindingConfig::one("prefix+o"),
+            focus_next_attention: BindingConfig::one("prefix+a"),
+            mark_unread: BindingConfig::one("prefix+u"),
             previous_workspace: BindingConfig::empty(),
             next_workspace: BindingConfig::empty(),
             previous_agent: BindingConfig::empty(),
@@ -1254,6 +1287,8 @@ impl Default for UiConfig {
             host_cursor: HostCursorModeConfig::Auto,
             right_click_passthrough_modifier: RightClickPassthroughModifierConfig::default(),
             redraw_on_focus_gained: true,
+            seen_delay_ms: 0,
+            seen_scope: SeenScopeConfig::Pane,
             mouse_scroll_lines: None,
             confirm_close: true,
             prompt_new_tab_name: true,
@@ -1903,6 +1938,30 @@ redraw_on_focus_gained = false
 "#;
         let config: Config = toml::from_str(toml).unwrap();
         assert!(!config.ui.redraw_on_focus_gained);
+    }
+
+    #[test]
+    fn seen_delay_ms_defaults_to_zero_and_parses() {
+        assert_eq!(Config::default().ui.seen_delay_ms, 0);
+
+        let toml = r#"
+[ui]
+seen_delay_ms = 750
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        assert_eq!(config.ui.seen_delay_ms, 750);
+    }
+
+    #[test]
+    fn seen_scope_defaults_to_pane_and_parses() {
+        assert_eq!(Config::default().ui.seen_scope, SeenScopeConfig::Pane);
+
+        let toml = r#"
+[ui]
+seen_scope = "tab"
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        assert_eq!(config.ui.seen_scope, SeenScopeConfig::Tab);
     }
 
     #[test]

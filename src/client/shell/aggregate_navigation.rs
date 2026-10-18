@@ -275,6 +275,46 @@ pub(super) fn online_agent_targets(
         .collect()
 }
 
+/// Online agents that are blocked or finished unseen, oldest alert first.
+/// Recency counts state changes across all machines, so it orders alerts
+/// from different servers too.
+pub(super) fn attention_agent_targets(
+    endpoints: &[ClientShellEndpoint],
+) -> Vec<AggregateAgentTarget> {
+    use crate::api::schema::AgentStatus;
+    let mut agents = cached_endpoint_snapshots(endpoints)
+        .filter(|endpoint| !endpoint.stale())
+        .flat_map(|endpoint| {
+            endpoint
+                .snapshot
+                .agents
+                .iter()
+                .filter(|agent| {
+                    matches!(agent.agent_status, AgentStatus::Blocked | AgentStatus::Done)
+                })
+                .map(move |agent| {
+                    (
+                        endpoint
+                            .agent_recency
+                            .get(&agent.pane_id)
+                            .copied()
+                            .unwrap_or_default(),
+                        endpoint.endpoint_id,
+                        agent,
+                    )
+                })
+        })
+        .collect::<Vec<_>>();
+    agents.sort_by_key(|(recency, _, _)| *recency);
+    agents
+        .into_iter()
+        .map(|(_, endpoint_id, agent)| AggregateAgentTarget {
+            endpoint_id: endpoint_id.clone(),
+            pane_id: agent.pane_id.clone(),
+        })
+        .collect()
+}
+
 pub(super) fn navigator_rows(
     endpoints: &[ClientShellEndpoint],
     active_endpoint_id: &ClientEndpointId,

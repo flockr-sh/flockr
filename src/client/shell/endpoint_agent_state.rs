@@ -1,6 +1,8 @@
 use std::collections::{HashMap, HashSet};
+use std::time::{Duration, Instant};
 
 use crate::api::schema::AgentStatus;
+use crate::config::SeenScopeConfig;
 use crate::protocol::{ClientShellAgent, ClientShellSnapshot, PaneSurfaceFrame};
 
 #[derive(Clone, Debug, Default)]
@@ -9,6 +11,12 @@ pub(super) struct EndpointAgentPresentation {
     acknowledged: HashMap<String, u64>,
     completed: HashMap<String, u64>,
     working: HashSet<String>,
+    /// When each agent pane on screen started being shown, for `seen_delay_ms`.
+    viewing_since: HashMap<String, Instant>,
+    /// Earliest time a shown completion becomes due for acknowledgement.
+    seen_deadline: Option<Instant>,
+    /// A pane marked unread while shown; not acknowledged until it leaves.
+    held: Option<String>,
     pending_completions: Option<(
         Option<u64>,
         crate::protocol::endpoint::EndpointAgentCompletions,
@@ -120,17 +128,46 @@ impl EndpointAgentPresentation {
         snapshot: &mut ClientShellSnapshot,
         surface: &PaneSurfaceFrame,
         outer_focused: Option<bool>,
+        now: Instant,
+        seen_delay: Duration,
+        scope: SeenScopeConfig,
     ) -> bool {
-        if outer_focused == Some(false)
-            || self.boot_id.as_deref() != Some(surface.boot_id.as_str())
+        if outer_focused == Some(false) {
+            self.viewing_since.clear();
+            self.seen_deadline = None;
+            return false;
+        }
+        if self.boot_id.as_deref() != Some(surface.boot_id.as_str())
             || snapshot.boot_id != surface.boot_id
             || snapshot.revision != surface.projection_revision
         {
             return false;
         }
 
+        // With seen_scope "pane" only the focused pane counts as shown.
+        let shown = |pane: &&crate::protocol::PaneSurfacePane| {
+            scope == SeenScopeConfig::Tab || pane.focused
+        };
+        // A pane that leaves the screen starts its delay over next time it is shown.
+        self.viewing_since.retain(|pane_id, _| {
+            surface
+                .panes
+                .iter()
+                .filter(shown)
+                .any(|pane| &pane.pane_id == pane_id)
+        });
+        if self.held.as_ref().is_some_and(|held| {
+            !surface
+                .panes
+                .iter()
+                .filter(shown)
+                .any(|pane| &pane.pane_id == held)
+        }) {
+            self.held = None;
+        }
+        self.seen_deadline = None;
         let mut changed = false;
-        for pane in &surface.panes {
+        for pane in surface.panes.iter().filter(shown) {
             let Some(agent) = snapshot
                 .agents
                 .iter()
@@ -138,11 +175,25 @@ impl EndpointAgentPresentation {
             else {
                 continue;
             };
-            let acknowledged = self.acknowledged.entry(agent.pane_id.clone()).or_default();
-            if *acknowledged < agent.state_change_seq {
-                *acknowledged = agent.state_change_seq;
-                changed = true;
+            let since = *self
+                .viewing_since
+                .entry(agent.pane_id.clone())
+                .or_insert(now);
+            if self.held.as_ref() == Some(&agent.pane_id) {
+                continue;
             }
+            let acknowledged = self.acknowledged.entry(agent.pane_id.clone()).or_default();
+            if *acknowledged >= agent.state_change_seq {
+                continue;
+            }
+            let due = since + seen_delay;
+            if now < due {
+                self.seen_deadline =
+                    Some(self.seen_deadline.map_or(due, |deadline| deadline.min(due)));
+                continue;
+            }
+            *acknowledged = agent.state_change_seq;
+            changed = true;
         }
         if changed {
             for agent in &mut snapshot.agents {
@@ -151,6 +202,16 @@ impl EndpointAgentPresentation {
             project_aggregate_status(snapshot);
         }
         changed
+    }
+
+    /// Keeps `pane_id` from being acknowledged while it stays on screen, so
+    /// marking the shown pane unread sticks until you leave it.
+    pub(super) fn hold_unread(&mut self, pane_id: String) {
+        self.held = Some(pane_id);
+    }
+
+    pub(super) fn seen_deadline(&self) -> Option<Instant> {
+        self.seen_deadline
     }
 
     pub(super) fn seen(&self, agent: &ClientShellAgent) -> bool {
@@ -423,6 +484,68 @@ mod tests {
     }
 
     #[test]
+    fn pane_scope_acknowledges_only_the_focused_pane() {
+        let mut presentation = EndpointAgentPresentation::default();
+        let mut initial = snapshot(AgentStatus::Working, 4, 1);
+        presentation.project_snapshot(&mut initial);
+        let mut completed = snapshot(AgentStatus::Idle, 5, 2);
+        presentation.project_snapshot(&mut completed);
+        let mut split = surface(2);
+        split.panes[0].focused = false;
+
+        assert!(!presentation.acknowledge_surface(
+            &mut completed,
+            &split,
+            Some(true),
+            Instant::now(),
+            Duration::ZERO,
+            SeenScopeConfig::Pane,
+        ));
+        assert_eq!(completed.agents[0].agent_status, AgentStatus::Done);
+        assert!(presentation.acknowledge_surface(
+            &mut completed,
+            &split,
+            Some(true),
+            Instant::now(),
+            Duration::ZERO,
+            SeenScopeConfig::Tab,
+        ));
+        assert_eq!(completed.agents[0].agent_status, AgentStatus::Idle);
+    }
+
+    #[test]
+    fn a_held_pane_stays_done_until_it_leaves_the_screen() {
+        let mut presentation = EndpointAgentPresentation::default();
+        let mut initial = snapshot(AgentStatus::Working, 4, 1);
+        presentation.project_snapshot(&mut initial);
+        let mut completed = snapshot(AgentStatus::Idle, 5, 2);
+        presentation.project_snapshot(&mut completed);
+        let ack = |presentation: &mut EndpointAgentPresentation,
+                   completed: &mut ClientShellSnapshot,
+                   surface: &PaneSurfaceFrame| {
+            presentation.acknowledge_surface(
+                completed,
+                surface,
+                Some(true),
+                Instant::now(),
+                Duration::ZERO,
+                SeenScopeConfig::Pane,
+            )
+        };
+        assert!(!ack(&mut presentation, &mut completed, &surface(1)));
+        presentation.hold_unread("agent-pane".into());
+
+        assert!(!ack(&mut presentation, &mut completed, &surface(2)));
+        assert_eq!(completed.agents[0].agent_status, AgentStatus::Done);
+
+        let mut elsewhere = surface(2);
+        elsewhere.panes[0].pane_id = "other-pane".into();
+        ack(&mut presentation, &mut completed, &elsewhere);
+        assert!(ack(&mut presentation, &mut completed, &surface(2)));
+        assert_eq!(completed.agents[0].agent_status, AgentStatus::Idle);
+    }
+
+    #[test]
     fn coherent_presented_surface_acknowledges_completion() {
         let mut presentation = EndpointAgentPresentation::default();
         let mut initial = snapshot(AgentStatus::Working, 4, 1);
@@ -430,7 +553,14 @@ mod tests {
         let mut completed = snapshot(AgentStatus::Idle, 5, 2);
         presentation.project_snapshot(&mut completed);
 
-        assert!(presentation.acknowledge_surface(&mut completed, &surface(2), Some(true)));
+        assert!(presentation.acknowledge_surface(
+            &mut completed,
+            &surface(2),
+            Some(true),
+            Instant::now(),
+            Duration::ZERO,
+            SeenScopeConfig::Pane
+        ));
         assert_eq!(completed.agents[0].agent_status, AgentStatus::Idle);
     }
 
@@ -450,7 +580,10 @@ mod tests {
         assert!(viewing_client.acknowledge_surface(
             &mut completed_for_viewer,
             &surface(2),
-            Some(true)
+            Some(true),
+            Instant::now(),
+            Duration::ZERO,
+            SeenScopeConfig::Pane,
         ));
 
         assert_eq!(
@@ -471,8 +604,116 @@ mod tests {
         let mut completed = snapshot(AgentStatus::Idle, 5, 2);
         presentation.project_snapshot(&mut completed);
 
-        assert!(!presentation.acknowledge_surface(&mut completed, &surface(1), Some(true)));
-        assert!(!presentation.acknowledge_surface(&mut completed, &surface(2), Some(false)));
+        assert!(!presentation.acknowledge_surface(
+            &mut completed,
+            &surface(1),
+            Some(true),
+            Instant::now(),
+            Duration::ZERO,
+            SeenScopeConfig::Pane
+        ));
+        assert!(!presentation.acknowledge_surface(
+            &mut completed,
+            &surface(2),
+            Some(false),
+            Instant::now(),
+            Duration::ZERO,
+            SeenScopeConfig::Pane
+        ));
         assert_eq!(completed.agents[0].agent_status, AgentStatus::Done);
+    }
+
+    #[test]
+    fn seen_delay_keeps_completion_done_until_it_has_been_shown_long_enough() {
+        let mut presentation = EndpointAgentPresentation::default();
+        let mut initial = snapshot(AgentStatus::Working, 4, 1);
+        presentation.project_snapshot(&mut initial);
+        let mut completed = snapshot(AgentStatus::Idle, 5, 2);
+        presentation.project_snapshot(&mut completed);
+        let delay = Duration::from_millis(500);
+        let start = Instant::now();
+
+        assert!(!presentation.acknowledge_surface(
+            &mut completed,
+            &surface(2),
+            Some(true),
+            start,
+            delay,
+            SeenScopeConfig::Pane
+        ));
+        assert_eq!(completed.agents[0].agent_status, AgentStatus::Done);
+        assert_eq!(presentation.seen_deadline(), Some(start + delay));
+
+        let early = start + Duration::from_millis(499);
+        assert!(!presentation.acknowledge_surface(
+            &mut completed,
+            &surface(2),
+            Some(true),
+            early,
+            delay,
+            SeenScopeConfig::Pane
+        ));
+        assert_eq!(completed.agents[0].agent_status, AgentStatus::Done);
+
+        assert!(presentation.acknowledge_surface(
+            &mut completed,
+            &surface(2),
+            Some(true),
+            start + delay,
+            delay,
+            SeenScopeConfig::Pane
+        ));
+        assert_eq!(completed.agents[0].agent_status, AgentStatus::Idle);
+        assert_eq!(presentation.seen_deadline(), None);
+    }
+
+    #[test]
+    fn seen_delay_restarts_when_the_pane_leaves_the_screen() {
+        let mut presentation = EndpointAgentPresentation::default();
+        let mut initial = snapshot(AgentStatus::Working, 4, 1);
+        presentation.project_snapshot(&mut initial);
+        let mut completed = snapshot(AgentStatus::Idle, 5, 2);
+        presentation.project_snapshot(&mut completed);
+        let delay = Duration::from_millis(500);
+        let start = Instant::now();
+        let mut elsewhere = surface(2);
+        elsewhere.panes.clear();
+
+        presentation.acknowledge_surface(
+            &mut completed,
+            &surface(2),
+            Some(true),
+            start,
+            delay,
+            SeenScopeConfig::Pane,
+        );
+        let away = start + Duration::from_millis(300);
+        presentation.acknowledge_surface(
+            &mut completed,
+            &elsewhere,
+            Some(true),
+            away,
+            delay,
+            SeenScopeConfig::Pane,
+        );
+        let back = start + Duration::from_millis(600);
+        assert!(!presentation.acknowledge_surface(
+            &mut completed,
+            &surface(2),
+            Some(true),
+            back,
+            delay,
+            SeenScopeConfig::Pane
+        ));
+        assert_eq!(completed.agents[0].agent_status, AgentStatus::Done);
+        assert!(presentation.acknowledge_surface(
+            &mut completed,
+            &surface(2),
+            Some(true),
+            back + delay,
+            delay,
+            SeenScopeConfig::Pane
+        ));
+        assert_eq!(completed.agents[0].agent_status, AgentStatus::Idle);
     }
 }

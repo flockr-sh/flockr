@@ -68,6 +68,8 @@ pub(crate) enum KeybindAction {
     Settings,
     ReloadConfig,
     OpenNotificationTarget,
+    FocusNextAttention,
+    MarkUnread,
     Detach,
     OpenNavigator,
 }
@@ -152,6 +154,11 @@ pub(crate) fn resolve_non_indexed_action(
             &keybinds.open_notification_target,
             KeybindAction::OpenNotificationTarget,
         ),
+        (
+            &keybinds.focus_next_attention,
+            KeybindAction::FocusNextAttention,
+        ),
+        (&keybinds.mark_unread, KeybindAction::MarkUnread),
         (&keybinds.detach, KeybindAction::Detach),
         (&keybinds.goto, KeybindAction::OpenNavigator),
     ] {

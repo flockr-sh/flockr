@@ -378,6 +378,8 @@ pub struct Keybinds {
     pub detach: ActionKeybinds,
     pub reload_config: ActionKeybinds,
     pub open_notification_target: ActionKeybinds,
+    pub focus_next_attention: ActionKeybinds,
+    pub mark_unread: ActionKeybinds,
     pub previous_workspace: ActionKeybinds,
     pub next_workspace: ActionKeybinds,
     pub previous_agent: ActionKeybinds,
@@ -566,6 +568,8 @@ impl Config {
             detach: empty_action!(),
             reload_config: empty_action!(),
             open_notification_target: empty_action!(),
+            focus_next_attention: empty_action!(),
+            mark_unread: empty_action!(),
             previous_workspace: empty_action!(),
             next_workspace: empty_action!(),
             previous_agent: empty_action!(),
@@ -727,6 +731,8 @@ impl Config {
                 open_notification_target,
                 source
             );
+            apply_action!(keybinds.focus_next_attention, focus_next_attention, source);
+            apply_action!(keybinds.mark_unread, mark_unread, source);
             apply_action!(keybinds.previous_workspace, previous_workspace, source);
             apply_action!(keybinds.next_workspace, next_workspace, source);
             apply_action!(keybinds.previous_agent, previous_agent, source);
@@ -1774,6 +1780,45 @@ next_tab = "prefix+n"
             vec![BindingTrigger::Prefix((
                 KeyCode::Char('g'),
                 KeyModifiers::SHIFT
+            ))]
+        );
+    }
+
+    #[test]
+    fn focus_next_attention_defaults_to_prefix_a_and_can_be_rebound() {
+        let kb = Config::default().keybinds();
+        assert_eq!(
+            binding_triggers(&kb.focus_next_attention),
+            vec![BindingTrigger::Prefix((
+                KeyCode::Char('a'),
+                KeyModifiers::empty()
+            ))]
+        );
+        let config: Config = toml::from_str(
+            r#"
+[keys]
+focus_next_attention = "prefix+shift+a"
+"#,
+        )
+        .unwrap();
+        assert!(config.collect_diagnostics().is_empty());
+        assert_eq!(
+            binding_triggers(&config.keybinds().focus_next_attention),
+            vec![BindingTrigger::Prefix((
+                KeyCode::Char('a'),
+                KeyModifiers::SHIFT
+            ))]
+        );
+    }
+
+    #[test]
+    fn mark_unread_defaults_to_prefix_u() {
+        let kb = Config::default().keybinds();
+        assert_eq!(
+            binding_triggers(&kb.mark_unread),
+            vec![BindingTrigger::Prefix((
+                KeyCode::Char('u'),
+                KeyModifiers::empty()
             ))]
         );
     }

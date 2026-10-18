@@ -74,6 +74,7 @@ pub(super) fn render_notice(
             ClientEndpointNoticeKind::Timeout | ClientEndpointNoticeKind::Unavailable => {
                 palette.yellow
             }
+            ClientEndpointNoticeKind::Info => palette.green,
         },
         palette,
     )
