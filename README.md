@@ -13,12 +13,45 @@ changes below. For herdr itself, its docs, and support, go to
 
 ## Differences from herdr
 
-- `ui.seen_delay_ms`: a done agent keeps its done badge until its pane has been
-  on screen this long, so stepping through agents doesn't clear the ones you
-  pass.
+Runs beside herdr:
+
 - Separate binary, config dir (`~/.config/flockr`), socket, `FLOCKR_*` env
   vars, and agent hook files, so flockr and herdr don't see each other.
+- Plugins and configs written for herdr work unchanged.
 - No self-update. Update by pulling and rebuilding.
+
+Sidebar:
+
+- A title row with the menu. Agents sit under one header per space, and a
+  worktree's agents nest under their repo the way the spaces list shows them.
+- All and Active tabs filter the agents list.
+- Agent rows can show the agent's own branch (`branch`), following it into
+  the worktree it works in. Space rows show uncommitted changes (`diff_stat`),
+  worktree spaces included.
+- Agents and spaces are numbered, with `alt+1..9` and `alt+shift+1..9` to
+  jump to them.
+- `ui.sidebar_position = "right"` moves the sidebar to the right edge.
+
+Agents:
+
+- `ui.seen_delay_ms` and `ui.seen_scope`: a done agent keeps its done badge
+  until its pane has been on screen long enough, so stepping through agents
+  doesn't clear the ones you pass. `prefix+a` jumps to the next agent that
+  needs you, `prefix+u` marks one done again.
+- `ui.keep_agents_in_use_first`: a pane whose agent starts a fresh session
+  moves behind the agents in use, and a dotted ring marks fresh sessions.
+- Resumed agents keep the CLI options they were started with. Codex runs
+  without its shared daemon, so its hooks see the pane.
+
+Keys and layout:
+
+- A settings screen (`prefix+s`) in sections; changes save to the config
+  file and apply at once.
+- Command palette (`prefix+:` or `prefix+/`) and vim jump keys in lists.
+- Link hints (`prefix+f`) to open or copy a visible link.
+- tmux layout presets (`prefix+alt+1..8`, `prefix+space`) and tmux's split
+  and resize keys.
+- Custom command popups are titled with their description.
 
 ## Build
 
