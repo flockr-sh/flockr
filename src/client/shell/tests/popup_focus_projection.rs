@@ -1008,17 +1008,11 @@ fn sidebar_scrollbars_use_proportional_shared_geometry_and_drag() {
 }
 
 #[test]
-fn popup_preemption_cancels_settings_theme_preview() {
+fn popup_preemption_closes_settings() {
     let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
     state.set_snapshot(Box::new(snapshot()));
     state.set_pane_surface(surface());
     state.open_settings_overlay();
-    let original_theme = state.config.theme_name.clone();
-    let original_palette = state.config.palette.clone();
-
-    state.handle_input_bytes(b"j");
-    assert_ne!(state.config.theme_name, original_theme);
-    assert_ne!(state.config.palette.accent, original_palette.accent);
 
     state.set_pane_surface(surface_with_popup());
 
@@ -1026,8 +1020,6 @@ fn popup_preemption_cancels_settings_theme_preview() {
         state.overlay,
         Some(ClientShellOverlay::Settings(_))
     ));
-    assert_eq!(state.config.theme_name, original_theme);
-    assert_eq!(state.config.palette, original_palette);
 }
 
 #[test]

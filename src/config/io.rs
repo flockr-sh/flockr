@@ -599,10 +599,6 @@ pub fn upsert_section_value(content: &str, section: &str, key: &str, value: &str
     upsert_section_raw(content, section, key, value)
 }
 
-pub fn upsert_section_bool(content: &str, section: &str, key: &str, value: bool) -> String {
-    upsert_section_raw(content, section, key, &value.to_string())
-}
-
 pub fn remove_section_key(content: &str, section: &str, key: &str) -> String {
     let header = format!("[{section}]");
     let lines: Vec<&str> = content.lines().collect();
@@ -760,8 +756,8 @@ mod tests {
     }
 
     #[test]
-    fn upsert_section_bool_adds_missing_section() {
-        let updated = upsert_section_bool("", "ui.toast", "enabled", true);
+    fn upsert_section_value_adds_missing_section() {
+        let updated = upsert_section_value("", "ui.toast", "enabled", "true");
         assert!(updated.contains("[ui.toast]"));
         assert!(updated.contains("enabled = true"));
     }

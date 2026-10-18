@@ -130,15 +130,6 @@ pub enum StatusIndicatorStyle {
     Symbols,
 }
 
-impl StatusIndicatorStyle {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Dots => "dots",
-            Self::Symbols => "symbols",
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum HostCursorModeConfig {

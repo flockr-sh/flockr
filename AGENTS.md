@@ -116,7 +116,8 @@ Client and server talk over a versioned endpoint protocol.
 - `src/server/`: headless server, socket API, client commands.
 - `src/app/`: `AppState`, actions, agents, API handlers.
 - `src/client/shell/`: TUI client: sidebar (`agent_sidebar.rs`), input, agent
-  done/seen projection (`endpoint_agent_state.rs`).
+  done/seen projection (`endpoint_agent_state.rs`), settings screen rows
+  (`settings_rows.rs`).
 - `src/detect/manifests/`: bundled agent-detection rules.
 - `src/integration/`: agent hook installers and assets.
 - `crates/ghostty-vt/`, `vendor/libghostty-vt/`: terminal emulation core.
@@ -151,7 +152,8 @@ condition. Recheck every patch when updating. `just test` verifies they apply.
 - Integration asset versions (`FLOCKR_INTEGRATION_VERSION` and the matching
   constants) bump once per release, not per commit.
 - New config keys: add to `src/config/model.rs` with a default and a parse
-  test, and document them in the sample config in `src/main.rs`.
+  test, and document them in the sample config in `src/main.rs`. Keys people
+  change often also get a row in `src/client/shell/settings_rows.rs`.
 - Commit subjects: imperative plain sentence, no prefix, no trailing period.
 
 ## Local notes

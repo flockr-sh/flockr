@@ -1,52 +1,22 @@
 use super::*;
 
-fn choice_style(selected: bool, palette: &Palette) -> Style {
-    if selected {
-        Style::default()
-            .fg(contrast(palette))
-            .bg(palette.accent)
-            .add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().fg(palette.text).bg(palette.panel_bg)
-    }
-}
-
-fn draw_choice(
-    buffer: &mut Buffer,
-    rect: Rect,
-    label: &str,
-    selected: bool,
-    current: bool,
-    palette: &Palette,
-) {
-    let style = choice_style(selected, palette);
-    buffer.set_style(rect, style);
-    let marker = if selected { "▸" } else { " " };
-    let current = if current { " ✓" } else { "" };
-    put_text(
-        buffer,
-        rect.x,
-        rect.y,
-        rect.width,
-        &format!(" {marker} {label}{current}"),
-        style,
-    );
-}
-
 pub(super) fn render_settings_overlay(
     buffer: &mut Buffer,
     settings: &ClientSettingsOverlay,
     integration_updates_available: bool,
     palette: &Palette,
 ) -> Option<OverlayRender> {
-    let integration_height = 14u16
-        .saturating_add(settings.integrations.len().max(1) as u16)
-        .saturating_add(settings.integration_messages.len().min(6) as u16);
-    let height = if settings.section == ClientSettingsSection::Integrations {
-        integration_height.max(22)
-    } else {
-        22
+    let row_count = match settings.section {
+        ClientSettingsSection::Integrations => settings
+            .integrations
+            .len()
+            .max(1)
+            .saturating_add(settings.integration_messages.len().min(6))
+            .saturating_add(3),
+        section => super::super::settings_rows::visible_rows(section, &settings.config).count(),
     };
+    // Title, tabs, rule, blank; help, blank; key hints, buttons; borders.
+    let height = (row_count as u16).saturating_add(12).max(18);
     let popup = popup(buffer.area, 76, height)?;
     let inner = panel(buffer, popup, palette.accent, palette.panel_bg)?;
     if inner.width < 20 || inner.height < 8 {
@@ -58,11 +28,21 @@ pub(super) fn render_settings_overlay(
         inner.x,
         inner.y,
         inner.width,
-        " settings",
+        " SETTINGS",
         Style::default()
             .fg(palette.text)
             .bg(palette.panel_bg)
             .add_modifier(Modifier::BOLD),
+    );
+    let path = format!("{} ", settings.config_path);
+    let path_width = display_width(&path).min(inner.width.saturating_sub(10));
+    put_text(
+        buffer,
+        inner.right().saturating_sub(path_width),
+        inner.y,
+        path_width,
+        &path,
+        Style::default().fg(palette.overlay0).bg(palette.panel_bg),
     );
 
     let integration_badge = integration_updates_available
@@ -120,114 +100,60 @@ pub(super) fn render_settings_overlay(
         Style::default().fg(palette.surface0).bg(palette.panel_bg),
     );
 
+    // Rows, then a blank line and the selected row's help above the hints.
     let content = Rect::new(
         inner.x,
         inner.y + 4,
         inner.width,
-        inner.height.saturating_sub(7),
+        inner.height.saturating_sub(9),
     );
     let mut choice_hits = Vec::new();
-    match settings.section {
-        ClientSettingsSection::Theme => {
-            let visible = usize::from(content.height);
-            let scroll = settings.selected.saturating_sub(visible.saturating_sub(1));
-            for (visible_index, (index, name)) in crate::config::THEME_NAMES
-                .iter()
-                .enumerate()
-                .skip(scroll)
-                .take(visible)
-                .enumerate()
-            {
-                let rect = Rect::new(
-                    content.x,
-                    content.y + visible_index as u16,
-                    content.width,
-                    1,
-                );
-                draw_choice(
-                    buffer,
-                    rect,
-                    name,
-                    index == settings.selected,
-                    super::super::settings::normalized_theme_name(name)
-                        == super::super::settings::normalized_theme_name(
-                            &settings.original_theme_name,
-                        ),
-                    palette,
-                );
-                choice_hits.push((rect, index));
-            }
-        }
-        ClientSettingsSection::Indicators => {
-            render_choice_section(
-                buffer,
-                content,
-                "agent status indicators",
-                "choose color dots or distinct symbols for each state",
-                &["color dots  ● ● ● ○ ·", "distinct symbols  × ◐ ✓ ○ ·"],
-                settings.selected,
-                palette,
-                &mut choice_hits,
-            );
-        }
-        ClientSettingsSection::Pulse => {
-            render_choice_section(
-                buffer,
-                content,
-                "working pulse",
-                "pulse the status indicator while an agent is working",
-                &["on", "off"],
-                settings.selected,
-                palette,
-                &mut choice_hits,
-            );
-        }
-        ClientSettingsSection::Sound => {
-            render_choice_section(
-                buffer,
-                content,
-                "sound alerts",
-                "play sounds when agents change state in background",
-                &["on", "off"],
-                settings.selected,
-                palette,
-                &mut choice_hits,
-            );
-        }
-        ClientSettingsSection::Toast => {
-            render_choice_section(
-                buffer,
-                content,
-                "notification popups",
-                "choose where background popup notifications should appear",
-                &["off", "inside flockr", "via terminal", "via system"],
-                settings.selected,
-                palette,
-                &mut choice_hits,
-            );
-        }
+    let mut value_hits = Vec::new();
+    let help = match settings.section {
         ClientSettingsSection::Integrations => {
             render_integrations(buffer, content, settings, palette);
+            None
         }
+        section => render_setting_rows(
+            buffer,
+            content,
+            settings,
+            section,
+            palette,
+            &mut choice_hits,
+            &mut value_hits,
+        ),
+    };
+    if let Some(help) = settings
+        .config_error
+        .as_deref()
+        .map(|error| format!(" config file has errors, showing defaults: {error}"))
+        .or(help)
+    {
+        put_text(
+            buffer,
+            inner.x,
+            inner.bottom().saturating_sub(4),
+            inner.width,
+            &help,
+            Style::default().fg(palette.overlay1).bg(palette.panel_bg),
+        );
     }
 
+    let integrations = settings.section == ClientSettingsSection::Integrations;
     let installable = settings
         .integrations
         .iter()
         .any(super::super::settings::integration_needs_install);
-    let show_primary = settings.section != ClientSettingsSection::Integrations || installable;
-    let labels = if show_primary { vec![10, 12] } else { vec![12] };
+    let show_primary = integrations && installable;
+    let labels = if show_primary { vec![12, 12] } else { vec![12] };
     let buttons = row(inner, &labels, 2, inner.height.saturating_sub(1));
     let (primary, close) = if show_primary {
         let primary = buttons[0];
         button(
             buffer,
             primary,
-            if settings.section == ClientSettingsSection::Integrations {
-                " ↵ install "
-            } else {
-                " ↵ apply "
-            },
+            " ↵ install ",
             Style::default()
                 .fg(contrast(palette))
                 .bg(palette.accent)
@@ -251,7 +177,11 @@ pub(super) fn render_settings_overlay(
         inner.x,
         inner.bottom().saturating_sub(2),
         inner.width,
-        " ↑↓ select  tab section",
+        if integrations {
+            " ↑↓ select  tab section"
+        } else {
+            " ↑↓ select  ←→ change  r reset to default  tab section"
+        },
         Style::default().fg(palette.overlay1).bg(palette.panel_bg),
     );
 
@@ -262,49 +192,72 @@ pub(super) fn render_settings_overlay(
         settings_popup: popup,
         settings_tabs: tab_hits,
         settings_choices: choice_hits,
+        settings_values: value_hits,
         ..OverlayRender::default()
     })
 }
 
-fn render_choice_section(
+/// Draw one section's rows as `label  ‹ value ›` and return the selected
+/// row's help text. Values that differ from the default use the accent color.
+fn render_setting_rows(
     buffer: &mut Buffer,
     area: Rect,
-    title: &str,
-    description: &str,
-    choices: &[&str],
-    selected: usize,
+    settings: &ClientSettingsOverlay,
+    section: ClientSettingsSection,
     palette: &Palette,
-    hits: &mut Vec<(Rect, usize)>,
-) {
-    put_text(
-        buffer,
-        area.x,
-        area.y,
-        area.width,
-        title,
-        Style::default()
-            .fg(palette.text)
-            .bg(palette.panel_bg)
-            .add_modifier(Modifier::BOLD),
-    );
-    put_text(
-        buffer,
-        area.x,
-        area.y + 1,
-        area.width,
-        description,
-        Style::default().fg(palette.overlay1).bg(palette.panel_bg),
-    );
-    let row_gap = u16::from(choices.len() > 2);
-    for (index, choice) in choices.iter().enumerate() {
-        let y = area.y + 3 + index as u16 * (1 + row_gap);
-        if y >= area.bottom() {
-            break;
-        }
+    row_hits: &mut Vec<(Rect, usize)>,
+    value_hits: &mut Vec<(Rect, usize)>,
+) -> Option<String> {
+    const LABEL_WIDTH: u16 = 27;
+    let defaults = crate::config::Config::default();
+    let rows =
+        super::super::settings_rows::visible_rows(section, &settings.config).collect::<Vec<_>>();
+    let visible = usize::from(area.height);
+    let scroll = settings.selected.saturating_sub(visible.saturating_sub(1));
+    for (index, setting) in rows.iter().enumerate().skip(scroll).take(visible) {
+        let y = area.y + (index - scroll) as u16;
         let rect = Rect::new(area.x, y, area.width, 1);
-        draw_choice(buffer, rect, choice, index == selected, false, palette);
-        hits.push((rect, index));
+        let selected = index == settings.selected;
+        let base = if selected {
+            Style::default().fg(palette.text).bg(palette.surface0)
+        } else {
+            Style::default().fg(palette.subtext0).bg(palette.panel_bg)
+        };
+        buffer.set_style(rect, base);
+        let marker = if selected { "▸" } else { " " };
+        put_text(
+            buffer,
+            rect.x,
+            y,
+            LABEL_WIDTH.min(rect.width),
+            &format!(" {marker} {}", setting.label),
+            if selected {
+                base.add_modifier(Modifier::BOLD)
+            } else {
+                base
+            },
+        );
+        let changed = setting.current_index(&settings.config) != setting.current_index(&defaults);
+        let value = format!("‹ {} ›", setting.current_label(&settings.config));
+        let value_x = rect.x.saturating_add(LABEL_WIDTH).min(rect.right());
+        let value_width = display_width(&value).min(rect.right().saturating_sub(value_x));
+        put_text(
+            buffer,
+            value_x,
+            y,
+            value_width,
+            &value,
+            if changed {
+                base.fg(palette.accent).add_modifier(Modifier::BOLD)
+            } else {
+                base
+            },
+        );
+        row_hits.push((rect, index));
+        value_hits.push((Rect::new(value_x, y, value_width, 1), index));
     }
+    rows.get(settings.selected)
+        .map(|setting| format!(" {}", setting.help))
 }
 
 fn render_integrations(

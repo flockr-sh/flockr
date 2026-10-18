@@ -357,13 +357,6 @@ pub(crate) fn client_theme_runtime_from_config(config: &Config) -> state::ThemeR
     theme_runtime_config(config, true)
 }
 
-pub(crate) fn client_palette_for_theme(
-    runtime: &state::ThemeRuntimeConfig,
-    name: &str,
-) -> state::Palette {
-    resolve_palette_for_theme_name(name, "catppuccin", runtime, None)
-}
-
 pub(crate) fn client_palette_from_config(config: &Config) -> state::Palette {
     let runtime = client_theme_runtime_from_config(config);
     resolve_effective_theme(&runtime, None).0

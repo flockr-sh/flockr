@@ -5,39 +5,42 @@ pub(super) fn normalized_theme_name(name: &str) -> String {
     name.to_lowercase().replace([' ', '_'], "-")
 }
 
-fn theme_index(name: &str) -> usize {
-    let normalized = normalized_theme_name(name);
-    crate::config::THEME_NAMES
-        .iter()
-        .position(|candidate| normalized_theme_name(candidate) == normalized)
-        .unwrap_or(0)
-}
-
-fn indicator_index(style: crate::config::StatusIndicatorStyle) -> usize {
-    usize::from(style == crate::config::StatusIndicatorStyle::Symbols)
-}
-
-fn toast_index(delivery: crate::config::ToastDelivery) -> usize {
-    match delivery {
-        crate::config::ToastDelivery::Off => 0,
-        crate::config::ToastDelivery::Flockr => 1,
-        crate::config::ToastDelivery::Terminal => 2,
-        crate::config::ToastDelivery::System => 3,
-    }
-}
-
 pub(super) fn integration_needs_install(info: &crate::api::schema::IntegrationInfo) -> bool {
     info.state == crate::api::schema::IntegrationState::Outdated
         || info.available && info.state == crate::api::schema::IntegrationState::NotInstalled
 }
 
+/// Read the config file for the settings rows. A missing file reads as the
+/// defaults; an unreadable one reads as the defaults plus the reason.
+fn load_settings_config() -> (Box<crate::config::Config>, Option<String>) {
+    match crate::config::load_live_config() {
+        Ok(loaded) => (Box::new(loaded.config), None),
+        Err(errors) => (Box::default(), Some(errors.join("; "))),
+    }
+}
+
+/// The config path with the home directory shortened to `~`.
+fn display_config_path() -> String {
+    let path = crate::config::config_path();
+    match std::env::var_os("HOME").and_then(|home| {
+        path.strip_prefix(home)
+            .ok()
+            .map(|rest| rest.display().to_string())
+    }) {
+        Some(rest) => format!("~/{rest}"),
+        None => path.display().to_string(),
+    }
+}
+
 impl ClientShellState {
     pub(super) fn open_settings_overlay(&mut self) {
+        let (config, config_error) = load_settings_config();
         self.overlay = Some(ClientShellOverlay::Settings(ClientSettingsOverlay {
-            section: ClientSettingsSection::Theme,
-            selected: theme_index(&self.config.theme_name),
-            original_theme_name: self.config.theme_name.clone(),
-            original_palette: self.config.palette.clone(),
+            section: ClientSettingsSection::Appearance,
+            selected: 0,
+            config,
+            config_error,
+            config_path: display_config_path(),
             integrations: Vec::new(),
             integration_messages: Vec::new(),
             loading_integrations: false,
@@ -45,23 +48,11 @@ impl ClientShellState {
         }));
     }
 
-    fn selected_index_for_settings_section(&self, section: ClientSettingsSection) -> usize {
-        match section {
-            ClientSettingsSection::Theme => theme_index(&self.config.theme_name),
-            ClientSettingsSection::Indicators => indicator_index(self.config.status_indicators),
-            ClientSettingsSection::Pulse => usize::from(!self.config.pulse_working),
-            ClientSettingsSection::Sound => usize::from(!self.config.sound_enabled),
-            ClientSettingsSection::Toast => toast_index(self.config.toast_delivery),
-            ClientSettingsSection::Integrations => 0,
-        }
-    }
-
     pub(super) fn select_settings_section(
         &mut self,
         section: ClientSettingsSection,
         outcome: &mut ClientShellInput,
     ) {
-        let selected = self.selected_index_for_settings_section(section);
         let request_integrations = matches!(section, ClientSettingsSection::Integrations)
             && matches!(
                 self.overlay,
@@ -73,7 +64,7 @@ impl ClientShellState {
             );
         if let Some(ClientShellOverlay::Settings(settings)) = self.overlay.as_mut() {
             settings.section = section;
-            settings.selected = selected;
+            settings.selected = 0;
         }
         if request_integrations {
             self.queue_integration_list(outcome, true);
@@ -97,12 +88,8 @@ impl ClientShellState {
     fn settings_choice_count(&self) -> usize {
         match self.overlay.as_ref() {
             Some(ClientShellOverlay::Settings(settings)) => match settings.section {
-                ClientSettingsSection::Theme => crate::config::THEME_NAMES.len(),
-                ClientSettingsSection::Indicators
-                | ClientSettingsSection::Pulse
-                | ClientSettingsSection::Sound => 2,
-                ClientSettingsSection::Toast => 4,
                 ClientSettingsSection::Integrations => settings.integrations.len(),
+                section => super::settings_rows::visible_rows(section, &settings.config).count(),
             },
             _ => 0,
         }
@@ -119,9 +106,6 @@ impl ClientShellState {
         }
         settings.selected = (settings.selected as isize + delta)
             .clamp(0, count.saturating_sub(1) as isize) as usize;
-        if settings.section == ClientSettingsSection::Theme {
-            self.preview_selected_theme();
-        }
     }
 
     pub(super) fn select_settings_choice(&mut self, index: usize) {
@@ -131,46 +115,65 @@ impl ClientShellState {
                 settings.selected = index.min(count - 1);
             }
         }
-        if matches!(
-            self.overlay,
-            Some(ClientShellOverlay::Settings(ClientSettingsOverlay {
-                section: ClientSettingsSection::Theme,
-                ..
-            }))
-        ) {
-            self.preview_selected_theme();
-        }
-    }
-
-    fn preview_selected_theme(&mut self) {
-        let Some(ClientShellOverlay::Settings(settings)) = self.overlay.as_ref() else {
-            return;
-        };
-        let Some(name) = crate::config::THEME_NAMES.get(settings.selected) else {
-            return;
-        };
-        self.config.theme_name = (*name).to_owned();
-        self.config.palette =
-            crate::app::client_palette_for_theme(&self.config.theme_runtime, name);
     }
 
     pub(super) fn cancel_settings_overlay(&mut self) {
-        let Some(ClientShellOverlay::Settings(settings)) = self.overlay.take() else {
+        self.overlay = None;
+    }
+
+    fn selected_setting_row(&self) -> Option<&'static super::settings_rows::SettingRow> {
+        let Some(ClientShellOverlay::Settings(settings)) = self.overlay.as_ref() else {
+            return None;
+        };
+        super::settings_rows::visible_rows(settings.section, &settings.config)
+            .nth(settings.selected)
+    }
+
+    /// Step the selected row's value and save it.
+    pub(super) fn step_settings_value(&mut self, delta: isize, outcome: &mut ClientShellInput) {
+        let Some(ClientShellOverlay::Settings(settings)) = self.overlay.as_ref() else {
             return;
         };
-        self.config.theme_name = settings.original_theme_name;
-        self.config.palette = settings.original_palette;
+        let Some(row) = self.selected_setting_row() else {
+            return;
+        };
+        let Some(value) = row.step(&settings.config, delta) else {
+            return;
+        };
+        let literal = value.literal();
+        self.save_settings_edit(
+            crate::config::ConfigEdit::Set {
+                table: row.table,
+                key: row.key,
+                value: &literal,
+            },
+            outcome,
+        );
+    }
+
+    /// Remove the selected row's key so its default applies.
+    fn reset_settings_value(&mut self, outcome: &mut ClientShellInput) {
+        let Some(row) = self.selected_setting_row() else {
+            return;
+        };
+        self.save_settings_edit(
+            crate::config::ConfigEdit::Reset {
+                table: row.table,
+                key: row.key,
+            },
+            outcome,
+        );
     }
 
     fn save_settings_edit(
         &mut self,
         edit: crate::config::ConfigEdit<'_>,
         outcome: &mut ClientShellInput,
-    ) -> bool {
+    ) {
+        outcome.repaint = true;
         if let Err(error) = crate::config::write_edit(edit) {
             self.set_endpoint_error(error);
-            outcome.repaint = true;
-            return false;
+            return;
         }
         self.reload_client_config();
         self.push_endpoint_method_with_kind(
@@ -180,58 +183,29 @@ impl ClientShellState {
             PendingEndpointKind::ReloadConfig,
             outcome,
         );
-        outcome.repaint = true;
-        true
+        let (config, config_error) = load_settings_config();
+        let count = match self.overlay.as_ref() {
+            Some(ClientShellOverlay::Settings(settings)) => {
+                super::settings_rows::visible_rows(settings.section, &config).count()
+            }
+            _ => return,
+        };
+        if let Some(ClientShellOverlay::Settings(settings)) = self.overlay.as_mut() {
+            settings.config = config;
+            settings.config_error = config_error;
+            // A change can hide rows below the selection.
+            settings.selected = settings.selected.min(count.saturating_sub(1));
+        }
     }
 
     pub(super) fn apply_settings_choice(&mut self, outcome: &mut ClientShellInput) {
-        let Some(ClientShellOverlay::Settings(settings)) = self.overlay.as_ref() else {
-            return;
-        };
-        let section = settings.section;
-        let selected = settings.selected;
-        match section {
-            ClientSettingsSection::Theme => {
-                let Some(name) = crate::config::THEME_NAMES.get(selected).copied() else {
-                    return;
-                };
-                if self.save_settings_edit(crate::config::ConfigEdit::Theme(name), outcome) {
-                    self.overlay = None;
-                }
-            }
-            ClientSettingsSection::Indicators => {
-                let style = if selected == 0 {
-                    crate::config::StatusIndicatorStyle::Dots
-                } else {
-                    crate::config::StatusIndicatorStyle::Symbols
-                };
-                self.save_settings_edit(
-                    crate::config::ConfigEdit::StatusIndicators(style),
-                    outcome,
-                );
-            }
-            ClientSettingsSection::Pulse => {
-                self.save_settings_edit(
-                    crate::config::ConfigEdit::PulseWorking(selected == 0),
-                    outcome,
-                );
-            }
-            ClientSettingsSection::Sound => {
-                self.save_settings_edit(crate::config::ConfigEdit::Sound(selected == 0), outcome);
-            }
-            ClientSettingsSection::Toast => {
-                let delivery = match selected {
-                    0 => crate::config::ToastDelivery::Off,
-                    1 => crate::config::ToastDelivery::Flockr,
-                    2 => crate::config::ToastDelivery::Terminal,
-                    _ => crate::config::ToastDelivery::System,
-                };
-                self.save_settings_edit(
-                    crate::config::ConfigEdit::ToastDelivery(delivery),
-                    outcome,
-                );
-            }
-            ClientSettingsSection::Integrations => self.install_recommended_integrations(outcome),
+        match self.overlay.as_ref() {
+            Some(ClientShellOverlay::Settings(ClientSettingsOverlay {
+                section: ClientSettingsSection::Integrations,
+                ..
+            })) => self.install_recommended_integrations(outcome),
+            Some(ClientShellOverlay::Settings(_)) => self.step_settings_value(1, outcome),
+            _ => {}
         }
     }
 
@@ -378,15 +352,11 @@ impl ClientShellState {
             }
             return true;
         }
-        if matches!(code, KeyCode::Tab | KeyCode::Right | KeyCode::Char('l'))
-            && modifiers.is_empty()
-        {
+        if code == KeyCode::Tab && modifiers.is_empty() {
             self.move_settings_section(1, outcome);
             return true;
         }
-        if matches!(code, KeyCode::BackTab | KeyCode::Left | KeyCode::Char('h'))
-            && modifiers.difference(KeyModifiers::SHIFT).is_empty()
-        {
+        if code == KeyCode::BackTab && modifiers.difference(KeyModifiers::SHIFT).is_empty() {
             self.move_settings_section(-1, outcome);
             return true;
         }
@@ -398,6 +368,18 @@ impl ClientShellState {
         if matches!(code, KeyCode::Down | KeyCode::Char('j')) && modifiers.is_empty() {
             self.move_settings_selection(1);
             outcome.repaint = true;
+            return true;
+        }
+        if matches!(code, KeyCode::Left | KeyCode::Char('h')) && modifiers.is_empty() {
+            self.step_settings_value(-1, outcome);
+            return true;
+        }
+        if matches!(code, KeyCode::Right | KeyCode::Char('l')) && modifiers.is_empty() {
+            self.step_settings_value(1, outcome);
+            return true;
+        }
+        if code == KeyCode::Char('r') && modifiers.is_empty() {
+            self.reset_settings_value(outcome);
             return true;
         }
         if matches!(code, KeyCode::Enter | KeyCode::Char(' ')) && modifiers.is_empty() {

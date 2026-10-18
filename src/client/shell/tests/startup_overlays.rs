@@ -1162,7 +1162,58 @@ fn current_release_notes_use_whats_new_without_attention_badge() {
 }
 
 #[test]
-fn client_settings_preview_restore_and_endpoint_integrations_are_owned_by_overlay() {
+fn settings_rows_save_each_change_and_reset_to_the_default() {
+    let dir = std::env::temp_dir().join(format!("flockr-settings-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("config.toml");
+    std::fs::write(&path, "# mine\n[ui]\nconfirm_close = false\n").unwrap();
+    std::env::set_var(crate::config::CONFIG_PATH_ENV_VAR, &path);
+
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.set_snapshot(Box::new(snapshot()));
+    state.set_pane_surface(surface());
+    state.open_settings_overlay();
+    // Sidebar section, first row: position.
+    state.handle_input_bytes(b"\t");
+    let change = state.handle_input_bytes(b"l");
+    assert!(change.actions.iter().any(|action| matches!(
+        action,
+        ClientShellAction::Endpoint { request, .. }
+            if matches!(request.method, crate::api::schema::Method::ServerReloadConfig(_))
+    )));
+    let written = std::fs::read_to_string(&path).unwrap();
+    assert!(written.contains("# mine"), "{written}");
+    assert!(written.contains("confirm_close = false"), "{written}");
+    assert!(
+        written.contains("sidebar_position = \"right\""),
+        "{written}"
+    );
+    assert_eq!(
+        state.config.sidebar_position,
+        crate::config::SidebarPositionConfig::Right
+    );
+    let frame = state.compose(106, 30).expect("settings frame");
+    let text = frame
+        .cells
+        .iter()
+        .map(|cell| cell.symbol.as_str())
+        .collect::<String>();
+    assert!(text.contains("‹ right ›"), "{text}");
+
+    state.handle_input_bytes(b"r");
+    let written = std::fs::read_to_string(&path).unwrap();
+    std::env::remove_var(crate::config::CONFIG_PATH_ENV_VAR);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(!written.contains("sidebar_position"), "{written}");
+    assert!(written.contains("confirm_close = false"), "{written}");
+    assert_eq!(
+        state.config.sidebar_position,
+        crate::config::SidebarPositionConfig::Left
+    );
+}
+
+#[test]
+fn client_settings_navigation_and_endpoint_integrations_are_owned_by_overlay() {
     let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
     state.set_snapshot(Box::new(snapshot()));
     state.set_pane_surface(surface());
@@ -1174,19 +1225,24 @@ fn client_settings_preview_restore_and_endpoint_integrations_are_owned_by_overla
     assert!(matches!(
         state.overlay,
         Some(ClientShellOverlay::Settings(ClientSettingsOverlay {
-            section: ClientSettingsSection::Theme,
+            section: ClientSettingsSection::Appearance,
             ..
         }))
     ));
+    // Moving between rows changes nothing; only changing a value saves.
     let original_theme = state.config.theme_name.clone();
-    let original_palette = state.config.palette.clone();
-    state.handle_input_bytes(b"j");
-    assert_ne!(state.config.theme_name, original_theme);
-    assert_ne!(state.config.palette.accent, original_palette.accent);
+    let moved = state.handle_input_bytes(b"j");
+    assert!(moved.actions.is_empty());
+    assert!(matches!(
+        state.overlay,
+        Some(ClientShellOverlay::Settings(ClientSettingsOverlay {
+            selected: 1,
+            ..
+        }))
+    ));
     state.handle_input_bytes(b"\x1b");
     assert!(state.overlay.is_none());
     assert_eq!(state.config.theme_name, original_theme);
-    assert_eq!(state.config.palette.accent, original_palette.accent);
 
     state.open_settings_overlay();
     state.handle_input_bytes(b"j");
@@ -1201,8 +1257,6 @@ fn client_settings_preview_restore_and_endpoint_integrations_are_owned_by_overla
         modifiers: KeyModifiers::empty(),
     })]);
     assert!(state.overlay.is_none());
-    assert_eq!(state.config.theme_name, original_theme);
-    assert_eq!(state.config.palette.accent, original_palette.accent);
 
     state.open_settings_overlay();
     state.compose(106, 30).expect("settings overlay");

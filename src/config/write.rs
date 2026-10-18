@@ -1,52 +1,32 @@
 #[derive(Clone, Copy)]
 pub(crate) enum ConfigEdit<'a> {
-    Theme(&'a str),
-    StatusIndicators(super::StatusIndicatorStyle),
-    PulseWorking(bool),
-    Sound(bool),
-    ToastDelivery(super::ToastDelivery),
+    /// Write `key = value` in `[table]`. `value` is a TOML literal.
+    Set {
+        table: &'a str,
+        key: &'a str,
+        value: &'a str,
+    },
+    /// Remove the key from `[table]` so its default applies.
+    Reset { table: &'a str, key: &'a str },
 }
 
 impl ConfigEdit<'_> {
     pub(crate) fn description(self) -> &'static str {
-        match self {
-            Self::Theme(_) => "theme",
-            Self::StatusIndicators(_) => "status indicators",
-            Self::PulseWorking(_) => "working pulse setting",
-            Self::Sound(_) => "sound setting",
-            Self::ToastDelivery(_) => "toast setting",
-        }
+        "setting"
     }
 
     pub(crate) fn apply(self, content: &str) -> String {
         match self {
-            Self::Theme(name) => {
-                let content =
-                    super::upsert_section_value(content, "theme", "name", &format!("\"{name}\""));
-                super::upsert_section_bool(&content, "theme", "auto_switch", false)
+            Self::Set { table, key, value } => {
+                let content = super::upsert_section_value(content, table, key, value);
+                // The legacy ui.toast.enabled key would override delivery.
+                if table == "ui.toast" && key == "delivery" {
+                    super::remove_section_key(&content, "ui.toast", "enabled")
+                } else {
+                    content
+                }
             }
-            Self::StatusIndicators(style) => super::upsert_section_value(
-                content,
-                "ui",
-                "status_indicators",
-                &format!("\"{}\"", style.as_str()),
-            ),
-            Self::PulseWorking(enabled) => {
-                super::upsert_section_bool(content, "ui", "pulse_working", enabled)
-            }
-            Self::Sound(enabled) => {
-                super::upsert_section_bool(content, "ui.sound", "enabled", enabled)
-            }
-            Self::ToastDelivery(delivery) => {
-                let value = match delivery {
-                    super::ToastDelivery::Off => "\"off\"",
-                    super::ToastDelivery::Flockr => "\"flockr\"",
-                    super::ToastDelivery::Terminal => "\"terminal\"",
-                    super::ToastDelivery::System => "\"system\"",
-                };
-                let content = super::upsert_section_value(content, "ui.toast", "delivery", value);
-                super::remove_section_key(&content, "ui.toast", "enabled")
-            }
+            Self::Reset { table, key } => super::remove_section_key(content, table, key),
         }
     }
 }

@@ -150,6 +150,8 @@ pub(super) struct ShellHitMap {
     pub(super) settings_popup: Rect,
     pub(super) settings_tabs: Vec<(Rect, ClientSettingsSection)>,
     pub(super) settings_choices: Vec<(Rect, usize)>,
+    /// Value cells of settings rows; a click steps the value.
+    pub(super) settings_values: Vec<(Rect, usize)>,
     pub(super) product_announcement_scrollbar: Rect,
     pub(super) product_announcement_scroll_metrics: Option<crate::pane::ScrollMetrics>,
     pub(super) product_announcement_max_scroll: usize,
@@ -417,31 +419,31 @@ pub(super) struct ClientGlobalMenuOverlay {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ClientSettingsSection {
-    Theme,
-    Indicators,
-    Pulse,
-    Sound,
-    Toast,
+    Appearance,
+    Sidebar,
+    Alerts,
+    Behavior,
+    Session,
     Integrations,
 }
 
 impl ClientSettingsSection {
     pub(super) const ALL: &[Self] = &[
-        Self::Theme,
-        Self::Indicators,
-        Self::Pulse,
-        Self::Sound,
-        Self::Toast,
+        Self::Appearance,
+        Self::Sidebar,
+        Self::Alerts,
+        Self::Behavior,
+        Self::Session,
         Self::Integrations,
     ];
 
     pub(super) fn label(self) -> &'static str {
         match self {
-            Self::Theme => "theme",
-            Self::Indicators => "indicators",
-            Self::Pulse => "pulse",
-            Self::Sound => "sound",
-            Self::Toast => "toasts",
+            Self::Appearance => "appearance",
+            Self::Sidebar => "sidebar",
+            Self::Alerts => "alerts",
+            Self::Behavior => "behavior",
+            Self::Session => "session",
             Self::Integrations => "integrations",
         }
     }
@@ -450,9 +452,14 @@ impl ClientSettingsSection {
 #[derive(Debug)]
 pub(super) struct ClientSettingsOverlay {
     pub(super) section: ClientSettingsSection,
+    /// Selected row, or selected integration on the integrations section.
     pub(super) selected: usize,
-    pub(super) original_theme_name: String,
-    pub(super) original_palette: Palette,
+    /// The config file as last read, which the rows show and step from.
+    pub(super) config: Box<crate::config::Config>,
+    /// Why the config file could not be read; the rows then show defaults.
+    pub(super) config_error: Option<String>,
+    /// Where the settings are saved, shown in the footer.
+    pub(super) config_path: String,
     pub(super) integrations: Vec<crate::api::schema::IntegrationInfo>,
     pub(super) integration_messages: Vec<String>,
     pub(super) loading_integrations: bool,

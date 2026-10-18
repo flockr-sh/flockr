@@ -1590,18 +1590,11 @@ impl ClientShellState {
                     .copied()
                 {
                     self.select_settings_choice(index);
-                    let immediate = matches!(
-                        self.overlay,
-                        Some(ClientShellOverlay::Settings(ClientSettingsOverlay {
-                            section: ClientSettingsSection::Indicators
-                                | ClientSettingsSection::Pulse
-                                | ClientSettingsSection::Sound
-                                | ClientSettingsSection::Toast,
-                            ..
-                        }))
-                    );
-                    if immediate {
-                        self.apply_settings_choice(outcome);
+                    let on_value = self.hits.settings_values.iter().any(|(rect, value_index)| {
+                        *value_index == index && super::contains(*rect, point)
+                    });
+                    if on_value {
+                        self.step_settings_value(1, outcome);
                     }
                     outcome.repaint = true;
                 } else if super::contains(self.hits.overlay_primary, point) {
