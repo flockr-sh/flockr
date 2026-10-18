@@ -1,19 +1,19 @@
 [package]
-name = "herdr"
+name = "flockr"
 version = "0.9.5"
 edition = "2021"
 build = "build.rs"
 description = "terminal workspace manager for AI coding agents"
 license = "Apache-2.0"
-repository = "https://github.com/herdrdev/herdr"
-homepage = "https://herdr.dev"
+repository = "https://github.com/dmkenney/flockr"
+homepage = "https://github.com/dmkenney/flockr"
 keywords = ["terminal", "tui", "ai", "agents", "multiplexer"]
 categories = ["command-line-utilities"]
 include = [
     "src/**/*",
     "assets/sounds/*",
-    "docs/next/api/herdr-api.schema.json",
-    "skills/herdr/SKILL.md",
+    "docs/next/api/flockr-api.schema.json",
+    "skills/flockr/SKILL.md",
     "distribution/install.ps1",
     "README.md",
     "LICENSE",

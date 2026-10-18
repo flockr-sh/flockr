@@ -1,0 +1,5 @@
+[tools]
+bun = "latest"
+"github:nextest-rs/nextest" = { version = "latest", bin = "cargo-nextest", version_prefix = "cargo-nextest-" }
+just = "latest"
+zig = "0.16.0"

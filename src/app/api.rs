@@ -253,7 +253,7 @@ impl App {
                     .publish_pane_process_exit_if_agent(*pane_id, false)
                 {
                     self.sync_full_lifecycle_authority_detection_pauses();
-                    self.refresh_new_herdr_toast_context_for_update(&update, &previous_toast);
+                    self.refresh_new_flockr_toast_context_for_update(&update, &previous_toast);
                     self.emit_pane_state_update(&update);
                 }
                 if self.runtime_exit_action(*pane_id) == RuntimeExitAction::RespawnShell
@@ -381,7 +381,7 @@ impl App {
             self.render_notify.notify_one();
         }
         for update in &pane_updates {
-            self.refresh_new_herdr_toast_context_for_update(update, &previous_toast);
+            self.refresh_new_flockr_toast_context_for_update(update, &previous_toast);
             self.emit_pane_state_update(update);
         }
         self.sync_agent_metadata_deadline();
@@ -432,14 +432,14 @@ impl App {
         }
     }
 
-    pub(crate) fn refresh_new_herdr_toast_context_for_update(
+    pub(crate) fn refresh_new_flockr_toast_context_for_update(
         &mut self,
         update: &crate::app::actions::PaneStateUpdate,
         previous_toast: &Option<crate::app::state::ToastNotification>,
     ) {
         if !matches!(
             self.state.toast_config.delivery,
-            crate::config::ToastDelivery::Herdr
+            crate::config::ToastDelivery::Flockr
         ) || self.state.toast == *previous_toast
         {
             return;
@@ -665,7 +665,7 @@ impl App {
             .state
             .publish_pane_process_exit_if_agent(pane_id, true)?;
         self.sync_full_lifecycle_authority_detection_pauses();
-        self.refresh_new_herdr_toast_context_for_update(&update, &previous_toast);
+        self.refresh_new_flockr_toast_context_for_update(&update, &previous_toast);
         self.emit_pane_state_update(&update);
         Some(update)
     }
@@ -1285,7 +1285,7 @@ impl App {
 
         let reason = match self.state.toast_config.delivery {
             crate::config::ToastDelivery::Off => NotificationShowReason::Disabled,
-            crate::config::ToastDelivery::Herdr => {
+            crate::config::ToastDelivery::Flockr => {
                 if self.state.toast.is_some() {
                     NotificationShowReason::Busy
                 } else if self.api_notification_rate_limited(Instant::now()) {
@@ -1737,7 +1737,7 @@ mod tests {
             .get_mut(&terminal_id)
             .unwrap()
             .set_hook_authority(
-                "herdr:omp".to_string(),
+                "flockr:omp".to_string(),
                 "omp".to_string(),
                 AgentState::Working,
                 None,
@@ -1829,7 +1829,7 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
-    async fn herdr_toast_context_uses_live_root_runtime_cwd_label() {
+    async fn flockr_toast_context_uses_live_root_runtime_cwd_label() {
         let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
         let mut app = App::new(
             &crate::config::Config::default(),
@@ -1844,15 +1844,15 @@ mod tests {
         let root = workspace.tabs[0].root_pane;
         let terminal_id = workspace.terminal_id(root).cloned().unwrap();
         let temp_root = std::env::temp_dir().join(format!(
-            "herdr-toast-context-{}-{}",
+            "flockr-toast-context-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_nanos()
         ));
-        let stale_cwd = temp_root.join("__herdr_original__");
-        let live_cwd = temp_root.join("__herdr_projects__");
+        let stale_cwd = temp_root.join("__flockr_original__");
+        let live_cwd = temp_root.join("__flockr_projects__");
         std::fs::create_dir_all(&stale_cwd).unwrap();
         std::fs::create_dir_all(&live_cwd).unwrap();
         init_repo(&stale_cwd);
@@ -1865,7 +1865,7 @@ mod tests {
         app.state.active = None;
         app.state.selected = 0;
         app.state.mode = Mode::Terminal;
-        app.state.toast_config.delivery = crate::config::ToastDelivery::Herdr;
+        app.state.toast_config.delivery = crate::config::ToastDelivery::Flockr;
         app.state.toast_config.delay_seconds = 0;
 
         let (events, _) = tokio::sync::mpsc::channel(4);
@@ -1911,7 +1911,7 @@ mod tests {
 
         assert_eq!(
             app.state.toast.as_ref().map(|toast| toast.context.as_str()),
-            Some("__herdr_projects__ · 1")
+            Some("__flockr_projects__ · 1")
         );
 
         for (_, runtime) in app.terminal_runtimes.drain() {
@@ -1922,7 +1922,7 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
-    async fn delayed_herdr_toast_context_uses_live_root_runtime_cwd_label() {
+    async fn delayed_flockr_toast_context_uses_live_root_runtime_cwd_label() {
         let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
         let mut app = App::new(
             &crate::config::Config::default(),
@@ -1937,15 +1937,15 @@ mod tests {
         let root = workspace.tabs[0].root_pane;
         let terminal_id = workspace.terminal_id(root).cloned().unwrap();
         let temp_root = std::env::temp_dir().join(format!(
-            "herdr-delayed-toast-context-{}-{}",
+            "flockr-delayed-toast-context-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_nanos()
         ));
-        let stale_cwd = temp_root.join("__herdr_original__");
-        let live_cwd = temp_root.join("__herdr_projects__");
+        let stale_cwd = temp_root.join("__flockr_original__");
+        let live_cwd = temp_root.join("__flockr_projects__");
         std::fs::create_dir_all(&stale_cwd).unwrap();
         std::fs::create_dir_all(&live_cwd).unwrap();
         init_repo(&stale_cwd);
@@ -1958,7 +1958,7 @@ mod tests {
         app.state.active = None;
         app.state.selected = 0;
         app.state.mode = Mode::Terminal;
-        app.state.toast_config.delivery = crate::config::ToastDelivery::Herdr;
+        app.state.toast_config.delivery = crate::config::ToastDelivery::Flockr;
         app.state.toast_config.delay_seconds = 1;
 
         let (events, _) = tokio::sync::mpsc::channel(4);
@@ -2015,7 +2015,7 @@ mod tests {
                 .first()
                 .and_then(|delivery| delivery.toast.as_ref())
                 .map(|toast| toast.context.as_str()),
-            Some("__herdr_projects__ · 1")
+            Some("__flockr_projects__ · 1")
         );
 
         for (_, runtime) in app.terminal_runtimes.drain() {
@@ -2157,7 +2157,7 @@ mod tests {
         terminal.set_detected_state(Some(Agent::Codex), AgentState::Working);
         terminal
             .set_hook_authority_at(
-                "herdr:codex".into(),
+                "flockr:codex".into(),
                 "codex".into(),
                 AgentState::Working,
                 None,
@@ -2303,7 +2303,7 @@ mod tests {
         terminal.respawn_shell_on_exit = true;
         terminal.set_agent_name("codex".into());
         terminal.set_persisted_agent_session(crate::agent_resume::PersistedAgentSession {
-            source: "herdr:codex".into(),
+            source: "flockr:codex".into(),
             agent: "codex".into(),
             session_ref: crate::agent_resume::AgentSessionRef::id("codex-session")
                 .expect("test session id should be valid"),
@@ -2462,13 +2462,13 @@ mod tests {
         );
         let mut workspace = crate::workspace::Workspace::test_new("stale");
         workspace.custom_name = None;
-        workspace.identity_cwd = "/__herdr_original__".into();
+        workspace.identity_cwd = "/__flockr_original__".into();
         let root = workspace.tabs[0].root_pane;
         let terminal_id = workspace.terminal_id(root).cloned().unwrap();
         let workspace_id = workspace.id.clone();
         app.state.workspaces = vec![workspace];
         app.state.ensure_test_terminals();
-        app.state.terminals.get_mut(&terminal_id).unwrap().cwd = "/__herdr_projects__".into();
+        app.state.terminals.get_mut(&terminal_id).unwrap().cwd = "/__flockr_projects__".into();
         app.state.active = None;
         app.state.selected = 0;
         app.state.mode = Mode::Terminal;
@@ -2486,7 +2486,7 @@ mod tests {
         app.state.toast = Some(crate::app::state::ToastNotification {
             kind: ToastKind::Finished,
             title: "codex finished".into(),
-            context: "__herdr_original__ · 1".into(),
+            context: "__flockr_original__ · 1".into(),
             position: None,
             target: Some(crate::app::state::ToastTarget {
                 workspace_id,
@@ -2506,7 +2506,7 @@ mod tests {
 
         assert_eq!(
             app.state.toast.as_ref().map(|toast| toast.context.as_str()),
-            Some("__herdr_original__ · 1")
+            Some("__flockr_original__ · 1")
         );
     }
 }

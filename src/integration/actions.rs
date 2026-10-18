@@ -59,12 +59,12 @@ pub(crate) fn uninstall_experimental_letta() -> io::Result<Vec<String>> {
         }
         if result.updated_settings {
             messages.push(format!(
-                "removed herdr letta hook entry from {}",
+                "removed flockr letta hook entry from {}",
                 result.settings_path.display()
             ));
         } else {
             messages.push(format!(
-                "no herdr letta hook entry found in {}",
+                "no flockr letta hook entry found in {}",
                 result.settings_path.display()
             ));
         }
@@ -189,7 +189,7 @@ fn install_target_inner(target: crate::api::schema::IntegrationTarget) -> io::Re
             ];
             if installed.updated_legacy_hooks {
                 messages.push(format!(
-                    "removed legacy herdr droid hook entries from {}",
+                    "removed legacy flockr droid hook entries from {}",
                     installed.hooks_path.display()
                 ));
             }
@@ -371,12 +371,12 @@ pub(crate) fn uninstall_target(
             }
             if result.updated_settings {
                 messages.push(format!(
-                    "removed herdr claude hook entries from {}",
+                    "removed flockr claude hook entries from {}",
                     result.settings_path.display()
                 ));
             } else {
                 messages.push(format!(
-                    "no herdr claude hook entries found in {}",
+                    "no flockr claude hook entries found in {}",
                     result.settings_path.display()
                 ));
             }
@@ -398,12 +398,12 @@ pub(crate) fn uninstall_target(
             }
             if result.updated_hooks {
                 messages.push(format!(
-                    "removed herdr codex hook entries from {}",
+                    "removed flockr codex hook entries from {}",
                     result.hooks_path.display()
                 ));
             } else {
                 messages.push(format!(
-                    "no herdr codex hook entries found in {}",
+                    "no flockr codex hook entries found in {}",
                     result.hooks_path.display()
                 ));
             }
@@ -429,12 +429,12 @@ pub(crate) fn uninstall_target(
             }
             if result.updated_settings {
                 messages.push(format!(
-                    "removed herdr copilot hook entries from {}",
+                    "removed flockr copilot hook entries from {}",
                     result.settings_path.display()
                 ));
             } else {
                 messages.push(format!(
-                    "no herdr copilot hook entries found in {}",
+                    "no flockr copilot hook entries found in {}",
                     result.settings_path.display()
                 ));
             }
@@ -456,12 +456,12 @@ pub(crate) fn uninstall_target(
             }
             if result.updated_settings {
                 messages.push(format!(
-                    "removed herdr devin hook entries from {}",
+                    "removed flockr devin hook entries from {}",
                     result.settings_path.display()
                 ));
             } else {
                 messages.push(format!(
-                    "no herdr devin hook entries found in {}",
+                    "no flockr devin hook entries found in {}",
                     result.settings_path.display()
                 ));
             }
@@ -483,12 +483,12 @@ pub(crate) fn uninstall_target(
             }
             if result.updated_config {
                 messages.push(format!(
-                    "removed herdr kimi hook entries from {}",
+                    "removed flockr kimi hook entries from {}",
                     result.config_path.display()
                 ));
             } else {
                 messages.push(format!(
-                    "no herdr kimi hook entries found in {}",
+                    "no flockr kimi hook entries found in {}",
                     result.config_path.display()
                 ));
             }
@@ -510,23 +510,23 @@ pub(crate) fn uninstall_target(
             }
             if result.updated_hooks {
                 messages.push(format!(
-                    "removed legacy herdr droid hook entries from {}",
+                    "removed legacy flockr droid hook entries from {}",
                     result.hooks_path.display()
                 ));
             } else {
                 messages.push(format!(
-                    "no legacy herdr droid hook entries found in {}",
+                    "no legacy flockr droid hook entries found in {}",
                     result.hooks_path.display()
                 ));
             }
             if result.updated_settings {
                 messages.push(format!(
-                    "removed herdr droid hook entries from {}",
+                    "removed flockr droid hook entries from {}",
                     result.settings_path.display()
                 ));
             } else {
                 messages.push(format!(
-                    "no herdr droid hook entries found in {}",
+                    "no flockr droid hook entries found in {}",
                     result.settings_path.display()
                 ));
             }
@@ -558,7 +558,7 @@ pub(crate) fn uninstall_target(
             });
             for path in result.updated_tui_configs {
                 messages.push(format!(
-                    "removed herdr opencode plugin entry from {}",
+                    "removed flockr opencode plugin entry from {}",
                     path.display()
                 ));
             }
@@ -621,12 +621,12 @@ pub(crate) fn uninstall_target(
             }
             if result.updated_settings {
                 messages.push(format!(
-                    "removed herdr qodercli hook entries from {}",
+                    "removed flockr qodercli hook entries from {}",
                     result.settings_path.display()
                 ));
             } else {
                 messages.push(format!(
-                    "no herdr qodercli hook entries found in {}",
+                    "no flockr qodercli hook entries found in {}",
                     result.settings_path.display()
                 ));
             }
@@ -648,12 +648,12 @@ pub(crate) fn uninstall_target(
             }
             if result.updated_settings {
                 messages.push(format!(
-                    "removed herdr qwen hook entries from {}",
+                    "removed flockr qwen hook entries from {}",
                     result.settings_path.display()
                 ));
             } else {
                 messages.push(format!(
-                    "no herdr qwen hook entries found in {}",
+                    "no flockr qwen hook entries found in {}",
                     result.settings_path.display()
                 ));
             }
@@ -675,12 +675,12 @@ pub(crate) fn uninstall_target(
             }
             if result.updated_hooks {
                 messages.push(format!(
-                    "removed herdr cursor hook entries from {}",
+                    "removed flockr cursor hook entries from {}",
                     result.hooks_path.display()
                 ));
             } else {
                 messages.push(format!(
-                    "no herdr cursor hook entries found in {}",
+                    "no flockr cursor hook entries found in {}",
                     result.hooks_path.display()
                 ));
             }
@@ -702,12 +702,12 @@ pub(crate) fn uninstall_target(
             }
             if result.updated_hooks {
                 messages.push(format!(
-                    "removed herdr mastracode hook entries from {}",
+                    "removed flockr mastracode hook entries from {}",
                     result.hooks_path.display()
                 ));
             } else {
                 messages.push(format!(
-                    "no herdr mastracode hook entries found in {}",
+                    "no flockr mastracode hook entries found in {}",
                     result.hooks_path.display()
                 ));
             }
@@ -729,12 +729,12 @@ pub(crate) fn uninstall_target(
             }
             if result.updated_hooks {
                 messages.push(format!(
-                    "removed herdr antigravity-cli hook entries from {}",
+                    "removed flockr antigravity-cli hook entries from {}",
                     result.hooks_path.display()
                 ));
             } else {
                 messages.push(format!(
-                    "no herdr antigravity-cli hook entries found in {}",
+                    "no flockr antigravity-cli hook entries found in {}",
                     result.hooks_path.display()
                 ));
             }

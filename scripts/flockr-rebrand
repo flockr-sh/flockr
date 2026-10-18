@@ -1,0 +1,81 @@
+#!/bin/bash
+# Rename herdr to flockr in the code, so flockr runs beside a stock herdr:
+# its own binary, config/state/socket dir (~/.config/flockr, flockr-dev for
+# debug builds), FLOCKR_* pane env vars, and integration hook files.
+#
+# Idempotent. After merging upstream herdr, run it again and commit the
+# result. Links to herdr's site and repo (herdr.dev, herdrdev) stay.
+#
+# Usage: scripts/flockr-rebrand
+
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+
+# Upstream files flockr does not use: release, website, docs snapshots,
+# contributor policy, CI, nix. An upstream merge that touches them leaves a
+# modify/delete conflict; this removes them again.
+prune=(
+  .github .pi .agents/skills/triage .agents/skills/herdr-pre-release-audit
+  SPONSORS.md assets/sponsors README.zh-CN.md
+  CONTRIBUTING.md
+  assets/logo.png assets/logo.svg assets/og-card.png assets/screenshot.png
+  docs/versions docs/preview docs/next/website docs/next/README.md
+  docs/next/README.zh-CN.md docs/next/CHANGELOG.md docs/next/product-announcement.json
+  distribution/agent-detection distribution/agent-guide.md distribution/install.cmd
+  distribution/install.sh distribution/preview.json
+  scripts/agent_detection_manifest_check.py scripts/test_agent_detection_manifest_check.py
+  scripts/changelog.py scripts/test_changelog.py scripts/conventional_commits.py
+  scripts/docs scripts/docs_translation_parity.py scripts/test_docs_translation_parity.py
+  scripts/preview.py scripts/test_preview.py scripts/release.py scripts/test_release.py
+  scripts/release-workflows.test.ts scripts/test_unix_installer.py
+  scripts/config_reference_check.py scripts/test_config_reference_check.py
+  scripts/release_perf_smoke.sh scripts/release_perf_case.sh scripts/release_perf_producer.pl
+  flake.nix flake.lock nix .githooks/commit-msg
+)
+for path in "${prune[@]}"; do
+  if [[ -e $path ]] || git ls-files --error-unmatch "$path" >/dev/null 2>&1; then
+    git rm -rqf --ignore-unmatch "$path"
+    rm -rf "$path"
+  fi
+done
+
+# Files and directories named after herdr, deepest first
+find src tests skills docs/next/api .agents scripts -depth -name '*herdr*' | while read -r path; do
+  git mv "$path" "$(dirname "$path")/$(basename "$path" | sed 's/herdr/flockr/g')"
+done
+
+# Text replacement. Upstream links are swapped out first and put back after.
+grep -rlIi herdr src tests skills docs/next/api .agents scripts distribution/latest.json build.rs Cargo.toml | grep -vE '^scripts/(flockr-rebrand|test_vendor_portable_pty\.py)$' | xargs -r perl -pi -e '
+  s#(herdrdev|ogulcancelik)/herdr#\x01$1\x01#g;
+  s/herdrdev/\x01DEV\x01/g;
+  s/herdr\.dev/\x01SITE\x01/g;
+  s/ogulcancelik-herdr/\x01MISE\x01/g;
+  s/herdr-plugin-examples/\x01EXAMPLES\x01/g;
+  s/HERDR-PLUGIN-EXAMPLES/\x01UEXAMPLES\x01/g;
+  s/HERDR/FLOCKR/g;
+  s/Herdr/Flockr/g;
+  s/herdr/flockr/g;
+  s/\x01DEV\x01/herdrdev/g;
+  s#\x01(herdrdev|ogulcancelik)\x01#$1/herdr#g;
+  s/\x01SITE\x01/herdr.dev/g;
+  s/\x01MISE\x01/ogulcancelik-herdr/g;
+  s/\x01EXAMPLES\x01/herdr-plugin-examples/g;
+  s/\x01UEXAMPLES\x01/HERDR-PLUGIN-EXAMPLES/g;
+'
+
+# Only the root package entry in the lockfile
+perl -0pi -e 's/\[\[package\]\]\nname = "herdr"\n/[[package]]\nname = "flockr"\n/' Cargo.lock
+
+# Test data, not names: a pinned hash, and a width-sensitive truncation case
+perl -pi -e 's/b"flockr"/b"herdr"/' src/checksum.rs
+perl -pi -e 's/提交 flockr/提交 herdr/g' src/ui/text.rs
+
+# The rename changes the text of two endpoint method schemas, so their
+# pinned shape digests change too. Flockr clients only talk to flockr servers.
+perl -pi -e '
+  s/4eb8914f4cd40417ba5631d4e9058a04cde11191c58c08e66553f43e4ca0ffd8/7bcbcaf0cf25e1ebf31adcc61fc8d444ca7d054ee10861d4e712d77126127f1e/;
+  s/5d740322cac5287070194fb522c8135795a6f877b44652ea4959c63b4c67cefd/ee84b2e5c7c9f0c223041d9654012c03791462338b08fe2dacb79fbfc68a8590/;
+' tests/fixtures/endpoint-method-shapes-v1.json
+
+# Renamed identifiers change line lengths
+cargo fmt

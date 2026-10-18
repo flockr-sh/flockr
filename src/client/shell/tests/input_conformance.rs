@@ -1,14 +1,14 @@
 //! Keyboard transparency conformance.
 //!
-//! Herdr should be invisible to the application in a pane: for every keystroke,
+//! Flockr should be invisible to the application in a pane: for every keystroke,
 //! the pane must receive the bytes it would receive running directly in the
 //! host terminal. The oracle is libghostty's encoder fed the same key event the
-//! Ghostty app builds from an OS key event. The Herdr path is the real one:
+//! Ghostty app builds from an OS key event. The Flockr path is the real one:
 //! host bytes -> host framer -> client shell routing -> server pane input ->
 //! pane encoder, with the pane's modes set by application output.
 //!
 //! Keystrokes whose host bytes cannot distinguish keys the pane would see
-//! differently are counted as host-lossy, not as Herdr failures.
+//! differently are counted as host-lossy, not as Flockr failures.
 
 // The Unix-host checks are compiled out on Windows, leaving helpers that only
 // they use.
@@ -137,7 +137,7 @@ const PANE_MODES: &[(&str, &[u8])] = &[
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum HostProfile {
-    /// Kitty keyboard host (Ghostty, kitty, WezTerm, foot...). Herdr pushes 7,
+    /// Kitty keyboard host (Ghostty, kitty, WezTerm, foot...). Flockr pushes 7,
     /// or 31 while the pane wants all keys reported.
     Kitty,
     /// Host without an enhanced keyboard protocol.
@@ -274,7 +274,7 @@ fn legacy_shell_exception(pane_mode: &[u8], key: &str, mods: u16) -> Option<Vec<
     })
 }
 
-struct HerdrPath {
+struct FlockrPath {
     state: ClientShellState,
     framer: crate::raw_input::RawInputByteFramer,
     runtime: crate::terminal::TerminalRuntime,
@@ -283,7 +283,7 @@ struct HerdrPath {
     host_reports_all: bool,
 }
 
-impl HerdrPath {
+impl FlockrPath {
     fn new(host: HostProfile, app_output: &[u8]) -> Self {
         // Mirrors the client: report-all is pushed to the host while the pane
         // asks for it (`HostProfile::setup` picks 31 for those panes).
@@ -306,7 +306,7 @@ impl HerdrPath {
 
     fn fresh_state(host: HostProfile, host_reports_all: bool) -> ClientShellState {
         let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
-        // Mirrors the client: Herdr pushes Kitty event types on Kitty hosts.
+        // Mirrors the client: Flockr pushes Kitty event types on Kitty hosts.
         state.set_host_reports_key_releases(host == HostProfile::Kitty);
         state.set_host_reports_all_keys(host_reports_all);
         state.set_snapshot(Box::new(snapshot()));
@@ -326,7 +326,7 @@ impl HerdrPath {
 
     /// Collect pane input from one client outcome, the way the client loop does:
     /// side requests (pane focus) are ignored, link lookups get a no-link answer
-    /// and the held mouse events are replayed. Returns true when Herdr kept the
+    /// and the held mouse events are replayed. Returns true when Flockr kept the
     /// input for itself.
     fn absorb(
         &mut self,
@@ -381,7 +381,7 @@ impl HerdrPath {
         self.framer = Self::fresh_framer(self.host);
     }
 
-    /// Feed one host write, then let idle flushes run. Returns None when Herdr
+    /// Feed one host write, then let idle flushes run. Returns None when Flockr
     /// itself consumed the key (prefix, binding, mode change).
     fn feed(&mut self, host_bytes: &[u8]) -> Option<Vec<u8>> {
         let mut chunks = self.framer.push(host_bytes);
@@ -399,15 +399,16 @@ impl HerdrPath {
     }
 
     /// Route client outcomes through server pane input and collect the bytes the
-    /// pane receives. None when Herdr kept the input for itself.
+    /// pane receives. None when Flockr kept the input for itself.
     fn deliver(&mut self, outcomes: Vec<ClientShellInput>) -> Option<Vec<u8>> {
         let mut events = Vec::new();
-        let mut herdr_owned = false;
+        let mut flockr_owned = false;
         for outcome in outcomes {
-            herdr_owned |= self.absorb(outcome, &mut events);
+            flockr_owned |= self.absorb(outcome, &mut events);
         }
-        herdr_owned |= self.state.mode != ClientShellMode::Terminal || self.state.overlay.is_some();
-        if herdr_owned {
+        flockr_owned |=
+            self.state.mode != ClientShellMode::Terminal || self.state.overlay.is_some();
+        if flockr_owned {
             return None;
         }
         let mut out = Vec::new();
@@ -449,7 +450,7 @@ struct Tally {
     passed: usize,
     equivalent: usize,
     host_lossy: usize,
-    herdr_owned: usize,
+    flockr_owned: usize,
 }
 
 struct Failure {
@@ -518,7 +519,7 @@ fn run_keyboard_conformance() -> Report {
                     .push(expected);
             }
 
-            let mut herdr = HerdrPath::new(host, pane_mode);
+            let mut flockr = FlockrPath::new(host, pane_mode);
             for (def, mods, host_bytes, expected) in &cases {
                 let group = if mods & ghostty::MOD_SUPER != 0 {
                     "super"
@@ -551,12 +552,12 @@ fn run_keyboard_conformance() -> Report {
                     tally.host_lossy += 1;
                     continue;
                 }
-                let press = herdr.feed(&host_bytes.0);
-                let release = herdr.feed(&host_bytes.1);
-                let page_key_scrolls_herdr = *mods == 0
+                let press = flockr.feed(&host_bytes.0);
+                let release = flockr.feed(&host_bytes.1);
+                let page_key_scrolls_flockr = *mods == 0
                     && matches!(def.name, "pageup" | "pagedown")
-                    && herdr.runtime.plain_page_keys_use_host_scrollback() == Some(true);
-                let (Some(press), Some(release), false) = (press, release, page_key_scrolls_herdr)
+                    && flockr.runtime.plain_page_keys_use_host_scrollback() == Some(true);
+                let (Some(press), Some(release), false) = (press, release, page_key_scrolls_flockr)
                 else {
                     report.owned.push(format!(
                         "{}\t{}\t{}+{}",
@@ -565,8 +566,8 @@ fn run_keyboard_conformance() -> Report {
                         mods_name(*mods),
                         def.name
                     ));
-                    tally.herdr_owned += 1;
-                    herdr.reset_client();
+                    tally.flockr_owned += 1;
+                    flockr.reset_client();
                     continue;
                 };
                 let actual = [press, release].concat();
@@ -608,13 +609,13 @@ fn print_report(report: &Report) {
             100.0 * tally.passed as f64 / tally.scored.max(1) as f64,
             tally.equivalent,
             tally.host_lossy,
-            tally.herdr_owned
+            tally.flockr_owned
         );
         total.scored += tally.scored;
         total.passed += tally.passed;
         total.equivalent += tally.equivalent;
         total.host_lossy += tally.host_lossy;
-        total.herdr_owned += tally.herdr_owned;
+        total.flockr_owned += tally.flockr_owned;
     }
     println!(
         "{:<37} {:>7} {:>7} {:>6.1}% {:>7} {:>7} {:>7}",
@@ -624,10 +625,10 @@ fn print_report(report: &Report) {
         100.0 * total.passed as f64 / total.scored.max(1) as f64,
         total.equivalent,
         total.host_lossy,
-        total.herdr_owned
+        total.flockr_owned
     );
 
-    if let Ok(path) = std::env::var("HERDR_INPUT_CONFORMANCE_FAILURES") {
+    if let Ok(path) = std::env::var("FLOCKR_INPUT_CONFORMANCE_FAILURES") {
         let lines: Vec<String> = report
             .failures
             .iter()
@@ -648,7 +649,7 @@ fn print_report(report: &Report) {
 }
 
 // Ratchet: failure counts may only go down. Lower them when a change fixes
-// cases; a rise means a regression in Herdr's input transparency.
+// cases; a rise means a regression in Flockr's input transparency.
 // Remaining: Alt+], Alt+Shift+P/X, Alt+^, Alt+_ behind legacy hosts. Their bytes
 // also start host replies, so they are never forwarded and the reply-tail
 // discard can swallow the next keystroke (#344).
@@ -676,7 +677,7 @@ const MOUSE_FORMATS: &[(&str, &[u8])] = &[
     ("urxvt", b"\x1b[?1015h"),
 ];
 
-/// What Herdr asks the host for while it captures the mouse.
+/// What Flockr asks the host for while it captures the mouse.
 const HOST_MOUSE_SETUP: &[u8] = b"\x1b[?1003h\x1b[?1006h";
 
 #[derive(Clone, Copy)]
@@ -896,12 +897,12 @@ fn run_mouse_conformance() -> Report {
                 .entry(("kitty-host", pane_name, "mouse"))
                 .or_default();
 
-            let mut herdr = HerdrPath::new(HostProfile::Kitty, &pane_mode);
-            herdr
+            let mut flockr = FlockrPath::new(HostProfile::Kitty, &pane_mode);
+            flockr
                 .state
                 .set_pane_surface(mouse_surface(!tracking.is_empty()));
-            herdr.state.compose(106, 20).expect("composed frame");
-            let inner = herdr.state.hits.panes[0].inner_rect;
+            flockr.state.compose(106, 20).expect("composed frame");
+            let inner = flockr.state.hits.panes[0].inner_rect;
             let mut direct = MouseOracle::new(&pane_mode, 80, 24);
             let mut host = MouseOracle::new(HOST_MOUSE_SETUP, 106, 20);
 
@@ -923,21 +924,21 @@ fn run_mouse_conformance() -> Report {
                             let (c, r) = (column + step.dx, row + step.dy);
                             expected.extend(direct.encode(*step, mods, c, r));
                             let host_bytes = host.encode(*step, mods, inner.x + c, inner.y + r);
-                            match herdr.feed(&host_bytes) {
+                            match flockr.feed(&host_bytes) {
                                 Some(bytes) => actual.extend(bytes),
                                 None => owned = true,
                             }
                         }
                         if owned {
-                            tally.herdr_owned += 1;
+                            tally.flockr_owned += 1;
                             report.owned.push(format!(
                                 "{pane_name}\t{mods_label}+{gesture_name}@{column},{row}"
                             ));
-                            herdr.reset_client();
-                            herdr
+                            flockr.reset_client();
+                            flockr
                                 .state
                                 .set_pane_surface(mouse_surface(!tracking.is_empty()));
-                            herdr.state.compose(106, 20).expect("composed frame");
+                            flockr.state.compose(106, 20).expect("composed frame");
                             continue;
                         }
                         tally.scored += 1;
@@ -1004,7 +1005,7 @@ fn host_input_corpus() -> Vec<(HostProfile, Vec<u8>)> {
     corpus
 }
 
-/// Replies Herdr asks the host for at startup and on focus (colors, palette,
+/// Replies Flockr asks the host for at startup and on focus (colors, palette,
 /// cell size, appearance).
 const HOST_REPLIES: &[&[u8]] = &[
     b"\x1b]10;rgb:ffff/ffff/ffff\x1b\\",
@@ -1033,7 +1034,7 @@ fn framed_events_with(
     pause_ms: Option<i32>,
     awaiting_replies: bool,
 ) -> String {
-    let mut framer = HerdrPath::fresh_framer(host);
+    let mut framer = FlockrPath::fresh_framer(host);
     if awaiting_replies {
         // Mirrors the Unix client right after it sent its host queries.
         framer.host_color_query_sent();
@@ -1138,7 +1139,7 @@ fn split_read_robustness() {
         pct(idle_mismatch.len()),
         idle_mismatch.len()
     );
-    if let Ok(path) = std::env::var("HERDR_INPUT_CONFORMANCE_FAILURES") {
+    if let Ok(path) = std::env::var("FLOCKR_INPUT_CONFORMANCE_FAILURES") {
         let lines: Vec<String> = burst_mismatch
             .iter()
             .chain(&reply_burst_mismatch)
@@ -1171,7 +1172,7 @@ fn split_read_robustness() {
 // Reporter captures: exact bytes and timing from real terminals in issues.
 // ---------------------------------------------------------------------------
 
-/// (issue, host, reads, gap between reads in ms, Herdr awaiting host replies)
+/// (issue, host, reads, gap between reads in ms, Flockr awaiting host replies)
 type SplitCapture = (
     &'static str,
     HostProfile,
@@ -1232,20 +1233,20 @@ async fn ime_committed_text_reaches_every_pane_mode_exactly_once() {
     for host in [HostProfile::Kitty, HostProfile::Legacy] {
         for &(pane_name, pane_mode) in PANE_MODES {
             for cut in [None, Some(1), Some(4), Some(bytes.len() - 2)] {
-                let mut herdr = HerdrPath::new(host, pane_mode);
+                let mut flockr = FlockrPath::new(host, pane_mode);
                 let got = match cut {
-                    None => herdr.feed(bytes),
+                    None => flockr.feed(bytes),
                     Some(cut) => {
-                        let mut chunks = herdr.framer.push(&bytes[..cut]);
-                        chunks.extend(herdr.framer.push(&bytes[cut..]));
+                        let mut chunks = flockr.framer.push(&bytes[..cut]);
+                        chunks.extend(flockr.framer.push(&bytes[cut..]));
                         for _ in 0..3 {
-                            chunks.extend(herdr.framer.flush_timeout());
+                            chunks.extend(flockr.framer.flush_timeout());
                         }
                         let outcomes = chunks
                             .iter()
-                            .map(|chunk| herdr.state.handle_input_bytes(chunk))
+                            .map(|chunk| flockr.state.handle_input_bytes(chunk))
                             .collect();
-                        herdr.deliver(outcomes)
+                        flockr.deliver(outcomes)
                     }
                 }
                 .expect("text reaches the pane");
@@ -1256,7 +1257,7 @@ async fn ime_committed_text_reaches_every_pane_mode_exactly_once() {
                     host.name()
                 );
                 // Losing focus must not replay releases for committed text.
-                let after = herdr.feed(b"\x1b[O").unwrap_or_default();
+                let after = flockr.feed(b"\x1b[O").unwrap_or_default();
                 assert!(
                     !String::from_utf8_lossy(&after).contains(":3u"),
                     "{} {pane_name}: focus loss sent {}",
@@ -1271,7 +1272,7 @@ async fn ime_committed_text_reaches_every_pane_mode_exactly_once() {
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread")]
 async fn lab_kitty_function_keys_reach_the_pane() {
-    // #4403, recorded from kitty 0.47.1 through real key presses: with Herdr's
+    // #4403, recorded from kitty 0.47.1 through real key presses: with Flockr's
     // keyboard flags pushed, unmodified F1, F2 and F4 arrive as bare CSI P/Q/S.
     for (host_bytes, plain_shell) in [
         (&b"\x1b[P"[..], &b"\x1bOP"[..]),
@@ -1279,8 +1280,8 @@ async fn lab_kitty_function_keys_reach_the_pane() {
         (b"\x1b[13~", b"\x1bOR"),
         (b"\x1b[S", b"\x1bOS"),
     ] {
-        let mut herdr = HerdrPath::new(HostProfile::Kitty, b"");
-        let got = herdr
+        let mut flockr = FlockrPath::new(HostProfile::Kitty, b"");
+        let got = flockr
             .feed(host_bytes)
             .expect("function key reaches the pane");
         assert_eq!(show(&got), show(plain_shell), "{}", show(host_bytes));
@@ -1293,16 +1294,16 @@ async fn reporter_text_key_release_reaches_kitty_event_pane() {
     // #4184: an app asking for event types gets typed-letter releases.
     // (pane mode, kitty host bytes for `a` press then release, pane bytes)
     for (pane_mode, press, want) in [
-        // Event types only: Herdr keeps the host at flags 7, so the press
+        // Event types only: Flockr keeps the host at flags 7, so the press
         // arrives as text and its release as a report (the reporter's capture).
         (&b"\x1b[>3u"[..], &b"a"[..], &b"a\x1b[97;1:3u"[..]),
-        // All keys too: Herdr switches the host to report-all (31), so kitty
+        // All keys too: Flockr switches the host to report-all (31), so kitty
         // reports the press with its text.
         (b"\x1b[>11u", b"\x1b[97;;97u", b"\x1b[97u\x1b[97;1:3u"),
     ] {
-        let mut herdr = HerdrPath::new(HostProfile::Kitty, pane_mode);
-        let press = herdr.feed(press).expect("press reaches the pane");
-        let release = herdr
+        let mut flockr = FlockrPath::new(HostProfile::Kitty, pane_mode);
+        let press = flockr.feed(press).expect("press reaches the pane");
+        let release = flockr
             .feed(b"\x1b[97;1:3u")
             .expect("release reaches the pane");
         assert_eq!(
@@ -1320,7 +1321,7 @@ const fn layout_key(key: ffi::GhosttyKey, base: char, shifted: char) -> KeyDef {
     text("layout", key, base, shifted)
 }
 
-fn layout_keystroke_through_herdr(
+fn layout_keystroke_through_flockr(
     host: HostProfile,
     pane_mode: &[u8],
     def: KeyDef,
@@ -1333,9 +1334,9 @@ fn layout_keystroke_through_herdr(
     } else {
         [press, release].concat()
     };
-    let mut herdr = HerdrPath::new(host, pane_mode);
-    let pane_press = herdr.feed(&keystroke.0).expect("press reaches the pane");
-    let pane_release = herdr.feed(&keystroke.1).expect("release reaches the pane");
+    let mut flockr = FlockrPath::new(host, pane_mode);
+    let pane_press = flockr.feed(&keystroke.0).expect("press reaches the pane");
+    let pane_release = flockr.feed(&keystroke.1).expect("release reaches the pane");
     (
         keystroke,
         show(&direct),
@@ -1349,7 +1350,7 @@ async fn layout_ctrl_chords_match_ghostty_direct() {
     // #1079. Keystrokes from a Kitty host on Russian, German, Turkish, French,
     // Nordic and Polish layouts, built like Ghostty builds them. `ghostty` is
     // what Ghostty sends the app directly (recorded from libghostty, and
-    // checked against it below); `herdr` is what the pane gets through Herdr.
+    // checked against it below); `flockr` is what the pane gets through Flockr.
     use ffi::*;
     const CTRL: u16 = ghostty::MOD_CTRL;
     const ALT: u16 = ghostty::MOD_ALT;
@@ -1379,7 +1380,7 @@ async fn layout_ctrl_chords_match_ghostty_direct() {
         ("no ctrl+\u{e5}", no, CTRL),
         ("pl altgr \u{119}", pl, CTRL | ALT),
     ];
-    // (pane, key, ghostty, herdr)
+    // (pane, key, ghostty, flockr)
     let table: &[(&str, &str, &str, &str)] = &[
         // Plain shell. Ctrl alone maps to the physical key's control byte
         // when Ghostty has one; Ctrl+I and Ctrl+[ keep the layout character.
@@ -1401,7 +1402,7 @@ async fn layout_ctrl_chords_match_ghostty_direct() {
         ("legacy", "no ctrl+\u{e5}", "\\x1b[229;5u", "\\x1b[229;5u"),
         // Ghostty maps these by physical key too, but Ctrl+Alt can be AltGr
         // on Windows hosts and Latin keys are shortcuts of their own, so
-        // Herdr keeps the layout character.
+        // Flockr keeps the layout character.
         ("legacy", "ru ctrl+alt+w", "\\x1b\\x17", "\\x1b[1094;7u"),
         ("legacy", "fr ctrl+\u{e9}", "\\x00", "\\x1b[233;5u"),
         ("legacy", "pl altgr \u{119}", "\\x1b\\x05", "\\x1b[281;7u"),
@@ -1439,7 +1440,7 @@ async fn layout_ctrl_chords_match_ghostty_direct() {
             "\\xd1\\x86\\x1b[1094;1:3u",
         ),
         // Alternate keys: the pane input wire has no base-layout slot, so
-        // Herdr drops that field for every non-ASCII key (as on master).
+        // Flockr drops that field for every non-ASCII key (as on master).
         ("kitty5", "ru ctrl+w", "\\x1b[1094::119;5u", "\\x1b[119;5u"),
         ("kitty5", "ru ctrl+c", "\\x1b[1089::99;5u", "\\x1b[99;5u"),
         (
@@ -1468,7 +1469,7 @@ async fn layout_ctrl_chords_match_ghostty_direct() {
     for &(pane, name, ghostty, want) in table {
         let &(_, def, mods) = keys.iter().find(|(key, ..)| *key == name).unwrap();
         let (host, direct, got) =
-            layout_keystroke_through_herdr(HostProfile::Kitty, panes[pane], def, mods);
+            layout_keystroke_through_flockr(HostProfile::Kitty, panes[pane], def, mods);
         assert_eq!(direct, ghostty, "{pane} {name}: Ghostty direct");
         assert_eq!(got, want, "{pane} {name}: host sent {}", show(&host.0));
     }
@@ -1486,7 +1487,7 @@ async fn layout_ctrl_chords_match_ghostty_direct() {
     for (pane, pane_mode) in [("legacy", &b""[..]), ("kitty1", b"\x1b[>1u")] {
         for mods in [0, SHIFT] {
             let (_, direct, got) =
-                layout_keystroke_through_herdr(HostProfile::Legacy, pane_mode, ru_w, mods);
+                layout_keystroke_through_flockr(HostProfile::Legacy, pane_mode, ru_w, mods);
             assert_eq!(got, direct, "legacy host {pane} {}", mods_name(mods));
         }
     }
@@ -1499,16 +1500,16 @@ async fn layout_ctrl_chords_match_ghostty_direct() {
         (b"", b"\x1b[1094;3u", "\\x1b\\xd1\\x86"),
         (b"\x1b[>1u", b"\x1b[1089:1057;6u", "\\x1b[1089;6u"),
     ] {
-        let mut herdr = HerdrPath::new(HostProfile::Kitty, pane_mode);
-        let got = herdr.feed(host_bytes).expect("reaches the pane");
+        let mut flockr = FlockrPath::new(HostProfile::Kitty, pane_mode);
+        let got = flockr.feed(host_bytes).expect("reaches the pane");
         assert_eq!(show(&got), want, "{}", show(host_bytes));
     }
 
     // Ctrl let go before the key: the release names the layout character
     // without Ctrl, and is paired with the physical-key press.
-    let mut herdr = HerdrPath::new(HostProfile::Kitty, b"\x1b[>3u");
-    let press = herdr.feed(b"\x1b[1094::119;5u").expect("press");
-    let release = herdr.feed(b"\x1b[1094::119;1:3u").expect("release");
+    let mut flockr = FlockrPath::new(HostProfile::Kitty, b"\x1b[>3u");
+    let press = flockr.feed(b"\x1b[1094::119;5u").expect("press");
+    let release = flockr.feed(b"\x1b[1094::119;1:3u").expect("release");
     assert_eq!(
         show(&[press, release].concat()),
         "\\x1b[119;5u\\x1b[119;1:3u"
@@ -1529,7 +1530,7 @@ async fn layout_chord_releases_pair_when_modifiers_change_first() {
     const PRESS: ffi::GhosttyKeyAction = ffi::GhosttyKeyAction_GHOSTTY_KEY_ACTION_PRESS;
     const RELEASE: ffi::GhosttyKeyAction = ffi::GhosttyKeyAction_GHOSTTY_KEY_ACTION_RELEASE;
     let ru_w = layout_key(GhosttyKey_GHOSTTY_KEY_W, '\u{446}', '\u{426}');
-    // (case, press mods, release mods, Ghostty direct, Herdr)
+    // (case, press mods, release mods, Ghostty direct, Flockr)
     let cases = [
         (
             "ctrl+shift, shift let go first",
@@ -1582,9 +1583,11 @@ async fn layout_chord_releases_pair_when_modifiers_change_first() {
         .concat();
         assert_eq!(show(&direct_bytes), ghostty, "{name}: Ghostty direct");
 
-        let mut herdr = HerdrPath::new(HostProfile::Kitty, pane_mode);
-        let press = herdr.feed(&host_press).expect("press reaches the pane");
-        let release = herdr.feed(&host_release).expect("release reaches the pane");
+        let mut flockr = FlockrPath::new(HostProfile::Kitty, pane_mode);
+        let press = flockr.feed(&host_press).expect("press reaches the pane");
+        let release = flockr
+            .feed(&host_release)
+            .expect("release reaches the pane");
         assert_eq!(
             show(&[press, release].concat()),
             want,
@@ -1593,7 +1596,7 @@ async fn layout_chord_releases_pair_when_modifiers_change_first() {
             show(&host_release)
         );
         // Nothing stays leased: losing focus releases no further key.
-        let after = herdr.feed(b"\x1b[O").unwrap_or_default();
+        let after = flockr.feed(b"\x1b[O").unwrap_or_default();
         assert!(
             !show(&after).contains(":3u"),
             "{name}: focus loss sent {}",
@@ -1616,7 +1619,7 @@ async fn overlapping_layout_and_us_keys_release_exactly() {
     let us_w = *KEYS.iter().find(|def| def.name == "w").unwrap();
     let ru_w = layout_key(GhosttyKey_GHOSTTY_KEY_W, '\u{446}', '\u{426}');
     type Step = (KeyDef, u16, ffi::GhosttyKeyAction);
-    // (case, steps, Ghostty direct, Herdr)
+    // (case, steps, Ghostty direct, Flockr)
     let cases: [(&str, Vec<Step>, &str, &str); 4] = [
         (
             "ctrl+shift+\u{446}, shift let go, \u{446} then w released",
@@ -1669,20 +1672,20 @@ async fn overlapping_layout_and_us_keys_release_exactly() {
     for (name, steps, ghostty, want) in cases {
         let mut host = Oracle::new(HostProfile::Kitty.setup(pane_mode));
         let mut direct = Oracle::new(pane_mode);
-        let mut herdr = HerdrPath::new(HostProfile::Kitty, pane_mode);
+        let mut flockr = FlockrPath::new(HostProfile::Kitty, pane_mode);
         let mut direct_bytes = Vec::new();
         let mut pane_bytes = Vec::new();
         let mut host_bytes = Vec::new();
         for (def, mods, action) in steps {
             let report = host.encode(def, mods, action);
             direct_bytes.extend(direct.encode(def, mods, action));
-            pane_bytes.extend(herdr.feed(&report).expect("reaches the pane"));
+            pane_bytes.extend(flockr.feed(&report).expect("reaches the pane"));
             host_bytes.push(show(&report));
         }
         assert_eq!(show(&direct_bytes), ghostty, "{name}: Ghostty direct");
         assert_eq!(show(&pane_bytes), want, "{name}: host sent {host_bytes:?}");
         // Nothing stays leased: losing focus releases no further key.
-        let after = herdr.feed(b"\x1b[O").unwrap_or_default();
+        let after = flockr.feed(b"\x1b[O").unwrap_or_default();
         assert!(
             !show(&after).contains(":3u"),
             "{name}: focus loss sent {}",
@@ -1695,20 +1698,20 @@ async fn overlapping_layout_and_us_keys_release_exactly() {
 #[tokio::test(flavor = "multi_thread")]
 async fn goto_search_opens_on_shifted_slash_from_a_report_all_pane() {
     // #4963, recorded from Ghostty 1.3.1 with a Portuguese layout, where `/` is
-    // Shift+7. With a plain pane Herdr keeps the host at flags 7 and the press
-    // arrives as text; when the focused pane asks for all keys Herdr pushes 31
+    // Shift+7. With a plain pane Flockr keeps the host at flags 7 and the press
+    // arrives as text; when the focused pane asks for all keys Flockr pushes 31
     // and the press arrives as a report carrying the shifted key and its text.
     for (pane_mode, press, release) in [
         (&b""[..], &b"/"[..], &b"\x1b[55:47;2:3u"[..]),
         (b"\x1b[>31u", b"\x1b[55:47;2;47u", b"\x1b[55:47;2:3u"),
     ] {
-        let mut herdr = HerdrPath::new(HostProfile::Kitty, pane_mode);
-        herdr.state.open_navigator_overlay();
-        assert_eq!(herdr.feed(press), None, "{}", show(pane_mode));
-        assert_eq!(herdr.feed(release), None, "{}", show(pane_mode));
+        let mut flockr = FlockrPath::new(HostProfile::Kitty, pane_mode);
+        flockr.state.open_navigator_overlay();
+        assert_eq!(flockr.feed(press), None, "{}", show(pane_mode));
+        assert_eq!(flockr.feed(release), None, "{}", show(pane_mode));
         assert!(
             matches!(
-                &herdr.state.overlay,
+                &flockr.state.overlay,
                 Some(ClientShellOverlay::Navigator(navigator)) if navigator.search_focused
             ),
             "goto search did not activate for pane {}",
@@ -1735,11 +1738,11 @@ async fn goto_search_opens_only_for_a_typed_slash() {
         (b"\x1b[>31u", b"\x1b[47;3u", false),
         (b"", b"\x1b/", false),
     ] {
-        let mut herdr = HerdrPath::new(HostProfile::Kitty, pane_mode);
-        herdr.state.open_navigator_overlay();
-        let _ = herdr.feed(press);
+        let mut flockr = FlockrPath::new(HostProfile::Kitty, pane_mode);
+        flockr.state.open_navigator_overlay();
+        let _ = flockr.feed(press);
         let focused = matches!(
-            &herdr.state.overlay,
+            &flockr.state.overlay,
             Some(ClientShellOverlay::Navigator(navigator)) if navigator.search_focused
         );
         assert_eq!(focused, opens, "{}", show(press));
@@ -1764,21 +1767,21 @@ async fn wezterm_escape_tap_reaches_the_pane_with_doubled_escape_preserved() {
             (vec![[PRESS, RELEASE].concat()], "one read"),
             (vec![PRESS.to_vec(), RELEASE.to_vec()], "two reads"),
         ] {
-            let mut herdr = HerdrPath::new(HostProfile::Kitty, pane_mode);
-            herdr.framer = crate::raw_input::RawInputByteFramer::with_host_input_policy(true);
-            herdr.framer.set_host_escape_disambiguation_active(true);
+            let mut flockr = FlockrPath::new(HostProfile::Kitty, pane_mode);
+            flockr.framer = crate::raw_input::RawInputByteFramer::with_host_input_policy(true);
+            flockr.framer.set_host_escape_disambiguation_active(true);
             let mut chunks = Vec::new();
             for read in &reads {
-                chunks.extend(herdr.framer.push(read));
+                chunks.extend(flockr.framer.push(read));
             }
             for _ in 0..3 {
-                chunks.extend(herdr.framer.flush_timeout());
+                chunks.extend(flockr.framer.flush_timeout());
             }
             let outcomes = chunks
                 .iter()
-                .map(|chunk| herdr.state.handle_input_bytes(chunk))
+                .map(|chunk| flockr.state.handle_input_bytes(chunk))
                 .collect();
-            let got = herdr.deliver(outcomes).expect("escape reaches the pane");
+            let got = flockr.deliver(outcomes).expect("escape reaches the pane");
             assert_eq!(show(&got), show(want), "{label}, pane {}", show(pane_mode));
         }
     }
@@ -1813,9 +1816,9 @@ async fn keyboard_transparency_conformance() {
 // ---------------------------------------------------------------------------
 //
 // In Windows Terminal each keypress reaches ConPTY as a native key record
-// (win32-input-mode). Herdr's pane is a ConPTY too, so for a pane that
+// (win32-input-mode). Flockr's pane is a ConPTY too, so for a pane that
 // negotiated no keyboard protocol, transparency means the pane's ConPTY gets
-// the same records Herdr received. Records are built from the real keyboard
+// the same records Flockr received. Records are built from the real keyboard
 // layouts with ToUnicodeEx, the way Windows produces them.
 
 #[cfg(windows)]
@@ -2020,7 +2023,7 @@ mod windows_records {
     }
 
     fn deliver_record(
-        herdr: &mut HerdrPath,
+        flockr: &mut FlockrPath,
         input: &mut crate::client::input::windows_vti::TestWindowsInput,
         record: crate::input::WindowsKeyRecord,
         layout: HKL,
@@ -2029,8 +2032,8 @@ mod windows_records {
         // foreground window's layout while the test runs.
         let mut events = input.key_in_layout(record, layout);
         events.extend(input.idle());
-        let outcome = herdr.state.handle_client_events(&events);
-        herdr.deliver(vec![outcome])
+        let outcome = flockr.state.handle_client_events(&events);
+        flockr.deliver(vec![outcome])
     }
 
     fn run() -> Report {
@@ -2046,7 +2049,7 @@ mod windows_records {
                 );
                 continue;
             };
-            let mut herdr = HerdrPath::new(HostProfile::Legacy, b"");
+            let mut flockr = FlockrPath::new(HostProfile::Legacy, b"");
             let mut input = crate::client::input::windows_vti::TestWindowsInput::default();
             for (key_name, vk, enhanced) in virtual_keys() {
                 for chord in CHORDS {
@@ -2059,16 +2062,16 @@ mod windows_records {
                         continue;
                     };
                     let expected = [win32_input_mode(press), win32_input_mode(release)].concat();
-                    let pressed = deliver_record(&mut herdr, &mut input, press, layout);
-                    let released = deliver_record(&mut herdr, &mut input, release, layout);
-                    let page_key_scrolls_herdr = chord.name == "plain"
+                    let pressed = deliver_record(&mut flockr, &mut input, press, layout);
+                    let released = deliver_record(&mut flockr, &mut input, release, layout);
+                    let page_key_scrolls_flockr = chord.name == "plain"
                         && matches!(key_name.as_str(), "pageup" | "pagedown")
-                        && herdr.runtime.plain_page_keys_use_host_scrollback() == Some(true);
+                        && flockr.runtime.plain_page_keys_use_host_scrollback() == Some(true);
                     let (Some(pressed), Some(released), false) =
-                        (pressed, released, page_key_scrolls_herdr)
+                        (pressed, released, page_key_scrolls_flockr)
                     else {
-                        tally.herdr_owned += 1;
-                        herdr.reset_client();
+                        tally.flockr_owned += 1;
+                        flockr.reset_client();
                         input = Default::default();
                         continue;
                     };

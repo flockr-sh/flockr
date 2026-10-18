@@ -16,10 +16,10 @@ use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize}
 use serde_json::Value;
 use support::{
     cleanup_test_base, client_shell_handshake, drain_messages, register_runtime_dir,
-    register_spawned_herdr_pid, send_client_shell_focus, send_detach, unregister_spawned_herdr_pid,
-    wait_for_client_shell_bootstrap, wait_for_message_variant, wait_for_message_variants,
-    CURRENT_ENDPOINT_PROTOCOL_GENERATION as CURRENT_PROTOCOL, SERVER_MESSAGE_PANE_SURFACE,
-    SERVER_MESSAGE_PANE_SURFACE_PATCH,
+    register_spawned_flockr_pid, send_client_shell_focus, send_detach,
+    unregister_spawned_flockr_pid, wait_for_client_shell_bootstrap, wait_for_message_variant,
+    wait_for_message_variants, CURRENT_ENDPOINT_PROTOCOL_GENERATION as CURRENT_PROTOCOL,
+    SERVER_MESSAGE_PANE_SURFACE, SERVER_MESSAGE_PANE_SURFACE_PATCH,
 };
 
 fn unique_test_dir() -> PathBuf {
@@ -28,20 +28,20 @@ fn unique_test_dir() -> PathBuf {
         .unwrap()
         .as_nanos();
     PathBuf::from(format!(
-        "/tmp/herdr-multi-client-{}-{nanos}",
+        "/tmp/flockr-multi-client-{}-{nanos}",
         std::process::id()
     ))
 }
 
-struct SpawnedHerdr {
+struct SpawnedFlockr {
     _master: Box<dyn MasterPty + Send>,
     child: Box<dyn Child + Send + Sync>,
 }
 
-impl Drop for SpawnedHerdr {
+impl Drop for SpawnedFlockr {
     fn drop(&mut self) {
         let pid = self.child.process_id();
-        support::stop_spawned_herdr(&mut *self.child);
+        support::stop_spawned_flockr(&mut *self.child);
         if let Some(pid) = pid {
             let deadline = Instant::now() + Duration::from_secs(2);
             while Instant::now() < deadline {
@@ -52,7 +52,7 @@ impl Drop for SpawnedHerdr {
                 }
                 thread::sleep(Duration::from_millis(20));
             }
-            unregister_spawned_herdr_pid(Some(pid));
+            unregister_spawned_flockr_pid(Some(pid));
         }
     }
 }
@@ -75,11 +75,11 @@ fn wait_for_socket(path: &Path, timeout: Duration) {
     panic!("socket did not appear at {}", path.display());
 }
 
-fn spawn_server(config: &Path, runtime: &Path, api: &Path) -> SpawnedHerdr {
-    fs::create_dir_all(config.join("herdr")).unwrap();
+fn spawn_server(config: &Path, runtime: &Path, api: &Path) -> SpawnedFlockr {
+    fs::create_dir_all(config.join("flockr")).unwrap();
     fs::create_dir_all(runtime).unwrap();
     register_runtime_dir(runtime);
-    fs::write(config.join("herdr/config.toml"), "onboarding = false\n").unwrap();
+    fs::write(config.join("flockr/config.toml"), "onboarding = false\n").unwrap();
     let pair = native_pty_system()
         .openpty(PtySize {
             rows: 24,
@@ -88,25 +88,25 @@ fn spawn_server(config: &Path, runtime: &Path, api: &Path) -> SpawnedHerdr {
             pixel_height: 0,
         })
         .unwrap();
-    let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_herdr"));
-    support::isolate_herdr_test_process(&mut cmd);
+    let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_flockr"));
+    support::isolate_flockr_test_process(&mut cmd);
     cmd.arg("server");
     cmd.env("XDG_CONFIG_HOME", config);
     cmd.env("XDG_RUNTIME_DIR", runtime);
-    cmd.env("HERDR_SOCKET_PATH", api);
-    cmd.env_remove("HERDR_CLIENT_SOCKET_PATH");
+    cmd.env("FLOCKR_SOCKET_PATH", api);
+    cmd.env_remove("FLOCKR_CLIENT_SOCKET_PATH");
     cmd.env("SHELL", "/bin/sh");
-    cmd.env_remove("HERDR_ENV");
+    cmd.env_remove("FLOCKR_ENV");
     let child = pair.slave.spawn_command(cmd).unwrap();
-    register_spawned_herdr_pid(child.process_id());
+    register_spawned_flockr_pid(child.process_id());
     drop(pair.slave);
-    SpawnedHerdr {
+    SpawnedFlockr {
         _master: pair.master,
         child,
     }
 }
 
-fn spawn_client(config: &Path, runtime: &Path, api: &Path) -> SpawnedHerdr {
+fn spawn_client(config: &Path, runtime: &Path, api: &Path) -> SpawnedFlockr {
     register_runtime_dir(runtime);
     let pair = native_pty_system()
         .openpty(PtySize {
@@ -116,26 +116,26 @@ fn spawn_client(config: &Path, runtime: &Path, api: &Path) -> SpawnedHerdr {
             pixel_height: 0,
         })
         .unwrap();
-    let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_herdr"));
-    support::isolate_herdr_test_process(&mut cmd);
+    let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_flockr"));
+    support::isolate_flockr_test_process(&mut cmd);
     cmd.arg("client");
-    cmd.env("HERDR_DISABLE_SOUND", "1");
+    cmd.env("FLOCKR_DISABLE_SOUND", "1");
     cmd.env("XDG_CONFIG_HOME", config);
     cmd.env("XDG_RUNTIME_DIR", runtime);
-    cmd.env("HERDR_SOCKET_PATH", api);
-    cmd.env_remove("HERDR_CLIENT_SOCKET_PATH");
+    cmd.env("FLOCKR_SOCKET_PATH", api);
+    cmd.env_remove("FLOCKR_CLIENT_SOCKET_PATH");
     cmd.env("SHELL", "/bin/sh");
-    cmd.env_remove("HERDR_ENV");
+    cmd.env_remove("FLOCKR_ENV");
     let child = pair.slave.spawn_command(cmd).unwrap();
-    register_spawned_herdr_pid(child.process_id());
+    register_spawned_flockr_pid(child.process_id());
     drop(pair.slave);
-    SpawnedHerdr {
+    SpawnedFlockr {
         _master: pair.master,
         child,
     }
 }
 
-fn cleanup(server: SpawnedHerdr, base: PathBuf) {
+fn cleanup(server: SpawnedFlockr, base: PathBuf) {
     drop(server);
     cleanup_test_base(&base);
 }
@@ -272,8 +272,8 @@ fn same_tab_geometry_follows_meaningful_client_activity() {
     let base = unique_test_dir();
     let config = base.join("config");
     let runtime = base.join("runtime");
-    let api = runtime.join("herdr.sock");
-    let clients = runtime.join("herdr-client.sock");
+    let api = runtime.join("flockr.sock");
+    let clients = runtime.join("flockr-client.sock");
     let server = spawn_server(&config, &runtime, &api);
     wait_for_socket(&api, Duration::from_secs(10));
     wait_for_socket(&clients, Duration::from_secs(10));
@@ -305,8 +305,8 @@ fn api_pane_output_is_fanned_out_as_pane_surface_updates() {
     let base = unique_test_dir();
     let config = base.join("config");
     let runtime = base.join("runtime");
-    let api = runtime.join("herdr.sock");
-    let clients = runtime.join("herdr-client.sock");
+    let api = runtime.join("flockr.sock");
+    let clients = runtime.join("flockr-client.sock");
     let server = spawn_server(&config, &runtime, &api);
     wait_for_socket(&api, Duration::from_secs(10));
     wait_for_socket(&clients, Duration::from_secs(10));
@@ -339,8 +339,8 @@ fn crashed_client_shell_does_not_affect_survivor() {
     let base = unique_test_dir();
     let config = base.join("config");
     let runtime = base.join("runtime");
-    let api = runtime.join("herdr.sock");
-    let clients = runtime.join("herdr-client.sock");
+    let api = runtime.join("flockr.sock");
+    let clients = runtime.join("flockr-client.sock");
     let server = spawn_server(&config, &runtime, &api);
     wait_for_socket(&api, Duration::from_secs(10));
     wait_for_socket(&clients, Duration::from_secs(10));
@@ -372,8 +372,8 @@ fn rapid_client_shell_connect_disconnect_remains_healthy() {
     let base = unique_test_dir();
     let config = base.join("config");
     let runtime = base.join("runtime");
-    let api = runtime.join("herdr.sock");
-    let clients = runtime.join("herdr-client.sock");
+    let api = runtime.join("flockr.sock");
+    let clients = runtime.join("flockr-client.sock");
     let server = spawn_server(&config, &runtime, &api);
     wait_for_socket(&api, Duration::from_secs(10));
     wait_for_socket(&clients, Duration::from_secs(10));

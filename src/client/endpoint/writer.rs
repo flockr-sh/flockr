@@ -262,7 +262,7 @@ mod tests {
     fn streams() -> (LocalStream, LocalStream, std::path::PathBuf) {
         use interprocess::local_socket::traits::Listener as _;
         let path = std::env::temp_dir().join(format!(
-            "herdr-writer-{}-{}.sock",
+            "flockr-writer-{}-{}.sock",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
