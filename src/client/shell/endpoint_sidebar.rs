@@ -20,8 +20,9 @@ pub(super) fn render_collapsed(
     hits: &mut ShellHitMap,
 ) {
     let palette = &config.palette;
-    super::render::render_sidebar_background(buffer, area, palette);
-    let (workspace_area, divider_y, detail_area) = super::sidebar::collapsed_sidebar_sections(area);
+    let content = super::render::render_sidebar_background(buffer, area, config);
+    let (workspace_area, divider_y, detail_area) =
+        super::sidebar::collapsed_sidebar_sections(content);
     let mut total_rows = 0usize;
     let mut selected_row = None;
     let reveal = std::mem::take(state.reveal_navigation_workspace);
@@ -237,14 +238,10 @@ pub(super) fn render_expanded(
     hits: &mut ShellHitMap,
 ) {
     let palette = &config.palette;
-    super::render::render_sidebar_background(buffer, area, palette);
-    hits.sidebar_divider = if area.is_empty() {
-        Rect::default()
-    } else {
-        Rect::new(area.right().saturating_sub(1), area.y, 1, area.height)
-    };
+    let content = super::render::render_sidebar_background(buffer, area, config);
+    hits.sidebar_divider = super::render::sidebar_separator(area, config.sidebar_position);
     let attention = active_snapshot.is_some_and(super::global_menu::global_menu_attention);
-    let sections = super::sidebar::render_sidebar_title(buffer, area, attention, config, hits);
+    let sections = super::sidebar::render_sidebar_title(buffer, content, attention, config, hits);
     hits.sidebar_sections = sections;
     let (workspace_area, detail_area) =
         crate::ui::expanded_sidebar_sections(sections, state.sidebar_section_split);

@@ -164,12 +164,11 @@ pub(in crate::client::shell) fn render_sidebar_title(
     config: &ClientShellConfig,
     hits: &mut ShellHitMap,
 ) -> Rect {
-    let content = Rect::new(area.x, area.y, area.width.saturating_sub(1), area.height);
-    if content.is_empty() {
+    if area.is_empty() {
         return area;
     }
     let palette = &config.palette;
-    let row = Rect::new(content.x, content.y, content.width, 1);
+    let row = Rect::new(area.x, area.y, area.width, 1);
     // The toggle keeps its cell even when the sidebar is too narrow for the rest.
     hits.sidebar_toggle = Rect::new(row.x, row.y, 1, 1);
     put_text(
@@ -177,7 +176,7 @@ pub(in crate::client::shell) fn render_sidebar_title(
         row.x,
         row.y,
         1,
-        "«",
+        collapse_arrow(config, true),
         Style::default().fg(palette.overlay0),
     );
     let left = row.x.saturating_add(2).min(row.right());
@@ -389,9 +388,8 @@ fn number_label(key: Option<char>) -> String {
 }
 
 pub(in crate::client::shell) fn collapsed_sidebar_sections(
-    area: Rect,
+    content: Rect,
 ) -> (Rect, Option<u16>, Rect) {
-    let content = Rect::new(area.x, area.y, area.width.saturating_sub(1), area.height);
     if content.is_empty() {
         return (Rect::default(), None, Rect::default());
     }
@@ -421,8 +419,8 @@ pub(crate) fn render_collapsed_sidebar(
     let palette = &config.palette;
     let selection_background = workspace_selection_background(palette);
     let active_background = workspace_active_background(palette, selected_workspace_id.is_some());
-    render_sidebar_background(buffer, area, palette);
-    let (workspace_area, divider_y, detail_area) = collapsed_sidebar_sections(area);
+    let content = render_sidebar_background(buffer, area, config);
+    let (workspace_area, divider_y, detail_area) = collapsed_sidebar_sections(content);
     // Numbers follow navigation order, which the switch keys use.
     let mut navigation_position = vec![None; snapshot.workspaces.len()];
     for (position, entry) in workspace_entries(snapshot, collapsed_groups)
@@ -564,6 +562,16 @@ pub(crate) fn render_collapsed_sidebar(
     );
 }
 
+/// Arrow for the collapse or expand toggle, pointing the way the sidebar moves.
+fn collapse_arrow(config: &ClientShellConfig, collapse: bool) -> &'static str {
+    let toward_left = collapse == (config.sidebar_position == SidebarPositionConfig::Left);
+    if toward_left {
+        "«"
+    } else {
+        "»"
+    }
+}
+
 /// Draw the collapsed sidebar's expand button, centered on the bottom row.
 pub(in crate::client::shell) fn render_collapsed_toggle(
     buffer: &mut Buffer,
@@ -576,8 +584,8 @@ pub(in crate::client::shell) fn render_collapsed_toggle(
         return Rect::default();
     }
     let label = SidebarButtonLabel {
-        chip: "»",
-        text: "»",
+        chip: collapse_arrow(config, false),
+        text: collapse_arrow(config, false),
     };
     let width = sidebar_button_width(label, config).min(workspace_area.width);
     let x = workspace_area.x + (workspace_area.width - width).div_ceil(2);
@@ -589,7 +597,7 @@ pub(in crate::client::shell) fn render_collapsed_toggle(
             x,
             y,
             1,
-            "»",
+            collapse_arrow(config, false),
             if attention {
                 Style::default()
                     .fg(palette.accent)
@@ -621,14 +629,10 @@ pub(crate) fn render_sidebar(
     hits: &mut ShellHitMap,
 ) {
     let palette = &config.palette;
-    render_sidebar_background(buffer, area, palette);
-    hits.sidebar_divider = if area.is_empty() {
-        Rect::default()
-    } else {
-        Rect::new(area.right().saturating_sub(1), area.y, 1, area.height)
-    };
+    let content = render_sidebar_background(buffer, area, config);
+    hits.sidebar_divider = sidebar_separator(area, config.sidebar_position);
     let attention = super::super::global_menu::global_menu_attention(snapshot);
-    let sections = render_sidebar_title(buffer, area, attention, config, hits);
+    let sections = render_sidebar_title(buffer, content, attention, config, hits);
     hits.sidebar_sections = sections;
     let (workspace_area, detail_area) =
         crate::ui::expanded_sidebar_sections(sections, state.sidebar_section_split);

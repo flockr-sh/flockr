@@ -11,7 +11,14 @@ impl ClientShellState {
             self.config.sidebar_max_width,
         )
         .unwrap_or((18, 36));
-        let width = column.saturating_add(1).clamp(min, max);
+        // The sidebar's outer edge is the screen edge it sits on.
+        let width = match self.config.sidebar_position {
+            crate::config::SidebarPositionConfig::Left => column.saturating_add(1),
+            crate::config::SidebarPositionConfig::Right => self
+                .last_composed_size
+                .map_or(self.sidebar_width, |(cols, _)| cols.saturating_sub(column)),
+        }
+        .clamp(min, max);
         if self.sidebar_width != width {
             self.sidebar_width = width;
             self.sidebar_width_manual = true;

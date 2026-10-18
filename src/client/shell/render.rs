@@ -13,19 +13,43 @@ pub(super) use overlays::{render_client_overlay, render_context_menu, render_glo
 pub(super) use sidebar::{render_collapsed_sidebar, render_sidebar, workspace_entries};
 pub(super) use tabs::{render_tab_bar, tab_bar_status_width};
 
+/// Fill the sidebar and draw its separator on the edge that faces the panes.
+/// Returns the content area beside the separator.
 pub(in crate::client::shell) fn render_sidebar_background(
     buffer: &mut Buffer,
     area: Rect,
-    palette: &Palette,
-) {
+    config: &ClientShellConfig,
+) -> Rect {
+    let palette = &config.palette;
     buffer.set_style(area, Style::default().bg(palette.sidebar_bg));
-    let separator_x = area.right().saturating_sub(1);
-    for y in area.y..area.bottom() {
-        if let Some(cell) = buffer.cell_mut((separator_x, y)) {
+    let separator = sidebar_separator(area, config.sidebar_position);
+    for y in separator.y..separator.bottom() {
+        if let Some(cell) = buffer.cell_mut((separator.x, y)) {
             cell.set_symbol("│");
             cell.set_style(Style::default().fg(palette.surface_dim));
         }
     }
+    let x = match config.sidebar_position {
+        SidebarPositionConfig::Left => area.x,
+        SidebarPositionConfig::Right => area.x.saturating_add(1).min(area.right()),
+    };
+    Rect::new(x, area.y, area.width.saturating_sub(1), area.height)
+}
+
+/// The sidebar column that separates it from the panes, and that drags to
+/// resize it.
+pub(in crate::client::shell) fn sidebar_separator(
+    area: Rect,
+    position: SidebarPositionConfig,
+) -> Rect {
+    if area.is_empty() {
+        return Rect::default();
+    }
+    let x = match position {
+        SidebarPositionConfig::Left => area.right() - 1,
+        SidebarPositionConfig::Right => area.x,
+    };
+    Rect::new(x, area.y, 1, area.height)
 }
 
 pub(super) fn render_mode_bar(

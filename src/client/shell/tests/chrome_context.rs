@@ -192,6 +192,51 @@ fn focused_workspace_change_reveals_new_workspace_in_full_sidebar() {
 }
 
 #[test]
+fn right_sidebar_sits_on_the_right_edge_and_resizes_from_its_left_edge() {
+    let mut config = Config::default();
+    config.ui.sidebar_position = crate::config::SidebarPositionConfig::Right;
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&config));
+    state.set_snapshot(Box::new(snapshot()));
+    state.set_pane_surface(surface());
+
+    let layout = state.layout(106, 30);
+    assert_eq!(layout.sidebar.right(), 106);
+    assert_eq!(layout.pane_surface.x, 0);
+    assert_eq!(layout.pane_surface.right(), layout.sidebar.x);
+
+    let frame = state.compose(106, 30).expect("right sidebar frame");
+    let divider = state.hits.sidebar_divider;
+    assert_eq!(divider.x, layout.sidebar.x);
+    let line = |y: u16| {
+        frame.cells[y as usize * 106..(y as usize + 1) * 106]
+            .iter()
+            .map(|cell| cell.symbol.as_str())
+            .collect::<String>()
+    };
+    assert!(line(divider.y + 2)
+        .chars()
+        .nth(divider.x as usize)
+        .is_some_and(|c| c == '│'));
+    assert!((0..30).any(|y| line(y).contains(" SPACES")));
+
+    state.handle_raw_events(vec![RawInputEvent::Mouse(crossterm::event::MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: divider.x,
+        row: divider.y + 2,
+        modifiers: KeyModifiers::empty(),
+    })]);
+    state.handle_raw_events(vec![RawInputEvent::Mouse(crossterm::event::MouseEvent {
+        kind: MouseEventKind::Drag(MouseButton::Left),
+        column: 106 - 32,
+        row: divider.y + 2,
+        modifiers: KeyModifiers::empty(),
+    })]);
+    assert_eq!(state.sidebar_width, 32);
+    state.compose(106, 30).expect("resized right sidebar");
+    assert_eq!(state.hits.sidebar_divider.x, 106 - 32);
+}
+
+#[test]
 fn client_owned_sidebar_dividers_resize_live() {
     let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
     state.set_snapshot(Box::new(snapshot()));

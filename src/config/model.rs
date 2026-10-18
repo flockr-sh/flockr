@@ -1029,6 +1029,14 @@ pub struct WorktreesConfig {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
 #[serde(rename_all = "snake_case")]
+pub enum SidebarPositionConfig {
+    #[default]
+    Left,
+    Right,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
+#[serde(rename_all = "snake_case")]
 pub enum TabBarPositionConfig {
     #[default]
     Top,
@@ -1149,6 +1157,8 @@ pub struct UiConfig {
     pub sidebar_start_collapsed: bool,
     /// Collapsed sidebar presentation. Default: compact.
     pub sidebar_collapsed_mode: SidebarCollapsedModeConfig,
+    /// Screen edge the sidebar sits on. Default: left.
+    pub sidebar_position: SidebarPositionConfig,
     /// Terminal width at or below which Flockr uses the mobile single-column layout. Default: 64.
     pub mobile_width_threshold: u16,
     /// Capture mouse input for Flockr's mouse UI. Default: true.
@@ -1453,6 +1463,7 @@ impl Default for UiConfig {
             sidebar_max_width: 36,
             sidebar_start_collapsed: false,
             sidebar_collapsed_mode: SidebarCollapsedModeConfig::Compact,
+            sidebar_position: SidebarPositionConfig::Left,
             mobile_width_threshold: DEFAULT_MOBILE_WIDTH_THRESHOLD,
             mouse_capture: true,
             copy_on_select: true,
@@ -1982,6 +1993,21 @@ sidebar_collapsed_mode = "hidden"
             config.ui.sidebar_collapsed_mode,
             SidebarCollapsedModeConfig::Hidden
         );
+    }
+
+    #[test]
+    fn sidebar_position_defaults_left_and_parses_right() {
+        assert_eq!(
+            Config::default().ui.sidebar_position,
+            SidebarPositionConfig::Left
+        );
+
+        let toml = r#"
+[ui]
+sidebar_position = "right"
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        assert_eq!(config.ui.sidebar_position, SidebarPositionConfig::Right);
     }
 
     #[test]
