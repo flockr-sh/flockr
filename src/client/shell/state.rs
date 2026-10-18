@@ -30,7 +30,7 @@ pub(crate) struct ClientShellConfig {
     pub(super) spaces: SpacesSidebarConfig,
     pub(super) agents: crate::config::AgentsSidebarConfig,
     pub(super) sidebar_chrome: crate::config::SidebarChrome,
-    pub(super) agent_panel_sort: crate::config::AgentPanelSortConfig,
+    pub(super) agent_panel_filter: super::agent_sidebar::AgentPanelFilter,
     pub(super) status_indicators: crate::config::StatusIndicatorStyle,
     pub(super) pulse_working: bool,
     /// Current working icon color while the pulse runs. Set by the client timer.
@@ -111,9 +111,12 @@ pub(super) struct ShellHitMap {
     pub(super) agent_scrollbar: Rect,
     pub(super) agent_scroll_metrics: Option<crate::pane::ScrollMetrics>,
     pub(super) agent_max_scroll: usize,
-    pub(super) agent_sort_toggle: Rect,
+    /// Agent filter tabs in the agents header.
+    pub(super) agent_filter_tabs: Vec<(Rect, super::agent_sidebar::AgentPanelFilter)>,
     pub(super) sidebar_divider: Rect,
     pub(super) sidebar_section_divider: Rect,
+    /// Sidebar area below the title row, split into the two sections.
+    pub(super) sidebar_sections: Rect,
     pub(super) sidebar_toggle: Rect,
     pub(super) new_workspace: Rect,
     pub(super) new_tab: Rect,
@@ -921,7 +924,6 @@ pub(crate) struct ClientShellState {
     pub(super) sidebar_width_manual: bool,
     pub(super) sidebar_section_split: f32,
     pub(super) sidebar_section_split_manual: bool,
-    pub(super) agent_panel_sort_manual: bool,
     pub(super) last_sidebar_divider_click: Option<std::time::Instant>,
     pub(super) chrome_drag: Option<ClientChromeDrag>,
     pub(super) workspace_press: Option<ClientWorkspacePress>,
@@ -1075,8 +1077,8 @@ impl ClientShellState {
             .filter(|split| split.is_finite())
             .map(|split| split.clamp(0.1, 0.9))
             .unwrap_or(0.5);
-        if let Some(sort) = preferences.agent_panel_sort {
-            config.agent_panel_sort = sort;
+        if let Some(filter) = preferences.agent_panel_filter {
+            config.agent_panel_filter = filter;
         }
         let mut remote_collapsed_groups = HashMap::<ClientEndpointId, HashSet<String>>::new();
         for saved in preferences.remote_collapsed_groups {
@@ -1108,7 +1110,6 @@ impl ClientShellState {
             sidebar_width_manual: preferences.sidebar_width.is_some(),
             sidebar_section_split,
             sidebar_section_split_manual: preferences.sidebar_section_split.is_some(),
-            agent_panel_sort_manual: preferences.agent_panel_sort.is_some(),
             last_sidebar_divider_click: None,
             chrome_drag: None,
             workspace_press: None,

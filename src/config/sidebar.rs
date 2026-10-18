@@ -543,7 +543,7 @@ pub enum SidebarDividerStyle {
     Dim,
 }
 
-/// How the sidebar draws its clickable labels (new, menu, sort).
+/// How the sidebar draws its clickable labels (new, menu, and the agents filter).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SidebarButtonStyle {

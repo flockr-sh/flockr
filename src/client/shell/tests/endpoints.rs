@@ -712,7 +712,7 @@ fn agent_navigation_keeps_scroll_when_target_is_visible() {
     let targets = super::super::aggregate_navigation::online_agent_targets(
         &state.endpoints,
         &state.active_endpoint_id,
-        state.config.agent_panel_sort,
+        state.config.agent_panel_filter,
     );
     let index = targets
         .iter()
@@ -1480,9 +1480,14 @@ fn aggregate_agents_use_configured_rows_machine_token_and_status_colors() {
         .join("\n");
     assert!(text.contains("○ Local · local agent"), "frame: {text}");
     assert!(text.contains("× Build · remote agent"), "frame: {text}");
-    assert!(text.contains("grouped"), "frame: {text}");
-    let toggle = state.hits.agent_sort_toggle;
-    assert!(!toggle.is_empty());
+    assert!(text.contains("Active"), "frame: {text}");
+    let (toggle, _) = state
+        .hits
+        .agent_filter_tabs
+        .iter()
+        .copied()
+        .find(|(_, filter)| *filter == super::super::agent_sidebar::AgentPanelFilter::Active)
+        .expect("active tab");
     let click = state.handle_raw_events(vec![RawInputEvent::Mouse(MouseEvent {
         kind: MouseEventKind::Down(MouseButton::Left),
         column: toggle.x,
@@ -1490,8 +1495,8 @@ fn aggregate_agents_use_configured_rows_machine_token_and_status_colors() {
         modifiers: KeyModifiers::empty(),
     })]);
     assert_eq!(
-        state.config.agent_panel_sort,
-        crate::config::AgentPanelSortConfig::Priority
+        state.config.agent_panel_filter,
+        super::super::agent_sidebar::AgentPanelFilter::Active
     );
     assert!(click.actions.is_empty());
 
@@ -1691,7 +1696,7 @@ fn selected_default_view_ignores_inactive_endpoint_projection() {
         .join("\n");
     assert!(text.contains("Local · local agent"), "frame: {text}");
     assert!(text.contains("Build · remote agent"), "frame: {text}");
-    assert!(text.contains("grouped"), "frame: {text}");
+    assert!(text.contains("Active"), "frame: {text}");
 }
 
 #[test]
@@ -1788,7 +1793,6 @@ fn selected_custom_sort_orders_rendering_and_indexed_navigation() {
     use crate::config::AgentSidebarToken;
 
     let mut config = Config::default();
-    config.ui.agent_panel_sort = crate::config::AgentPanelSortConfig::Priority;
     config.ui.sidebar.agents.rows =
         vec![vec![AgentSidebarToken::Machine, AgentSidebarToken::Agent]];
     let mut state = ClientShellState::new(ClientShellConfig::from_config(&config));
@@ -1905,86 +1909,12 @@ fn selected_position_sort_uses_public_tab_and_pane_numbers() {
     let names = aggregate_navigation::aggregate_agent_rows(
         &state.endpoints,
         &state.active_endpoint_id,
-        crate::config::AgentPanelSortConfig::Priority,
+        super::super::agent_sidebar::AgentPanelFilter::All,
     )
     .into_iter()
     .map(|row| row.agent.name.as_deref().expect("agent name"))
     .collect::<Vec<_>>();
     assert_eq!(names, ["pane two", "pane nine", "tab nine"]);
-}
-
-#[test]
-fn aggregate_priority_uses_client_observed_recency_across_machines() {
-    use crate::api::schema::AgentStatus;
-    use crate::config::AgentSidebarToken;
-
-    let mut config = Config::default();
-    config.ui.agent_panel_sort = crate::config::AgentPanelSortConfig::Priority;
-    config.ui.sidebar.agents.rows =
-        vec![vec![AgentSidebarToken::Machine, AgentSidebarToken::Agent]];
-    let mut state = ClientShellState::new(ClientShellConfig::from_config(&config));
-    let profile = remote_profile();
-    let endpoint_id = ClientEndpointId::Ssh(profile.id.clone());
-    state.set_endpoint_catalog(&[profile]);
-    state.set_endpoint_status(&endpoint_id, ClientEndpointStatus::Online);
-
-    let mut local = snapshot();
-    local.agents = vec![agent("local agent", AgentStatus::Idle, 1)];
-    state.set_snapshot(Box::new(local));
-    state.set_pane_surface(surface());
-    let mut remote = snapshot();
-    remote.boot_id = "remote-boot".into();
-    remote.agents = vec![agent("remote agent", AgentStatus::Idle, 1)];
-    state.set_endpoint_snapshot(&endpoint_id, Box::new(remote.clone()));
-
-    let mut local = snapshot();
-    local.agents = vec![agent("local agent", AgentStatus::Idle, 2)];
-    state.set_snapshot(Box::new(local));
-    let frame_text = |state: &mut ClientShellState| {
-        let frame = state.compose(100, 28).expect("combined endpoint frame");
-        frame
-            .cells
-            .chunks(frame.width as usize)
-            .map(|row| {
-                row.iter()
-                    .map(|cell| cell.symbol.as_str())
-                    .collect::<String>()
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-    };
-    let text = frame_text(&mut state);
-    assert!(
-        text.find("Local · local agent").expect("local agent")
-            < text.find("Build · remote agent").expect("remote agent")
-    );
-
-    remote.agents = vec![agent("remote agent", AgentStatus::Working, 2)];
-    state.set_endpoint_snapshot(&endpoint_id, Box::new(remote.clone()));
-    let text = frame_text(&mut state);
-    assert!(
-        text.find("Build · remote agent").expect("remote agent")
-            < text.find("Local · local agent").expect("local agent")
-    );
-
-    remote.agents = vec![agent("remote agent", AgentStatus::Idle, 3)];
-    state.set_endpoint_snapshot(&endpoint_id, Box::new(remote));
-    let text = frame_text(&mut state);
-    assert!(
-        text.find("Build · remote agent").expect("remote agent")
-            < text.find("Local · local agent").expect("local agent")
-    );
-    let mut outcome = ClientShellInput::default();
-    assert!(
-        state.handle_endpoint_navigation(crate::input::KeybindAction::FocusAgent(0), &mut outcome,)
-    );
-    assert!(matches!(
-        outcome.actions.as_slice(),
-        [ClientShellAction::ActivateEndpoint {
-            endpoint_id: activated,
-            target: Some(ClientEndpointFocusTarget::Pane(pane_id)),
-        }] if activated == &endpoint_id && pane_id == "pane_1"
-    ));
 }
 
 #[test]
@@ -2560,7 +2490,7 @@ fn navigator_uses_machine_parents_only_for_federated_clients() {
         })
         .collect::<Vec<_>>()
         .join("\n")
-        .contains(" machines"));
+        .contains(" MACHINES"));
     local.open_navigator_overlay();
     let ClientShellOverlay::Navigator(navigator) = local.overlay.as_ref().expect("navigator")
     else {

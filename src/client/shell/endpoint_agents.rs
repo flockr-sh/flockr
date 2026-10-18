@@ -65,7 +65,7 @@ pub(super) fn render_expanded(
         buffer,
         area,
         &rows,
-        agent_view_label.map(|_| " no matching agents"),
+        super::agent_sidebar::empty_agent_message(agent_view_label, config),
         config,
         agent_scroll,
         hits,
@@ -139,7 +139,7 @@ fn agent_rows(
     let mut rows = super::aggregate_navigation::aggregate_agent_rows(
         endpoints,
         active_endpoint_id,
-        config.agent_panel_sort,
+        config.agent_panel_filter,
     )
     .into_iter()
     .filter_map(|row| {
@@ -170,7 +170,7 @@ fn agent_rows(
         .find(|endpoint| &endpoint.endpoint_id == active_endpoint_id)
         .and_then(|endpoint| endpoint.snapshot.as_deref())
         .is_some_and(|snapshot| snapshot.agent_view_label.is_some());
-    if config.agent_panel_sort == crate::config::AgentPanelSortConfig::Spaces && !agent_view {
+    if !agent_view {
         super::agent_sidebar::mark_space_groups(rows.iter_mut().map(|row| {
             (
                 (row.endpoint_id.clone(), row.agent.workspace_id.clone()),

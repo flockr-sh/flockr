@@ -687,13 +687,6 @@ pub enum Mode {
     Terminal,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum AgentPanelSort {
-    #[default]
-    Spaces,
-    Priority,
-}
-
 #[derive(Debug, Clone)]
 pub struct ThemeRuntimeConfig {
     pub manual_name: String,
@@ -837,7 +830,6 @@ pub struct AppState {
     pub prefix_keys: Vec<(KeyCode, KeyModifiers)>,
     /// Virtual terminal size (columns, rows) used when no client is attached.
     pub(crate) headless_size: (u16, u16),
-    pub agent_panel_sort: AgentPanelSort,
     /// Transient session-wide projection override for the built-in Agents view.
     pub agent_view_override: Option<crate::api::schema::AgentViewSetParams>,
     pub sidebar_agents: crate::config::AgentsSidebarConfig,
@@ -1096,7 +1088,6 @@ impl AppState {
                 crate::config::DEFAULT_HEADLESS_COLS,
                 crate::config::DEFAULT_HEADLESS_ROWS,
             ),
-            agent_panel_sort: AgentPanelSort::Spaces,
             agent_view_override: None,
             sidebar_agents: crate::config::AgentsSidebarConfig::default(),
             sidebar_spaces: crate::config::SpacesSidebarConfig::default(),

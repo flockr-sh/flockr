@@ -10,6 +10,29 @@ use ratatui::{
 
 use super::*;
 
+/// Which agents the panel lists. Client presentation only.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum AgentPanelFilter {
+    #[default]
+    All,
+    /// Working, blocked, or done and not yet seen.
+    Active,
+}
+
+impl AgentPanelFilter {
+    pub(super) fn shows(self, status: crate::api::schema::AgentStatus) -> bool {
+        use crate::api::schema::AgentStatus;
+        match self {
+            Self::All => true,
+            Self::Active => matches!(
+                status,
+                AgentStatus::Working | AgentStatus::Blocked | AgentStatus::Done
+            ),
+        }
+    }
+}
+
 pub(super) struct AgentRow {
     pub(super) pane_id: String,
     pub(super) status: crate::api::schema::AgentStatus,
@@ -19,7 +42,7 @@ pub(super) struct AgentRow {
     pub(super) rows: Vec<Vec<crate::ui::ResolvedToken>>,
     pub(super) workspace_id: String,
     pub(super) workspace_label: String,
-    /// Space name drawn above the first agent of each space in grouped sort.
+    /// Space name drawn above the first agent of each space.
     pub(super) header: Option<String>,
     /// Indents the agent under its space header.
     pub(super) grouped: bool,
@@ -55,7 +78,7 @@ pub(super) fn mark_space_groups<'a, K: PartialEq>(
 
 pub(super) fn ordered_agent_pane_ids(
     snapshot: &ClientShellSnapshot,
-    sort: crate::config::AgentPanelSortConfig,
+    filter: super::agent_sidebar::AgentPanelFilter,
 ) -> Vec<String> {
     if snapshot.agent_view_label.is_some() {
         return snapshot
@@ -70,17 +93,10 @@ pub(super) fn ordered_agent_pane_ids(
             .cloned()
             .collect();
     }
-    let mut agents = snapshot.agents.iter().collect::<Vec<_>>();
-    if sort == crate::config::AgentPanelSortConfig::Priority {
-        agents.sort_by_key(|agent| {
-            (
-                std::cmp::Reverse(status_priority(agent.agent_status)),
-                std::cmp::Reverse(agent.state_change_seq),
-            )
-        });
-    }
-    agents
-        .into_iter()
+    snapshot
+        .agents
+        .iter()
+        .filter(|agent| filter.shows(agent.agent_status))
         .map(|agent| agent.pane_id.clone())
         .collect()
 }
@@ -108,10 +124,7 @@ pub(super) fn render_agent_panel(
         buffer,
         area,
         &rows,
-        snapshot
-            .agent_view_label
-            .as_ref()
-            .map(|_| " no matching agents"),
+        empty_agent_message(snapshot.agent_view_label.as_deref(), config),
         config,
         agent_scroll,
         hits,
@@ -149,39 +162,71 @@ pub(super) fn render_agent_panel_header(
         return false;
     }
     let header = Rect::new(area.x, area.y + 1, area.width, 1);
-    render_section_header(buffer, header, "agents", Some(agent_count), config);
-    let sort_label = agent_view_label.unwrap_or(match config.agent_panel_sort {
-        crate::config::AgentPanelSortConfig::Spaces => "grouped",
-        crate::config::AgentPanelSortConfig::Priority => "priority",
-    });
-    let chip = if agent_view_label.is_some() {
-        sort_label.to_owned()
-    } else {
-        format!("{sort_label} ▾")
-    };
-    let label = SidebarButtonLabel {
-        chip: &chip,
-        text: sort_label,
-    };
-    let sort_rect = render_sidebar_button(
-        buffer,
-        header
-            .right()
-            .saturating_sub(sidebar_button_width(label, config))
-            .max(header.x),
-        header.y,
-        header.right(),
-        label,
-        agent_view_label.is_some(),
-        true,
-        config,
-    );
-    hits.agent_sort_toggle = if config.mouse_capture && agent_view_label.is_none() {
-        sort_rect
-    } else {
-        Rect::default()
-    };
+    render_section_header(buffer, header, "AGENTS", Some(agent_count), config);
+    hits.agent_filter_tabs.clear();
+    if let Some(view) = agent_view_label {
+        // A server agent view replaces the filter, so show its name instead.
+        let label = SidebarButtonLabel {
+            chip: view,
+            text: view,
+        };
+        render_sidebar_button(
+            buffer,
+            header
+                .right()
+                .saturating_sub(sidebar_button_width(label, config))
+                .max(header.x),
+            header.y,
+            header.right(),
+            label,
+            true,
+            true,
+            config,
+        );
+        return true;
+    }
+    let tabs = [
+        (AgentPanelFilter::All, "All"),
+        (AgentPanelFilter::Active, "Active"),
+    ];
+    let gap = u16::from(config.sidebar_chrome.buttons == crate::config::SidebarButtonStyle::Text);
+    let width = tabs
+        .iter()
+        .map(|(_, text)| sidebar_button_width(SidebarButtonLabel { chip: text, text }, config))
+        .sum::<u16>()
+        + gap;
+    let mut x = header.right().saturating_sub(width).max(header.x);
+    for (filter, text) in tabs {
+        let rect = render_sidebar_button(
+            buffer,
+            x,
+            header.y,
+            header.right(),
+            SidebarButtonLabel { chip: text, text },
+            config.agent_panel_filter == filter,
+            true,
+            config,
+        );
+        if config.mouse_capture {
+            hits.agent_filter_tabs.push((rect, filter));
+        }
+        x = rect.right().saturating_add(gap);
+    }
     true
+}
+
+/// Line shown when the panel lists no agents.
+pub(super) fn empty_agent_message(
+    agent_view_label: Option<&str>,
+    config: &ClientShellConfig,
+) -> Option<&'static str> {
+    if agent_view_label.is_some() {
+        Some(" no matching agents")
+    } else if config.agent_panel_filter == AgentPanelFilter::Active {
+        Some(" no active agents")
+    } else {
+        None
+    }
 }
 
 pub(super) fn render_agent_list<T>(
@@ -273,7 +318,7 @@ pub(super) fn agent_rows(
     machine: Option<&str>,
 ) -> Vec<AgentRow> {
     let focus_agent = &config.keybinds.keybinds.focus_agent;
-    let mut rows = ordered_agent_pane_ids(snapshot, config.agent_panel_sort)
+    let mut rows = ordered_agent_pane_ids(snapshot, config.agent_panel_filter)
         .into_iter()
         .enumerate()
         .filter_map(|(index, pane_id)| {
@@ -281,9 +326,7 @@ pub(super) fn agent_rows(
             agent_row(snapshot, &pane_id, config, machine, number)
         })
         .collect::<Vec<_>>();
-    if config.agent_panel_sort == crate::config::AgentPanelSortConfig::Spaces
-        && snapshot.agent_view_label.is_none()
-    {
+    if snapshot.agent_view_label.is_none() {
         mark_space_groups(rows.iter_mut().map(|row| (row.workspace_id.clone(), row)));
     }
     rows

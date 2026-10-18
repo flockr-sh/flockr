@@ -937,7 +937,7 @@ impl ClientShellState {
             KeybindAction::FocusAgent(index) => {
                 let agents = super::agent_sidebar::ordered_agent_pane_ids(
                     snapshot,
-                    self.config.agent_panel_sort,
+                    self.config.agent_panel_filter,
                 );
                 Some(Method::PaneFocus(PaneTarget {
                     pane_id: agents.get(index)?.clone(),
@@ -946,7 +946,7 @@ impl ClientShellState {
             KeybindAction::PreviousAgent | KeybindAction::NextAgent => {
                 let agents = super::agent_sidebar::ordered_agent_pane_ids(
                     snapshot,
-                    self.config.agent_panel_sort,
+                    self.config.agent_panel_filter,
                 );
                 if agents.is_empty() {
                     return None;

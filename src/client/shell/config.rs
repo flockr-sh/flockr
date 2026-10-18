@@ -56,9 +56,9 @@ impl ClientShellState {
             sidebar_collapsed: self
                 .sidebar_collapsed_manual
                 .then_some(self.sidebar_collapsed),
-            agent_panel_sort: self
-                .agent_panel_sort_manual
-                .then_some(self.config.agent_panel_sort),
+            agent_panel_filter: (self.config.agent_panel_filter
+                != super::agent_sidebar::AgentPanelFilter::All)
+                .then_some(self.config.agent_panel_filter),
             collapsed_groups,
             remote_collapsed_groups,
         };
@@ -71,7 +71,6 @@ impl ClientShellState {
     pub(crate) fn reload_client_config(&mut self) {
         match crate::config::load_live_config() {
             Ok(loaded) => {
-                let agent_panel_sort = self.config.agent_panel_sort;
                 let diagnostics = self.config.apply_live_config(
                     &loaded.config,
                     &loaded.diagnostics,
@@ -85,9 +84,6 @@ impl ClientShellState {
                 }
                 if !self.sidebar_width_manual {
                     self.sidebar_width = self.config.sidebar_width;
-                }
-                if self.agent_panel_sort_manual {
-                    self.config.agent_panel_sort = agent_panel_sort;
                 }
                 self.set_local_config_diagnostic(self.config.local_config_diagnostic(&diagnostics));
                 if let Some(snapshot) = self.snapshot.as_deref() {
@@ -124,7 +120,7 @@ impl ClientShellConfig {
             spaces: config.ui.sidebar.spaces.clone(),
             agents: config.ui.sidebar.agents.clone(),
             sidebar_chrome: config.ui.sidebar.chrome(),
-            agent_panel_sort: config.ui.agent_panel_sort,
+            agent_panel_filter: Default::default(),
             status_indicators: config.ui.status_indicators,
             pulse_working: config.ui.pulse_working,
             working_pulse_color: None,
@@ -356,7 +352,6 @@ impl ClientShellConfig {
                 self.spaces = ui.sidebar.spaces.clone();
                 self.agents = ui.sidebar.agents.clone();
                 self.sidebar_chrome = ui.sidebar.chrome();
-                self.agent_panel_sort = ui.agent_panel_sort;
                 self.status_indicators = ui.status_indicators;
                 self.pulse_working = ui.pulse_working;
                 self.sound_enabled = ui.sound.enabled;
@@ -490,7 +485,6 @@ mod tests {
         let mut next = Config::default();
         next.ui.sidebar_width = 31;
         next.ui.tab_bar_position = TabBarPositionConfig::Bottom;
-        next.ui.agent_panel_sort = crate::config::AgentPanelSortConfig::Priority;
         next.ui.status_indicators = crate::config::StatusIndicatorStyle::Symbols;
         next.ui.pulse_working = false;
         next.ui.sidebar.agents = toml::from_str("rows = [[{ token = 'machine', rules = [{ equals = 'Local', bold = true }] }]]\nrow_gap = 2").unwrap();
@@ -501,10 +495,6 @@ mod tests {
         assert!(diagnostics.is_empty());
         assert_eq!(shell.sidebar_width, 31);
         assert_eq!(shell.tab_bar_position, TabBarPositionConfig::Bottom);
-        assert_eq!(
-            shell.agent_panel_sort,
-            crate::config::AgentPanelSortConfig::Priority
-        );
         assert_eq!(
             shell.status_indicators,
             crate::config::StatusIndicatorStyle::Symbols

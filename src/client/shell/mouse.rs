@@ -22,11 +22,11 @@ impl ClientShellState {
     }
 
     fn set_sidebar_section_from_row(&mut self, row: u16, outcome: &mut ClientShellInput) {
-        let divider = self.hits.sidebar_divider;
-        if divider.height == 0 {
+        let sections = self.hits.sidebar_sections;
+        if sections.height == 0 {
             return;
         }
-        let ratio = row.saturating_sub(divider.y) as f32 / divider.height as f32;
+        let ratio = row.saturating_sub(sections.y) as f32 / sections.height as f32;
         let ratio = ratio.clamp(0.1, 0.9);
         if (self.sidebar_section_split - ratio).abs() > f32::EPSILON {
             self.sidebar_section_split = ratio;
@@ -511,7 +511,7 @@ impl ClientShellState {
     fn workspace_drop_target_at(&self, point: (u16, u16)) -> Option<(Option<String>, u16)> {
         if self.hits.workspace_body.height == 0
             || point.1 < self.hits.workspace_body.y.saturating_sub(1)
-            || point.1 >= self.hits.new_workspace.y
+            || point.1 >= self.hits.workspace_body.bottom()
             || self.hits.workspaces.iter().any(|hit| {
                 hit.endpoint_id != self.active_endpoint_id && super::contains(hit.rect, point)
             })
@@ -573,7 +573,7 @@ impl ClientShellState {
                     .map(|workspace| workspace.workspace_id.clone())
             });
             let row = last_hit.rect.bottom();
-            if row < self.hits.new_workspace.y {
+            if row < self.hits.workspace_body.bottom() {
                 slots.push((before, row));
             }
         }
@@ -1987,7 +1987,7 @@ impl ClientShellState {
                 self.workspace_press = None;
                 self.tab_press = None;
                 self.chrome_drag = None;
-                // The toggle is painted over the agent scrollbar's last cell.
+                // The toggle sits in the title row, so check it before other sidebar hits.
                 if super::contains(self.hits.sidebar_toggle, point) {
                     self.sidebar_collapsed = !self.sidebar_collapsed;
                     self.sidebar_collapsed_manual = true;
@@ -2069,20 +2069,18 @@ impl ClientShellState {
                     }
                     return;
                 }
-                if super::contains(self.hits.agent_sort_toggle, point) {
-                    let sort = match self.config.agent_panel_sort {
-                        crate::config::AgentPanelSortConfig::Spaces => {
-                            crate::config::AgentPanelSortConfig::Priority
-                        }
-                        crate::config::AgentPanelSortConfig::Priority => {
-                            crate::config::AgentPanelSortConfig::Spaces
-                        }
-                    };
-                    self.config.agent_panel_sort = sort;
-                    self.agent_panel_sort_manual = true;
-                    self.agent_scroll = 0;
-                    self.persist_chrome_preferences(outcome);
-                    outcome.repaint = true;
+                if let Some(&(_, filter)) = self
+                    .hits
+                    .agent_filter_tabs
+                    .iter()
+                    .find(|(rect, _)| super::contains(*rect, point))
+                {
+                    if self.config.agent_panel_filter != filter {
+                        self.config.agent_panel_filter = filter;
+                        self.agent_scroll = 0;
+                        self.persist_chrome_preferences(outcome);
+                        outcome.repaint = true;
+                    }
                     return;
                 }
                 if self.handle_endpoint_machine_click(point, outcome) {

@@ -1017,10 +1017,6 @@ agent_panel_sort = "priority"
 
         assert!(loaded.diagnostics.is_empty());
         assert!(loaded.invalid_sections.is_empty());
-        assert_eq!(
-            loaded.config.ui.agent_panel_sort,
-            super::super::AgentPanelSortConfig::Priority
-        );
     }
 
     #[test]

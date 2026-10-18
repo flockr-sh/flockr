@@ -610,10 +610,11 @@ fn mobile_items(
             });
         }
     }
+    // The mobile view has no filter tabs, so it always lists every agent.
     let agents = super::aggregate_navigation::aggregate_agent_rows(
         endpoints,
         active_endpoint_id,
-        config.agent_panel_sort,
+        super::agent_sidebar::AgentPanelFilter::All,
     );
     let agent_view_label = snapshot.agent_view_label.as_deref();
     if !agents.is_empty() || agent_view_label.is_some() {

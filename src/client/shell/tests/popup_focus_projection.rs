@@ -165,7 +165,7 @@ fn desktop_composition_keeps_shell_outside_origin_relative_surface() {
         })
         .collect::<Vec<_>>()
         .join("\n");
-    assert!(text.contains("spaces"));
+    assert!(text.contains("SPACES"));
     assert!(text.contains("client-shell"));
     assert!(text.contains("main"));
     assert!(text.contains("LIVE"));
@@ -959,7 +959,7 @@ fn sidebar_scrollbars_use_proportional_shared_geometry_and_drag() {
     let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
     state.set_snapshot(Box::new(projected));
     state.set_pane_surface(surface());
-    state.compose(106, 20).expect("overflowing sidebars");
+    state.compose(106, 24).expect("overflowing sidebars");
 
     for agent in [false, true] {
         let (track, metrics) = if agent {

@@ -243,17 +243,21 @@ pub(super) fn render_expanded(
     } else {
         Rect::new(area.right().saturating_sub(1), area.y, 1, area.height)
     };
+    let attention = active_snapshot.is_some_and(super::global_menu::global_menu_attention);
+    let sections = super::sidebar::render_sidebar_title(buffer, area, attention, config, hits);
+    hits.sidebar_sections = sections;
     let (workspace_area, detail_area) =
-        crate::ui::expanded_sidebar_sections(area, state.sidebar_section_split);
+        crate::ui::expanded_sidebar_sections(sections, state.sidebar_section_split);
     hits.sidebar_section_divider =
-        crate::ui::sidebar_section_divider_rect(area, state.sidebar_section_split);
+        crate::ui::sidebar_section_divider_rect(sections, state.sidebar_section_split);
     super::sidebar::render_section_header(
         buffer,
         workspace_area,
-        "machines",
+        "MACHINES",
         Some(state.endpoints.len()),
         config,
     );
+    super::sidebar::render_new_workspace_button(buffer, workspace_area, config, hits);
 
     let empty_collapsed_groups = HashSet::new();
 
@@ -295,9 +299,7 @@ pub(super) fn render_expanded(
         workspace_area.x,
         workspace_area.y.saturating_add(WORKSPACE_HEADER_ROWS),
         workspace_area.width,
-        workspace_area
-            .height
-            .saturating_sub(WORKSPACE_HEADER_ROWS + 1),
+        workspace_area.height.saturating_sub(WORKSPACE_HEADER_ROWS),
     );
     hits.workspace_body = body;
     let row_heights = rows
@@ -528,44 +530,6 @@ pub(super) fn render_expanded(
         super::scroll::render_list_scrollbar(buffer, track, metrics, palette);
     }
 
-    let footer_y = workspace_area.bottom().saturating_sub(1);
-    if config.mouse_capture && workspace_area.height > 0 {
-        use super::sidebar::{render_sidebar_button, sidebar_button_width, SidebarButtonLabel};
-
-        let chip = format!("+ new · {}", active_endpoint_label(state));
-        let text = format!(" new · {}", active_endpoint_label(state));
-        hits.new_workspace = render_sidebar_button(
-            buffer,
-            workspace_area.x,
-            footer_y,
-            workspace_area.right(),
-            SidebarButtonLabel {
-                chip: &chip,
-                text: &text,
-            },
-            false,
-            false,
-            config,
-        );
-        let attention = active_snapshot.is_some_and(super::global_menu::global_menu_attention);
-        let label = SidebarButtonLabel {
-            chip: if attention { "● menu" } else { "≡ menu" },
-            text: if attention { "● menu" } else { "menu" },
-        };
-        hits.global_launcher = render_sidebar_button(
-            buffer,
-            workspace_area
-                .right()
-                .saturating_sub(sidebar_button_width(label, config))
-                .max(workspace_area.x),
-            footer_y,
-            workspace_area.right(),
-            label,
-            attention,
-            false,
-            config,
-        );
-    }
     super::endpoint_agents::render_expanded(
         buffer,
         detail_area,
@@ -576,28 +540,6 @@ pub(super) fn render_expanded(
         state.agent_scroll,
         hits,
     );
-    hits.sidebar_toggle = Rect::new(
-        area.right().saturating_sub(2),
-        area.bottom().saturating_sub(1),
-        u16::from(area.width > 1),
-        u16::from(area.height > 0),
-    );
-    put_text(
-        buffer,
-        hits.sidebar_toggle.x,
-        hits.sidebar_toggle.y,
-        hits.sidebar_toggle.width,
-        "«",
-        Style::default().fg(palette.overlay0),
-    );
-}
-
-fn active_endpoint_label<'a>(state: &'a ShellRenderState<'_>) -> &'a str {
-    state
-        .endpoints
-        .iter()
-        .find(|endpoint| &endpoint.endpoint_id == state.active_endpoint_id)
-        .map_or("Local", |endpoint| endpoint.label.as_str())
 }
 
 fn render_endpoint_row(

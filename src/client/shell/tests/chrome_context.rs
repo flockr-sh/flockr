@@ -234,10 +234,10 @@ fn client_owned_sidebar_dividers_resize_live() {
         .map(|cell| cell.symbol.as_str())
         .collect();
     assert!(
-        waiting_text.contains(" spaces"),
+        waiting_text.contains(" SPACES"),
         "local sidebar must keep spaces while resizing: {waiting_text}"
     );
-    assert!(!waiting_text.contains(" machines"));
+    assert!(!waiting_text.contains(" MACHINES"));
     assert!(!waiting_text.contains("Select a connected machine"));
     assert!(!waiting_text.contains("LIVE"));
     assert!(waiting_frame.cursor.is_none());
@@ -273,7 +273,7 @@ fn client_owned_sidebar_dividers_resize_live() {
         .iter()
         .map(|cell| cell.symbol.as_str())
         .collect();
-    assert!(recovered_text.contains(" spaces"));
+    assert!(recovered_text.contains(" SPACES"));
     assert!(recovered_text.contains("LIVE"));
     assert!(!state.hits.panes.is_empty());
     let section_divider = state.hits.sidebar_section_divider;
@@ -561,23 +561,35 @@ fn sidebar_chrome_defaults_draw_header_bands_counts_chips_and_a_grip() {
     let width = state.hits.sidebar_divider.x;
     let palette = &state.config.palette;
 
-    let header = sidebar_row(&buffer, 0, width);
-    assert!(header.starts_with(" spaces 1"), "{header:?}");
-    assert_eq!(buffer[(width - 1, 0)].bg, palette.surface0);
-
-    let new = state.hits.new_workspace;
-    assert_eq!(sidebar_row(&buffer, new.y, new.right()).trim(), "+ new");
-    assert_eq!(buffer[(new.x, new.y)].bg, palette.surface0);
+    let title = sidebar_row(&buffer, 0, width);
+    assert!(title.starts_with("« flockr v"), "{title:?}");
+    assert_eq!(state.hits.sidebar_toggle, Rect::new(0, 0, 1, 1));
     let menu = state.hits.global_launcher;
-    assert_eq!(menu.right(), width);
+    assert_eq!((menu.y, menu.right()), (0, width));
     assert_eq!(buffer[(menu.x + 1, menu.y)].symbol(), "≡");
+
+    let header = sidebar_row(&buffer, 1, width);
+    assert!(header.starts_with(" SPACES 1"), "{header:?}");
+    assert_eq!(buffer[(width - 4, 1)].bg, palette.surface0);
+    let new = state.hits.new_workspace;
+    assert_eq!((new.y, new.right()), (1, width));
+    assert_eq!(
+        sidebar_row(&buffer, new.y, new.right())
+            .trim_end()
+            .chars()
+            .last(),
+        Some('+')
+    );
 
     let split = state.hits.sidebar_section_divider;
     assert!(sidebar_row(&buffer, split.y, width).contains("━━━"));
     let agents = sidebar_row(&buffer, split.y + 1, width);
-    assert!(agents.starts_with(" agents 0"), "{agents:?}");
-    assert!(agents.trim_end().ends_with("grouped ▾"), "{agents:?}");
-    assert_eq!(state.hits.agent_sort_toggle.right(), width);
+    assert!(agents.starts_with(" AGENTS 0"), "{agents:?}");
+    assert!(agents.trim_end().ends_with(" All  Active"), "{agents:?}");
+    let tabs = &state.hits.agent_filter_tabs;
+    assert_eq!(tabs.len(), 2);
+    assert_eq!(tabs[1].0.right(), width);
+    assert_eq!(buffer[(tabs[0].0.x, tabs[0].0.y)].bg, palette.accent);
 }
 
 #[test]
@@ -594,17 +606,19 @@ fn sidebar_chrome_text_styles_keep_the_plain_look() {
     let width = state.hits.sidebar_divider.x;
     let palette = &state.config.palette;
 
-    assert_eq!(sidebar_row(&buffer, 0, width).trim_end(), " spaces");
-    assert_ne!(buffer[(width - 1, 0)].bg, palette.surface0);
-    let footer = sidebar_row(&buffer, state.hits.new_workspace.y, width);
-    assert!(footer.starts_with(" new"), "{footer:?}");
-    assert!(footer.trim_end().ends_with(" menu"), "{footer:?}");
+    let title = sidebar_row(&buffer, 0, width);
+    assert!(title.trim_end().ends_with(" menu"), "{title:?}");
+    assert_eq!(
+        sidebar_row(&buffer, 1, width).trim_end(),
+        " SPACES                 +"
+    );
+    assert_ne!(buffer[(width - 4, 1)].bg, palette.surface0);
     let split = state.hits.sidebar_section_divider;
     assert!(!sidebar_row(&buffer, split.y, width).contains('━'));
     assert_eq!(buffer[(0, split.y)].fg, palette.surface_dim);
     let agents = sidebar_row(&buffer, split.y + 1, width);
-    assert!(agents.starts_with(" agents "), "{agents:?}");
-    assert!(agents.trim_end().ends_with(" grouped"), "{agents:?}");
+    assert!(agents.starts_with(" AGENTS "), "{agents:?}");
+    assert!(agents.trim_end().ends_with(" All Active"), "{agents:?}");
 }
 
 #[test]

@@ -155,6 +155,114 @@ pub(in crate::client::shell) fn sidebar_button_width(
     }
 }
 
+/// Draw the sidebar's title row: the collapse toggle, name, and version on
+/// the left, the menu button on the right. Returns the area below it.
+pub(in crate::client::shell) fn render_sidebar_title(
+    buffer: &mut Buffer,
+    area: Rect,
+    menu_attention: bool,
+    config: &ClientShellConfig,
+    hits: &mut ShellHitMap,
+) -> Rect {
+    let content = Rect::new(area.x, area.y, area.width.saturating_sub(1), area.height);
+    if content.is_empty() {
+        return area;
+    }
+    let palette = &config.palette;
+    let row = Rect::new(content.x, content.y, content.width, 1);
+    // The toggle keeps its cell even when the sidebar is too narrow for the rest.
+    hits.sidebar_toggle = Rect::new(row.x, row.y, 1, 1);
+    put_text(
+        buffer,
+        row.x,
+        row.y,
+        1,
+        "«",
+        Style::default().fg(palette.overlay0),
+    );
+    let left = row.x.saturating_add(2).min(row.right());
+    let mut right = row.right();
+    if config.mouse_capture && left < row.right() {
+        let label = SidebarButtonLabel {
+            chip: if menu_attention {
+                "● menu"
+            } else {
+                "≡ menu"
+            },
+            text: if menu_attention { "● menu" } else { "menu" },
+        };
+        hits.global_launcher = render_sidebar_button(
+            buffer,
+            row.right()
+                .saturating_sub(sidebar_button_width(label, config))
+                .max(left),
+            row.y,
+            row.right(),
+            label,
+            menu_attention,
+            false,
+            config,
+        );
+        right = hits.global_launcher.x.saturating_sub(1).max(left);
+    }
+    let x = put_segment(
+        buffer,
+        left,
+        row.y,
+        right,
+        "flockr",
+        Style::default()
+            .fg(palette.accent)
+            .add_modifier(Modifier::BOLD),
+    );
+    let version = concat!(" v", env!("CARGO_PKG_VERSION"));
+    if x.saturating_add(display_width(version)) <= right {
+        put_segment(
+            buffer,
+            x,
+            row.y,
+            right,
+            version,
+            Style::default().fg(palette.overlay0),
+        );
+    }
+    Rect::new(
+        area.x,
+        area.y.saturating_add(1),
+        area.width,
+        area.height.saturating_sub(1),
+    )
+}
+
+/// Draw the new-space button at the right of a section header row.
+pub(in crate::client::shell) fn render_new_workspace_button(
+    buffer: &mut Buffer,
+    header: Rect,
+    config: &ClientShellConfig,
+    hits: &mut ShellHitMap,
+) {
+    if !config.mouse_capture || header.is_empty() {
+        return;
+    }
+    let label = SidebarButtonLabel {
+        chip: "+",
+        text: "+",
+    };
+    hits.new_workspace = render_sidebar_button(
+        buffer,
+        header
+            .right()
+            .saturating_sub(sidebar_button_width(label, config))
+            .max(header.x),
+        header.y,
+        header.right(),
+        label,
+        false,
+        true,
+        config,
+    );
+}
+
 /// Draw the line between the sidebar's two sections.
 pub(in crate::client::shell) fn render_section_divider(
     buffer: &mut Buffer,
@@ -401,7 +509,7 @@ pub(crate) fn render_collapsed_sidebar(
         detail_area.width,
         detail_area.height.saturating_sub(1),
     );
-    for (index, pane_id) in super::ordered_agent_pane_ids(snapshot, config.agent_panel_sort)
+    for (index, pane_id) in super::ordered_agent_pane_ids(snapshot, config.agent_panel_filter)
         .into_iter()
         .take(detail_content.height as usize)
         .enumerate()
@@ -519,17 +627,21 @@ pub(crate) fn render_sidebar(
     } else {
         Rect::new(area.right().saturating_sub(1), area.y, 1, area.height)
     };
+    let attention = super::super::global_menu::global_menu_attention(snapshot);
+    let sections = render_sidebar_title(buffer, area, attention, config, hits);
+    hits.sidebar_sections = sections;
     let (workspace_area, detail_area) =
-        crate::ui::expanded_sidebar_sections(area, state.sidebar_section_split);
+        crate::ui::expanded_sidebar_sections(sections, state.sidebar_section_split);
     hits.sidebar_section_divider =
-        crate::ui::sidebar_section_divider_rect(area, state.sidebar_section_split);
+        crate::ui::sidebar_section_divider_rect(sections, state.sidebar_section_split);
     render_section_header(
         buffer,
         workspace_area,
-        "spaces",
+        "SPACES",
         Some(snapshot.workspaces.len()),
         config,
     );
+    render_new_workspace_button(buffer, workspace_area, config, hits);
 
     let entries = workspace_entries(snapshot, state.collapsed_groups);
     let switch_workspace = &config.keybinds.keybinds.switch_workspace;
@@ -537,9 +649,7 @@ pub(crate) fn render_sidebar(
         workspace_area.x,
         workspace_area.y.saturating_add(WORKSPACE_HEADER_ROWS),
         workspace_area.width,
-        workspace_area
-            .height
-            .saturating_sub(WORKSPACE_HEADER_ROWS + 1),
+        workspace_area.height.saturating_sub(WORKSPACE_HEADER_ROWS),
     );
     hits.workspace_body = body;
     let row_heights = entries
@@ -697,10 +807,10 @@ pub(crate) fn render_sidebar(
         super::scroll::render_list_scrollbar(buffer, track, metrics, palette);
     }
 
-    if let Some(row) = state.workspace_drop_indicator_row.filter(|row| {
-        *row >= workspace_area.y.saturating_add(1)
-            && *row < workspace_area.bottom().saturating_sub(1)
-    }) {
+    if let Some(row) = state
+        .workspace_drop_indicator_row
+        .filter(|row| *row >= workspace_area.y.saturating_add(1) && *row < workspace_area.bottom())
+    {
         put_text(
             buffer,
             body.x,
@@ -711,41 +821,6 @@ pub(crate) fn render_sidebar(
         );
     }
 
-    let footer_y = workspace_area.bottom().saturating_sub(1);
-    if config.mouse_capture && workspace_area.height > 0 {
-        hits.new_workspace = render_sidebar_button(
-            buffer,
-            workspace_area.x,
-            footer_y,
-            workspace_area.right(),
-            SidebarButtonLabel {
-                chip: "+ new",
-                text: " new",
-            },
-            false,
-            false,
-            config,
-        );
-        let attention = super::super::global_menu::global_menu_attention(snapshot);
-        let label = SidebarButtonLabel {
-            chip: if attention { "● menu" } else { "≡ menu" },
-            text: if attention { "● menu" } else { "menu" },
-        };
-        hits.global_launcher = render_sidebar_button(
-            buffer,
-            workspace_area
-                .right()
-                .saturating_sub(sidebar_button_width(label, config))
-                .max(workspace_area.x),
-            footer_y,
-            workspace_area.right(),
-            label,
-            attention,
-            false,
-            config,
-        );
-    }
-
     super::render_agent_panel(
         buffer,
         detail_area,
@@ -753,21 +828,6 @@ pub(crate) fn render_sidebar(
         config,
         state.agent_scroll,
         hits,
-    );
-
-    hits.sidebar_toggle = Rect::new(
-        area.right().saturating_sub(2),
-        area.bottom().saturating_sub(1),
-        u16::from(area.width > 1),
-        u16::from(area.height > 0),
-    );
-    put_text(
-        buffer,
-        hits.sidebar_toggle.x,
-        hits.sidebar_toggle.y,
-        hits.sidebar_toggle.width,
-        "«",
-        Style::default().fg(palette.overlay0),
     );
 }
 

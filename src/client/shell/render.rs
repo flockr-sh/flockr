@@ -340,7 +340,7 @@ pub(super) fn render_shell(
         hits.sidebar_section_divider = Rect::default();
         hits.workspace_scrollbar = Rect::default();
         hits.agent_scrollbar = Rect::default();
-        hits.agent_sort_toggle = Rect::default();
+        hits.agent_filter_tabs.clear();
         hits.new_workspace = Rect::default();
         hits.machines.clear();
         hits.workspaces.clear();

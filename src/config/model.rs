@@ -107,10 +107,9 @@ pub enum SeenScopeConfig {
     Tab,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum AgentPanelSortConfig {
-    #[default]
+enum LegacyAgentPanelSortConfig {
     #[serde(alias = "workspaces")]
     Spaces,
     Priority,
@@ -1212,8 +1211,9 @@ pub struct UiConfig {
     /// Format for the outer terminal window title. Empty leaves the title alone.
     /// Default: "{hostname}: {workspace}".
     pub window_title: String,
-    /// Agent sidebar ordering. Saved values are "spaces" or "priority". Default: "spaces".
-    pub agent_panel_sort: AgentPanelSortConfig,
+    /// Retired setting from when the agent panel had a priority sort.
+    #[serde(rename = "agent_panel_sort")]
+    _legacy_agent_panel_sort: Option<LegacyAgentPanelSortConfig>,
     /// Retired setting that Flockr wrote before the workspace filter was removed.
     #[serde(rename = "agent_panel_scope")]
     _legacy_agent_panel_scope: Option<LegacyAgentPanelScopeConfig>,
@@ -1478,7 +1478,7 @@ impl Default for UiConfig {
             tab_bar_right: Vec::new(),
             tab_bar_right_separator: " ".into(),
             window_title: super::window_title::default_window_title(),
-            agent_panel_sort: AgentPanelSortConfig::Spaces,
+            _legacy_agent_panel_sort: None,
             _legacy_agent_panel_scope: None,
             status_indicators: StatusIndicatorStyle::Dots,
             pulse_working: true,
@@ -1703,32 +1703,18 @@ startup_per_agent_delay_ms = 0
     }
 
     #[test]
-    fn agent_panel_sort_config_parses_alias_and_defaults() {
-        assert_eq!(
-            Config::default().ui.agent_panel_sort,
-            AgentPanelSortConfig::Spaces
-        );
-
+    fn retired_agent_panel_keys_still_parse() {
         let toml = r#"
 [ui]
 agent_panel_sort = "priority"
+agent_panel_scope = "current"
 "#;
-        let config: Config = toml::from_str(toml).unwrap();
-        assert_eq!(config.ui.agent_panel_sort, AgentPanelSortConfig::Priority);
-
+        assert!(toml::from_str::<Config>(toml).is_ok());
         let toml = r#"
 [ui]
 agent_panel_sort = "workspaces"
 "#;
-        let config: Config = toml::from_str(toml).unwrap();
-        assert_eq!(config.ui.agent_panel_sort, AgentPanelSortConfig::Spaces);
-
-        let toml = r#"
-[ui]
-agent_panel_scope = "current"
-"#;
-        let config: Config = toml::from_str(toml).unwrap();
-        assert_eq!(config.ui.agent_panel_sort, AgentPanelSortConfig::Spaces);
+        assert!(toml::from_str::<Config>(toml).is_ok());
     }
 
     #[test]
