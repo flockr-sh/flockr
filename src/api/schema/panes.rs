@@ -187,6 +187,38 @@ pub struct LayoutSetSplitRatioParams {
     pub ratio: f32,
 }
 
+/// Rearrange a tab's panes into a preset, after tmux's `select-layout`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct LayoutSelectParams {
+    /// Tab to rearrange. Defaults to the tab of `pane_id`, else the focused tab.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tab_id: Option<String>,
+    /// Main pane for the main_* presets. Defaults to the tab's focused pane.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pane_id: Option<String>,
+    pub layout: LayoutSelection,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum LayoutSelection {
+    EvenHorizontal,
+    EvenVertical,
+    MainHorizontal,
+    MainHorizontalMirrored,
+    MainVertical,
+    MainVerticalMirrored,
+    Tiled,
+    /// The other panes in a grid, the main pane across the bottom.
+    TiledMainBottom,
+    /// The preset after the last one applied to the tab.
+    Next,
+    /// The preset before the last one applied to the tab.
+    Previous,
+    /// Keep the tree's shape and give side-by-side panes equal space.
+    Spread,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct LayoutDescription {
     pub workspace_id: String,

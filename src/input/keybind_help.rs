@@ -205,6 +205,41 @@ pub(crate) fn keybind_help_groups(
                     binding_label(&keybinds.resize_pane_right),
                     "resize pane right",
                 ),
+                entry(
+                    binding_label(&keybinds.layout_even_horizontal),
+                    "layout: side by side",
+                ),
+                entry(
+                    binding_label(&keybinds.layout_even_vertical),
+                    "layout: stacked",
+                ),
+                entry(
+                    binding_label(&keybinds.layout_main_horizontal),
+                    "layout: main on top",
+                ),
+                entry(
+                    binding_label(&keybinds.layout_main_vertical),
+                    "layout: main on left",
+                ),
+                entry(binding_label(&keybinds.layout_tiled), "layout: grid"),
+                entry(
+                    binding_label(&keybinds.layout_main_horizontal_mirrored),
+                    "layout: main on bottom",
+                ),
+                entry(
+                    binding_label(&keybinds.layout_main_vertical_mirrored),
+                    "layout: main on right",
+                ),
+                entry(
+                    binding_label(&keybinds.layout_tiled_main_bottom),
+                    "layout: grid, main on bottom",
+                ),
+                entry(binding_label(&keybinds.next_layout), "next layout"),
+                entry(binding_label(&keybinds.previous_layout), "previous layout"),
+                entry(
+                    binding_label(&keybinds.spread_layout),
+                    "spread panes evenly",
+                ),
                 entry(binding_label(&keybinds.toggle_sidebar), "toggle sidebar"),
                 entry(binding_label(&keybinds.focus_pane_left), "focus pane left"),
                 entry(binding_label(&keybinds.focus_pane_down), "focus pane down"),

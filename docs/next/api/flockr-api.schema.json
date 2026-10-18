@@ -2323,6 +2323,68 @@
             }
           ]
         },
+        "LayoutSelectParams": {
+          "description": "Rearrange a tab's panes into a preset, after tmux's `select-layout`.",
+          "properties": {
+            "layout": {
+              "$ref": "#/schemas/request/$defs/LayoutSelection"
+            },
+            "pane_id": {
+              "description": "Main pane for the main_* presets. Defaults to the tab's focused pane.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "tab_id": {
+              "description": "Tab to rearrange. Defaults to the tab of `pane_id`, else the focused tab.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "layout"
+          ],
+          "type": "object"
+        },
+        "LayoutSelection": {
+          "oneOf": [
+            {
+              "enum": [
+                "even_horizontal",
+                "even_vertical",
+                "main_horizontal",
+                "main_horizontal_mirrored",
+                "main_vertical",
+                "main_vertical_mirrored",
+                "tiled"
+              ],
+              "type": "string"
+            },
+            {
+              "const": "tiled_main_bottom",
+              "description": "The other panes in a grid, the main pane across the bottom.",
+              "type": "string"
+            },
+            {
+              "const": "next",
+              "description": "The preset after the last one applied to the tab.",
+              "type": "string"
+            },
+            {
+              "const": "previous",
+              "description": "The preset before the last one applied to the tab.",
+              "type": "string"
+            },
+            {
+              "const": "spread",
+              "description": "Keep the tree's shape and give side-by-side panes equal space.",
+              "type": "string"
+            }
+          ]
+        },
         "LayoutSetSplitRatioParams": {
           "properties": {
             "pane_id": {
@@ -5569,6 +5631,22 @@
             },
             "params": {
               "$ref": "#/schemas/request/$defs/LayoutSetSplitRatioParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "layout.select",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/LayoutSelectParams"
             }
           },
           "required": [
@@ -9725,6 +9803,22 @@
                 },
                 "type": {
                   "const": "layout_split_ratio_set",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "layout"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "layout": {
+                  "$ref": "#/schemas/success_response/$defs/LayoutDescription"
+                },
+                "type": {
+                  "const": "layout_selected",
                   "type": "string"
                 }
               },

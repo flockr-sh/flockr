@@ -4,10 +4,11 @@ use ratatui::layout::Direction;
 
 use crate::api::schema::{
     EventData, EventEnvelope, EventKind, LayoutApplyParams, LayoutDescription, LayoutExportParams,
-    LayoutNode, LayoutPane, LayoutSetSplitRatioParams, ResponseResult, SplitDirection,
+    LayoutNode, LayoutPane, LayoutSelectParams, LayoutSelection, LayoutSetSplitRatioParams,
+    ResponseResult, SplitDirection,
 };
 use crate::app::{App, Mode};
-use crate::layout::{Node, PaneId};
+use crate::layout::{LayoutPreset, Node, PaneId};
 use crate::workspace::NewPane;
 
 use super::responses::{encode_error, encode_success};
@@ -257,6 +258,76 @@ impl App {
         };
         self.emit_layout_updated_event(ws_idx, tab_idx);
         encode_success(id, ResponseResult::LayoutSplitRatioSet { layout })
+    }
+
+    pub(super) fn handle_layout_select(
+        &mut self,
+        id: String,
+        params: LayoutSelectParams,
+    ) -> String {
+        let (ws_idx, tab_idx, main) = if let Some(pane_id) = params.pane_id.as_deref() {
+            let Some((ws_idx, main)) = self.parse_pane_id(pane_id) else {
+                return encode_error(id, "pane_not_found", format!("pane {pane_id} not found"));
+            };
+            let Some(tab_idx) = self.state.workspaces[ws_idx].find_tab_index_for_pane(main) else {
+                return encode_error(id, "pane_not_found", format!("pane {pane_id} not found"));
+            };
+            if let Some(tab_id) = params.tab_id.as_deref() {
+                if self.parse_tab_id(tab_id) != Some((ws_idx, tab_idx)) {
+                    return encode_error(id, "invalid_target", "pane_id is not in tab_id");
+                }
+            }
+            (ws_idx, tab_idx, main)
+        } else {
+            let Some((ws_idx, tab_idx)) = self.resolve_layout_export_target(&LayoutExportParams {
+                tab_id: params.tab_id,
+                pane_id: None,
+            }) else {
+                return encode_error(id, "layout_not_found", "layout target not found");
+            };
+            let main = self.state.workspaces[ws_idx].tabs[tab_idx].layout.focused();
+            (ws_idx, tab_idx, main)
+        };
+
+        let area = self.state.view.terminal_area;
+        let (main_width, main_height) = (self.state.main_pane_width, self.state.main_pane_height);
+        let Some(tab) = self
+            .state
+            .workspaces
+            .get_mut(ws_idx)
+            .and_then(|ws| ws.tabs.get_mut(tab_idx))
+        else {
+            return encode_error(id, "layout_not_found", "layout target not found");
+        };
+        let preset = match params.layout {
+            LayoutSelection::EvenHorizontal => Some(LayoutPreset::EvenHorizontal),
+            LayoutSelection::EvenVertical => Some(LayoutPreset::EvenVertical),
+            LayoutSelection::MainHorizontal => Some(LayoutPreset::MainHorizontal),
+            LayoutSelection::MainHorizontalMirrored => Some(LayoutPreset::MainHorizontalMirrored),
+            LayoutSelection::MainVertical => Some(LayoutPreset::MainVertical),
+            LayoutSelection::MainVerticalMirrored => Some(LayoutPreset::MainVerticalMirrored),
+            LayoutSelection::Tiled => Some(LayoutPreset::Tiled),
+            LayoutSelection::TiledMainBottom => Some(LayoutPreset::TiledMainBottom),
+            LayoutSelection::Next => Some(tab.layout.cycle_preset(false)),
+            LayoutSelection::Previous => Some(tab.layout.cycle_preset(true)),
+            LayoutSelection::Spread => None,
+        };
+        let changed = match preset {
+            Some(preset) => tab
+                .layout
+                .apply_preset(preset, main, main_width, main_height, area),
+            None => tab.layout.spread_evenly(),
+        };
+        if changed {
+            // Like tmux, a new layout is shown rather than applied behind a zoom.
+            tab.zoomed = false;
+            self.schedule_session_save();
+            self.emit_layout_updated_event(ws_idx, tab_idx);
+        }
+        let Some(layout) = self.layout_description(ws_idx, tab_idx) else {
+            return encode_error(id, "layout_not_found", "layout unavailable");
+        };
+        encode_success(id, ResponseResult::LayoutSelected { layout })
     }
 
     fn resolve_layout_export_target(&self, params: &LayoutExportParams) -> Option<(usize, usize)> {
@@ -672,6 +743,96 @@ mod tests {
         app.state.selected = 0;
         app.state.ensure_test_terminals();
         app
+    }
+
+    #[test]
+    fn layout_select_rearranges_tab_around_main_pane_and_unzooms() {
+        let mut app = app_with_workspace();
+        let root = app.state.workspaces[0].tabs[0].root_pane;
+        let right = app.state.workspaces[0].test_split(Direction::Horizontal);
+        let bottom = app.state.workspaces[0].test_split(Direction::Vertical);
+        app.state.ensure_test_terminals();
+        app.state.workspaces[0].tabs[0].layout.focus_pane(root);
+        app.state.workspaces[0].tabs[0].zoomed = true;
+        let area = ratatui::layout::Rect::new(0, 0, 120, 60);
+        app.state.view.terminal_area = area;
+        app.state.main_pane_height = crate::layout::MainPaneSize::Cells(15);
+
+        let response = app.handle_layout_select(
+            "req".into(),
+            LayoutSelectParams {
+                tab_id: None,
+                pane_id: app.public_pane_id(0, bottom),
+                layout: LayoutSelection::MainHorizontalMirrored,
+            },
+        );
+
+        let success: SuccessResponse = serde_json::from_str(&response).unwrap();
+        let ResponseResult::LayoutSelected { layout } = success.result else {
+            panic!("expected layout selected response");
+        };
+        assert!(!layout.zoomed);
+        assert_eq!(layout.focused_pane_id, app.public_pane_id(0, root).unwrap());
+        let rects: Vec<_> = app.state.workspaces[0].tabs[0]
+            .layout
+            .panes(area)
+            .into_iter()
+            .map(|info| (info.id, info.rect))
+            .collect();
+        assert_eq!(
+            rects,
+            vec![
+                (root, ratatui::layout::Rect::new(0, 0, 60, 45)),
+                (right, ratatui::layout::Rect::new(60, 0, 60, 45)),
+                (bottom, ratatui::layout::Rect::new(0, 45, 120, 15)),
+            ]
+        );
+        shutdown_test_runtimes(&mut app);
+    }
+
+    #[test]
+    fn layout_select_next_cycles_presets_on_the_focused_tab() {
+        let mut app = app_with_workspace();
+        app.state.workspaces[0].test_split(Direction::Vertical);
+        app.state.ensure_test_terminals();
+        let area = ratatui::layout::Rect::new(0, 0, 100, 40);
+        app.state.view.terminal_area = area;
+
+        for expected_width in [50, 100] {
+            let response = app.handle_layout_select(
+                "req".into(),
+                LayoutSelectParams {
+                    tab_id: None,
+                    pane_id: None,
+                    layout: LayoutSelection::Next,
+                },
+            );
+            let success: SuccessResponse = serde_json::from_str(&response).unwrap();
+            assert!(matches!(
+                success.result,
+                ResponseResult::LayoutSelected { .. }
+            ));
+            let panes = app.state.workspaces[0].tabs[0].layout.panes(area);
+            assert_eq!(panes[0].rect.width, expected_width);
+        }
+        shutdown_test_runtimes(&mut app);
+    }
+
+    #[test]
+    fn layout_select_rejects_pane_outside_tab() {
+        let mut app = app_with_workspace();
+        let root = app.state.workspaces[0].tabs[0].root_pane;
+        let response = app.handle_layout_select(
+            "req".into(),
+            LayoutSelectParams {
+                tab_id: Some("w9:t9".into()),
+                pane_id: app.public_pane_id(0, root),
+                layout: LayoutSelection::Tiled,
+            },
+        );
+        let error: ErrorResponse = serde_json::from_str(&response).unwrap();
+        assert_eq!(error.error.code, "invalid_target");
+        shutdown_test_runtimes(&mut app);
     }
 
     #[test]

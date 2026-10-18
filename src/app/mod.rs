@@ -557,6 +557,8 @@ impl App {
             seen_delay: Duration::from_millis(config.ui.seen_delay_ms),
             seen_scope: config.ui.seen_scope,
             seen_view: None,
+            main_pane_width: config.ui.main_pane_width,
+            main_pane_height: config.ui.main_pane_height,
             keybinds: config.keybinds(),
             palette: theme_palette,
             theme_name,
@@ -923,6 +925,8 @@ impl App {
                 self.state.toast_config = config.ui.toast.clone();
                 self.state.seen_delay = Duration::from_millis(config.ui.seen_delay_ms);
                 self.state.seen_scope = config.ui.seen_scope;
+                self.state.main_pane_width = config.ui.main_pane_width;
+                self.state.main_pane_height = config.ui.main_pane_height;
             }
         }
 

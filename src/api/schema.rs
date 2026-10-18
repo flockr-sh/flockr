@@ -99,6 +99,7 @@ operations::define_operations! {
     LayoutExport(LayoutExportParams) => "layout.export", false, false;
     LayoutApply(LayoutApplyParams) => "layout.apply", true, false;
     LayoutSetSplitRatio(LayoutSetSplitRatioParams) => "layout.set_split_ratio", true, true;
+    LayoutSelect(LayoutSelectParams) => "layout.select", true, true;
     PaneNeighbor(PaneNeighborParams) => "pane.neighbor", false, false;
     PaneEdges(PaneEdgesParams) => "pane.edges", false, false;
     PaneFocusDirection(PaneFocusDirectionParams) => "pane.focus_direction", true, true;

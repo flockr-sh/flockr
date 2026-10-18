@@ -872,6 +872,9 @@ pub struct AppState {
     pub seen_delay: std::time::Duration,
     pub seen_scope: crate::config::SeenScopeConfig,
     pub seen_view: Option<SeenView>,
+    /// `ui.main_pane_width` and `ui.main_pane_height` for the main-* layouts.
+    pub main_pane_width: crate::layout::MainPaneSize,
+    pub main_pane_height: crate::layout::MainPaneSize,
     pub keybinds: Keybinds,
     /// UI color palette — all sidebar/UI colors centralized for theming.
     pub palette: Palette,
@@ -1115,6 +1118,8 @@ impl AppState {
             seen_delay: std::time::Duration::ZERO,
             seen_scope: crate::config::SeenScopeConfig::Pane,
             seen_view: None,
+            main_pane_width: crate::layout::MainPaneSize::Cells(80),
+            main_pane_height: crate::layout::MainPaneSize::Cells(24),
             keybinds: Keybinds::default(),
             palette: Palette::catppuccin(),
             theme_name: "catppuccin".to_string(),

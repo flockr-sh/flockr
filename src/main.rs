@@ -193,6 +193,18 @@ const DEFAULT_CONFIG: &str = r##"# flockr configuration
 # resize_pane_down = "prefix+ctrl+j"
 # resize_pane_up = "prefix+ctrl+k"
 # resize_pane_right = "prefix+ctrl+l"
+# Layout presets, as in tmux. main_* layouts lead with the focused pane.
+# layout_even_horizontal = "prefix+alt+1"
+# layout_even_vertical = "prefix+alt+2"
+# layout_main_horizontal = "prefix+alt+3"
+# layout_main_vertical = "prefix+alt+4"
+# layout_tiled = "prefix+alt+5"
+# layout_main_horizontal_mirrored = "prefix+alt+6"   # others on top, focused pane across the bottom
+# layout_main_vertical_mirrored = "prefix+alt+7"
+# layout_tiled_main_bottom = "prefix+alt+8"   # others in a grid, focused pane across the bottom
+# next_layout = "prefix+space"
+# previous_layout = ""    # unset by default
+# spread_layout = "prefix+shift+e"   # keep the shape, give panes equal space
 # toggle_sidebar = "prefix+b"
 
 # Navigate-mode movement. These local shortcuts win while navigate mode is open.

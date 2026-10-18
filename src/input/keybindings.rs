@@ -60,6 +60,7 @@ pub(crate) enum KeybindAction {
     ResizePaneDown,
     ResizePaneUp,
     ResizePaneRight,
+    SelectLayout(crate::api::schema::LayoutSelection),
     ToggleSidebar,
     CyclePaneNext,
     CyclePanePrevious,
@@ -97,6 +98,8 @@ pub(crate) fn resolve_non_indexed_action(
     key: &TerminalKey,
     dispatch: KeybindDispatch,
 ) -> Option<KeybindAction> {
+    use crate::api::schema::LayoutSelection;
+
     for (bindings, action) in [
         (&keybinds.help, KeybindAction::Help),
         (&keybinds.settings, KeybindAction::Settings),
@@ -148,6 +151,50 @@ pub(crate) fn resolve_non_indexed_action(
         (&keybinds.resize_pane_down, KeybindAction::ResizePaneDown),
         (&keybinds.resize_pane_up, KeybindAction::ResizePaneUp),
         (&keybinds.resize_pane_right, KeybindAction::ResizePaneRight),
+        (
+            &keybinds.layout_even_horizontal,
+            KeybindAction::SelectLayout(LayoutSelection::EvenHorizontal),
+        ),
+        (
+            &keybinds.layout_even_vertical,
+            KeybindAction::SelectLayout(LayoutSelection::EvenVertical),
+        ),
+        (
+            &keybinds.layout_main_horizontal,
+            KeybindAction::SelectLayout(LayoutSelection::MainHorizontal),
+        ),
+        (
+            &keybinds.layout_main_vertical,
+            KeybindAction::SelectLayout(LayoutSelection::MainVertical),
+        ),
+        (
+            &keybinds.layout_tiled,
+            KeybindAction::SelectLayout(LayoutSelection::Tiled),
+        ),
+        (
+            &keybinds.layout_main_horizontal_mirrored,
+            KeybindAction::SelectLayout(LayoutSelection::MainHorizontalMirrored),
+        ),
+        (
+            &keybinds.layout_main_vertical_mirrored,
+            KeybindAction::SelectLayout(LayoutSelection::MainVerticalMirrored),
+        ),
+        (
+            &keybinds.layout_tiled_main_bottom,
+            KeybindAction::SelectLayout(LayoutSelection::TiledMainBottom),
+        ),
+        (
+            &keybinds.next_layout,
+            KeybindAction::SelectLayout(LayoutSelection::Next),
+        ),
+        (
+            &keybinds.previous_layout,
+            KeybindAction::SelectLayout(LayoutSelection::Previous),
+        ),
+        (
+            &keybinds.spread_layout,
+            KeybindAction::SelectLayout(LayoutSelection::Spread),
+        ),
         (&keybinds.toggle_sidebar, KeybindAction::ToggleSidebar),
         (&keybinds.reload_config, KeybindAction::ReloadConfig),
         (

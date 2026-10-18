@@ -418,6 +418,17 @@ pub struct Keybinds {
     pub resize_pane_down: ActionKeybinds,
     pub resize_pane_up: ActionKeybinds,
     pub resize_pane_right: ActionKeybinds,
+    pub layout_even_horizontal: ActionKeybinds,
+    pub layout_even_vertical: ActionKeybinds,
+    pub layout_main_horizontal: ActionKeybinds,
+    pub layout_main_vertical: ActionKeybinds,
+    pub layout_tiled: ActionKeybinds,
+    pub layout_main_horizontal_mirrored: ActionKeybinds,
+    pub layout_main_vertical_mirrored: ActionKeybinds,
+    pub layout_tiled_main_bottom: ActionKeybinds,
+    pub next_layout: ActionKeybinds,
+    pub previous_layout: ActionKeybinds,
+    pub spread_layout: ActionKeybinds,
     pub toggle_sidebar: ActionKeybinds,
     pub custom_commands: Vec<CustomCommandKeybind>,
 }
@@ -608,6 +619,17 @@ impl Config {
             resize_pane_down: empty_action!(),
             resize_pane_up: empty_action!(),
             resize_pane_right: empty_action!(),
+            layout_even_horizontal: empty_action!(),
+            layout_even_vertical: empty_action!(),
+            layout_main_horizontal: empty_action!(),
+            layout_main_vertical: empty_action!(),
+            layout_tiled: empty_action!(),
+            layout_main_horizontal_mirrored: empty_action!(),
+            layout_main_vertical_mirrored: empty_action!(),
+            layout_tiled_main_bottom: empty_action!(),
+            next_layout: empty_action!(),
+            previous_layout: empty_action!(),
+            spread_layout: empty_action!(),
             toggle_sidebar: empty_action!(),
             custom_commands: Vec::new(),
         };
@@ -786,6 +808,37 @@ impl Config {
             apply_action!(keybinds.resize_pane_down, resize_pane_down, source);
             apply_action!(keybinds.resize_pane_up, resize_pane_up, source);
             apply_action!(keybinds.resize_pane_right, resize_pane_right, source);
+            apply_action!(
+                keybinds.layout_even_horizontal,
+                layout_even_horizontal,
+                source
+            );
+            apply_action!(keybinds.layout_even_vertical, layout_even_vertical, source);
+            apply_action!(
+                keybinds.layout_main_horizontal,
+                layout_main_horizontal,
+                source
+            );
+            apply_action!(keybinds.layout_main_vertical, layout_main_vertical, source);
+            apply_action!(keybinds.layout_tiled, layout_tiled, source);
+            apply_action!(
+                keybinds.layout_main_horizontal_mirrored,
+                layout_main_horizontal_mirrored,
+                source
+            );
+            apply_action!(
+                keybinds.layout_main_vertical_mirrored,
+                layout_main_vertical_mirrored,
+                source
+            );
+            apply_action!(
+                keybinds.layout_tiled_main_bottom,
+                layout_tiled_main_bottom,
+                source
+            );
+            apply_action!(keybinds.next_layout, next_layout, source);
+            apply_action!(keybinds.previous_layout, previous_layout, source);
+            apply_action!(keybinds.spread_layout, spread_layout, source);
             apply_action!(keybinds.toggle_sidebar, toggle_sidebar, source);
 
             if source == field_source!(indexed) {
@@ -1779,6 +1832,55 @@ next_tab = "prefix+n"
             binding_triggers(&kb.new_worktree),
             vec![BindingTrigger::Prefix((
                 KeyCode::Char('g'),
+                KeyModifiers::SHIFT
+            ))]
+        );
+    }
+
+    #[test]
+    fn layout_keys_default_to_tmux_bindings() {
+        let kb = Config::default().keybinds();
+        let prefix_alt = |c| {
+            vec![BindingTrigger::Prefix((
+                KeyCode::Char(c),
+                KeyModifiers::ALT,
+            ))]
+        };
+        assert_eq!(
+            binding_triggers(&kb.layout_even_horizontal),
+            prefix_alt('1')
+        );
+        assert_eq!(binding_triggers(&kb.layout_even_vertical), prefix_alt('2'));
+        assert_eq!(
+            binding_triggers(&kb.layout_main_horizontal),
+            prefix_alt('3')
+        );
+        assert_eq!(binding_triggers(&kb.layout_main_vertical), prefix_alt('4'));
+        assert_eq!(binding_triggers(&kb.layout_tiled), prefix_alt('5'));
+        assert_eq!(
+            binding_triggers(&kb.layout_main_horizontal_mirrored),
+            prefix_alt('6')
+        );
+        assert_eq!(
+            binding_triggers(&kb.layout_main_vertical_mirrored),
+            prefix_alt('7')
+        );
+        assert_eq!(
+            binding_triggers(&kb.layout_tiled_main_bottom),
+            prefix_alt('8')
+        );
+        assert_eq!(
+            binding_triggers(&kb.next_layout),
+            vec![BindingTrigger::Prefix((
+                KeyCode::Char(' '),
+                KeyModifiers::empty()
+            ))]
+        );
+        assert!(binding_triggers(&kb.previous_layout).is_empty());
+        assert_eq!(
+            binding_triggers(&kb.spread_layout),
+            vec![BindingTrigger::Prefix((
+                KeyCode::Char('e'),
                 KeyModifiers::SHIFT
             ))]
         );

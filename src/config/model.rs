@@ -3,6 +3,8 @@ use std::{collections::BTreeSet, num::NonZeroUsize};
 use crossterm::event::KeyModifiers;
 use serde::{de, Deserialize, Deserializer, Serialize};
 
+use crate::layout::MainPaneSize;
+
 use super::{
     ActionKeybinds, BindingConfig, CommandKeybindConfig, IndexedKeybind, Keybinds, SidebarConfig,
     SoundConfig, TabBarRightEntryConfig, ThemeConfig, DEFAULT_MOBILE_WIDTH_THRESHOLD,
@@ -482,6 +484,28 @@ pub struct KeysConfig {
     pub resize_pane_up: BindingConfig,
     /// Resize the focused pane toward the right. Unset by default.
     pub resize_pane_right: BindingConfig,
+    /// Arrange all panes side by side with equal widths. Default: "prefix+alt+1".
+    pub layout_even_horizontal: BindingConfig,
+    /// Stack all panes with equal heights. Default: "prefix+alt+2".
+    pub layout_even_vertical: BindingConfig,
+    /// Put the focused pane across the top and the rest side by side below it. Default: "prefix+alt+3".
+    pub layout_main_horizontal: BindingConfig,
+    /// Put the focused pane on the left and stack the rest on the right. Default: "prefix+alt+4".
+    pub layout_main_vertical: BindingConfig,
+    /// Arrange all panes in a grid. Default: "prefix+alt+5".
+    pub layout_tiled: BindingConfig,
+    /// Put the rest side by side and the focused pane across the bottom. Default: "prefix+alt+6".
+    pub layout_main_horizontal_mirrored: BindingConfig,
+    /// Stack the rest on the left and put the focused pane on the right. Default: "prefix+alt+7".
+    pub layout_main_vertical_mirrored: BindingConfig,
+    /// Put the rest in a grid and the focused pane across the bottom. Default: "prefix+alt+8".
+    pub layout_tiled_main_bottom: BindingConfig,
+    /// Switch to the next layout preset. Default: "prefix+space".
+    pub next_layout: BindingConfig,
+    /// Switch to the previous layout preset. Unset by default.
+    pub previous_layout: BindingConfig,
+    /// Keep the layout's shape and give side-by-side panes equal space. Default: "prefix+shift+e".
+    pub spread_layout: BindingConfig,
     /// Toggle sidebar collapse. Default: "prefix+b"
     pub toggle_sidebar: BindingConfig,
     /// Optional indexed shortcuts expanded over number keys 1-9.
@@ -633,6 +657,28 @@ pub(crate) struct KeysConfigOverlay {
     #[serde(skip_serializing_if = "Option::is_none")]
     resize_pane_right: Option<BindingConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    layout_even_horizontal: Option<BindingConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    layout_even_vertical: Option<BindingConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    layout_main_horizontal: Option<BindingConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    layout_main_vertical: Option<BindingConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    layout_tiled: Option<BindingConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    layout_main_horizontal_mirrored: Option<BindingConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    layout_main_vertical_mirrored: Option<BindingConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    layout_tiled_main_bottom: Option<BindingConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    next_layout: Option<BindingConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    previous_layout: Option<BindingConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    spread_layout: Option<BindingConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     toggle_sidebar: Option<BindingConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     indexed: Option<IndexedKeysConfig>,
@@ -752,6 +798,17 @@ impl<'de> Deserialize<'de> for KeysConfig {
         apply_field!(resize_pane_down);
         apply_field!(resize_pane_up);
         apply_field!(resize_pane_right);
+        apply_field!(layout_even_horizontal);
+        apply_field!(layout_even_vertical);
+        apply_field!(layout_main_horizontal);
+        apply_field!(layout_main_vertical);
+        apply_field!(layout_tiled);
+        apply_field!(layout_main_horizontal_mirrored);
+        apply_field!(layout_main_vertical_mirrored);
+        apply_field!(layout_tiled_main_bottom);
+        apply_field!(next_layout);
+        apply_field!(previous_layout);
+        apply_field!(spread_layout);
         apply_field!(toggle_sidebar);
         apply_field!(indexed);
         apply_field!(command);
@@ -867,6 +924,23 @@ impl KeysConfig {
         copy_effective_action_field!(resize_pane_down, keybinds.resize_pane_down);
         copy_effective_action_field!(resize_pane_up, keybinds.resize_pane_up);
         copy_effective_action_field!(resize_pane_right, keybinds.resize_pane_right);
+        copy_effective_action_field!(layout_even_horizontal, keybinds.layout_even_horizontal);
+        copy_effective_action_field!(layout_even_vertical, keybinds.layout_even_vertical);
+        copy_effective_action_field!(layout_main_horizontal, keybinds.layout_main_horizontal);
+        copy_effective_action_field!(layout_main_vertical, keybinds.layout_main_vertical);
+        copy_effective_action_field!(layout_tiled, keybinds.layout_tiled);
+        copy_effective_action_field!(
+            layout_main_horizontal_mirrored,
+            keybinds.layout_main_horizontal_mirrored
+        );
+        copy_effective_action_field!(
+            layout_main_vertical_mirrored,
+            keybinds.layout_main_vertical_mirrored
+        );
+        copy_effective_action_field!(layout_tiled_main_bottom, keybinds.layout_tiled_main_bottom);
+        copy_effective_action_field!(next_layout, keybinds.next_layout);
+        copy_effective_action_field!(previous_layout, keybinds.previous_layout);
+        copy_effective_action_field!(spread_layout, keybinds.spread_layout);
         copy_effective_action_field!(toggle_sidebar, keybinds.toggle_sidebar);
         copy_user_field!(indexed);
 
@@ -994,6 +1068,54 @@ impl<'de> Deserialize<'de> for PaneBordersConfig {
     }
 }
 
+impl<'de> Deserialize<'de> for MainPaneSize {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct MainPaneSizeVisitor;
+
+        impl<'de> de::Visitor<'de> for MainPaneSizeVisitor {
+            type Value = MainPaneSize;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a cell count such as 24, or a percentage such as \"30%\"")
+            }
+
+            fn visit_u64<E: de::Error>(self, value: u64) -> Result<Self::Value, E> {
+                match u16::try_from(value) {
+                    Ok(cells) if cells > 0 => Ok(MainPaneSize::Cells(cells)),
+                    _ => Err(E::invalid_value(de::Unexpected::Unsigned(value), &self)),
+                }
+            }
+
+            fn visit_i64<E: de::Error>(self, value: i64) -> Result<Self::Value, E> {
+                match u64::try_from(value) {
+                    Ok(value) => self.visit_u64(value),
+                    Err(_) => Err(E::invalid_value(de::Unexpected::Signed(value), &self)),
+                }
+            }
+
+            fn visit_str<E: de::Error>(self, value: &str) -> Result<Self::Value, E> {
+                let invalid = || E::invalid_value(de::Unexpected::Str(value), &self);
+                match value.trim().strip_suffix('%') {
+                    Some(percent) => match percent.trim().parse::<u8>() {
+                        Ok(percent @ 1..=99) => Ok(MainPaneSize::Percent(percent)),
+                        _ => Err(invalid()),
+                    },
+                    None => value
+                        .trim()
+                        .parse::<u64>()
+                        .map_err(|_| invalid())
+                        .and_then(|cells| MainPaneSizeVisitor.visit_u64(cells)),
+                }
+            }
+        }
+
+        deserializer.deserialize_any(MainPaneSizeVisitor)
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(default)]
 pub struct UiConfig {
@@ -1044,6 +1166,12 @@ pub struct UiConfig {
     pub pane_scrollbars: bool,
     /// Keep split panes visually separated instead of sharing divider borders. Default: true.
     pub pane_gaps: bool,
+    /// Width of the main pane in the main_vertical layouts: a cell count or
+    /// a percentage such as "60%". Default: 80.
+    pub main_pane_width: MainPaneSize,
+    /// Height of the main pane in the main_horizontal layouts: a cell count
+    /// or a percentage such as "25%". Default: 24.
+    pub main_pane_height: MainPaneSize,
     /// Show agent labels in split pane borders when no manual pane label is set. Default: false.
     pub show_agent_labels_on_pane_borders: bool,
     /// Hide the tab row when the workspace has one tab. Default: false.
@@ -1257,6 +1385,17 @@ impl Default for KeysConfig {
             resize_pane_down: BindingConfig::one("prefix+ctrl+j"),
             resize_pane_up: BindingConfig::one("prefix+ctrl+k"),
             resize_pane_right: BindingConfig::one("prefix+ctrl+l"),
+            layout_even_horizontal: BindingConfig::one("prefix+alt+1"),
+            layout_even_vertical: BindingConfig::one("prefix+alt+2"),
+            layout_main_horizontal: BindingConfig::one("prefix+alt+3"),
+            layout_main_vertical: BindingConfig::one("prefix+alt+4"),
+            layout_tiled: BindingConfig::one("prefix+alt+5"),
+            layout_main_horizontal_mirrored: BindingConfig::one("prefix+alt+6"),
+            layout_main_vertical_mirrored: BindingConfig::one("prefix+alt+7"),
+            layout_tiled_main_bottom: BindingConfig::one("prefix+alt+8"),
+            next_layout: BindingConfig::one("prefix+space"),
+            previous_layout: BindingConfig::empty(),
+            spread_layout: BindingConfig::one("prefix+shift+e"),
             toggle_sidebar: BindingConfig::one("prefix+b"),
             indexed: IndexedKeysConfig::default(),
             command: Vec::new(),
@@ -1297,6 +1436,8 @@ impl Default for UiConfig {
             pane_outer_borders: true,
             pane_scrollbars: true,
             pane_gaps: true,
+            main_pane_width: MainPaneSize::Cells(80),
+            main_pane_height: MainPaneSize::Cells(24),
             show_agent_labels_on_pane_borders: false,
             hide_tab_bar_when_single_tab: false,
             tab_bar_position: TabBarPositionConfig::Top,
@@ -1962,6 +2103,32 @@ seen_scope = "tab"
 "#;
         let config: Config = toml::from_str(toml).unwrap();
         assert_eq!(config.ui.seen_scope, SeenScopeConfig::Tab);
+    }
+
+    #[test]
+    fn main_pane_sizes_default_to_tmux_and_parse_cells_or_percent() {
+        let default_config = Config::default();
+        assert_eq!(default_config.ui.main_pane_width, MainPaneSize::Cells(80));
+        assert_eq!(default_config.ui.main_pane_height, MainPaneSize::Cells(24));
+
+        let config: Config = toml::from_str(
+            r#"
+[ui]
+main_pane_width = "60%"
+main_pane_height = 12
+"#,
+        )
+        .unwrap();
+        assert_eq!(config.ui.main_pane_width, MainPaneSize::Percent(60));
+        assert_eq!(config.ui.main_pane_height, MainPaneSize::Cells(12));
+
+        for invalid in ["0", "\"0%\"", "\"100%\"", "\"tall\"", "-3"] {
+            let toml = format!("[ui]\nmain_pane_height = {invalid}\n");
+            assert!(
+                toml::from_str::<Config>(&toml).is_err(),
+                "{invalid} should fail"
+            );
+        }
     }
 
     #[test]

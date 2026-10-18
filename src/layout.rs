@@ -70,6 +70,7 @@ pub enum NavDirection {
 }
 
 /// A node in the BSP tree. Public for serialization.
+#[derive(PartialEq)]
 pub enum Node {
     Pane(PaneId),
     Split {
@@ -89,6 +90,62 @@ pub struct TileLayout {
     /// (`split_pane`, `close_pane`, unfocused `insert_pane_near`) so internal
     /// focus excursions never corrupt it.
     prev_focus: Option<PaneId>,
+    /// Last preset applied, so cycling continues from it.
+    preset: Option<LayoutPreset>,
+}
+
+/// A preset pane arrangement, after tmux's `select-layout`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LayoutPreset {
+    /// All panes side by side, equal widths.
+    EvenHorizontal,
+    /// All panes stacked, equal heights.
+    EvenVertical,
+    /// The main pane across the top, the rest side by side below it.
+    MainHorizontal,
+    /// The rest side by side, the main pane across the bottom.
+    MainHorizontalMirrored,
+    /// The main pane on the left, the rest stacked on the right.
+    MainVertical,
+    /// The rest stacked on the left, the main pane on the right.
+    MainVerticalMirrored,
+    /// A grid of rows and columns.
+    Tiled,
+    /// The rest in a grid, the main pane across the bottom.
+    TiledMainBottom,
+}
+
+impl LayoutPreset {
+    /// Order the cycle steps through: tmux's `next-layout`, then flockr's own.
+    pub const CYCLE: [LayoutPreset; 8] = [
+        LayoutPreset::EvenHorizontal,
+        LayoutPreset::EvenVertical,
+        LayoutPreset::MainHorizontal,
+        LayoutPreset::MainHorizontalMirrored,
+        LayoutPreset::MainVertical,
+        LayoutPreset::MainVerticalMirrored,
+        LayoutPreset::Tiled,
+        LayoutPreset::TiledMainBottom,
+    ];
+}
+
+/// Size of the main pane in the main-* presets: cells along the split, or a
+/// percentage of the tab.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MainPaneSize {
+    Cells(u16),
+    Percent(u8),
+}
+
+impl MainPaneSize {
+    fn ratio(self, length: u16) -> f32 {
+        let ratio = match self {
+            MainPaneSize::Cells(_) if length == 0 => 0.5,
+            MainPaneSize::Cells(cells) => f32::from(cells) / f32::from(length),
+            MainPaneSize::Percent(percent) => f32::from(percent) / 100.0,
+        };
+        valid_split_ratio(ratio)
+    }
 }
 
 impl TileLayout {
@@ -101,6 +158,7 @@ impl TileLayout {
                 root: Node::Pane(root_id),
                 focus: root_id,
                 prev_focus: None,
+                preset: None,
             },
             root_id,
         )
@@ -359,8 +417,181 @@ impl TileLayout {
             root,
             focus,
             prev_focus: None,
+            preset: None,
         }
     }
+
+    /// The preset after (or before, when `back`) the last one applied.
+    pub fn cycle_preset(&self, back: bool) -> LayoutPreset {
+        let cycle = LayoutPreset::CYCLE;
+        let current = self
+            .preset
+            .and_then(|preset| cycle.iter().position(|p| *p == preset));
+        let next = match (current, back) {
+            (None, false) => 0,
+            (None, true) => cycle.len() - 1,
+            (Some(index), false) => (index + 1) % cycle.len(),
+            (Some(index), true) => (index + cycle.len() - 1) % cycle.len(),
+        };
+        cycle[next]
+    }
+
+    /// Rebuild the tree into `preset`. `main` leads the main-* presets; the
+    /// other panes keep their order. Focus is unchanged. Returns true when
+    /// the tree changed.
+    pub fn apply_preset(
+        &mut self,
+        preset: LayoutPreset,
+        main: PaneId,
+        main_width: MainPaneSize,
+        main_height: MainPaneSize,
+        area: Rect,
+    ) -> bool {
+        let mut ids = self.pane_ids();
+        let Some(main_index) = ids.iter().position(|id| *id == main) else {
+            return false;
+        };
+        self.preset = Some(preset);
+        if ids.len() < 2 {
+            return false;
+        }
+        let root = match preset {
+            LayoutPreset::EvenHorizontal => even_node(&ids, Direction::Horizontal),
+            LayoutPreset::EvenVertical => even_node(&ids, Direction::Vertical),
+            LayoutPreset::Tiled => tiled_node(&ids),
+            LayoutPreset::TiledMainBottom => {
+                ids.remove(main_index);
+                Node::Split {
+                    direction: Direction::Vertical,
+                    ratio: 1.0 - main_height.ratio(area.height),
+                    first: Box::new(tiled_node(&ids)),
+                    second: Box::new(Node::Pane(main)),
+                }
+            }
+            LayoutPreset::MainHorizontal
+            | LayoutPreset::MainHorizontalMirrored
+            | LayoutPreset::MainVertical
+            | LayoutPreset::MainVerticalMirrored => {
+                ids.remove(main_index);
+                let (direction, rest_direction, main_ratio) = match preset {
+                    LayoutPreset::MainHorizontal | LayoutPreset::MainHorizontalMirrored => (
+                        Direction::Vertical,
+                        Direction::Horizontal,
+                        main_height.ratio(area.height),
+                    ),
+                    _ => (
+                        Direction::Horizontal,
+                        Direction::Vertical,
+                        main_width.ratio(area.width),
+                    ),
+                };
+                let main_node = Box::new(Node::Pane(main));
+                let rest = Box::new(even_node(&ids, rest_direction));
+                if matches!(
+                    preset,
+                    LayoutPreset::MainHorizontalMirrored | LayoutPreset::MainVerticalMirrored
+                ) {
+                    Node::Split {
+                        direction,
+                        ratio: 1.0 - main_ratio,
+                        first: rest,
+                        second: main_node,
+                    }
+                } else {
+                    Node::Split {
+                        direction,
+                        ratio: main_ratio,
+                        first: main_node,
+                        second: rest,
+                    }
+                }
+            }
+        };
+        if root == self.root {
+            return false;
+        }
+        self.root = root;
+        true
+    }
+
+    /// Give panes that sit side by side (or stacked) in the same run equal
+    /// space, keeping the tree's shape, like tmux's `select-layout -E`.
+    /// Returns true when a ratio changed.
+    pub fn spread_evenly(&mut self) -> bool {
+        spread_node(&mut self.root)
+    }
+}
+
+/// Panes laid out along `direction` with equal space. The tree is balanced
+/// so every ratio stays within `valid_split_ratio`'s range.
+fn even_node(ids: &[PaneId], direction: Direction) -> Node {
+    if let [id] = ids {
+        return Node::Pane(*id);
+    }
+    let half = ids.len() / 2;
+    Node::Split {
+        direction,
+        ratio: half as f32 / ids.len() as f32,
+        first: Box::new(even_node(&ids[..half], direction)),
+        second: Box::new(even_node(&ids[half..], direction)),
+    }
+}
+
+/// Rows of equal height, each with up to `columns` panes of equal width.
+fn tiled_node(ids: &[PaneId]) -> Node {
+    let mut columns = 1;
+    while columns * columns < ids.len() {
+        columns += 1;
+    }
+    tiled_rows(&ids.chunks(columns).collect::<Vec<_>>())
+}
+
+fn tiled_rows(rows: &[&[PaneId]]) -> Node {
+    if let [row] = rows {
+        return even_node(row, Direction::Horizontal);
+    }
+    let half = rows.len() / 2;
+    Node::Split {
+        direction: Direction::Vertical,
+        ratio: half as f32 / rows.len() as f32,
+        first: Box::new(tiled_rows(&rows[..half])),
+        second: Box::new(tiled_rows(&rows[half..])),
+    }
+}
+
+/// Number of cells a node occupies along `direction` within its run.
+fn run_cells(node: &Node, direction: Direction) -> usize {
+    match node {
+        Node::Split {
+            direction: split_direction,
+            first,
+            second,
+            ..
+        } if *split_direction == direction => {
+            run_cells(first, direction) + run_cells(second, direction)
+        }
+        _ => 1,
+    }
+}
+
+fn spread_node(node: &mut Node) -> bool {
+    let Node::Split {
+        direction,
+        ratio,
+        first,
+        second,
+    } = node
+    else {
+        return false;
+    };
+    let before = run_cells(first, *direction);
+    let total = before + run_cells(second, *direction);
+    let even = before as f32 / total as f32;
+    let mut changed = (*ratio - even).abs() > f32::EPSILON;
+    *ratio = even;
+    changed |= spread_node(first);
+    changed |= spread_node(second);
+    changed
 }
 
 // --- Directional pane navigation ---
@@ -1344,5 +1575,250 @@ mod tests {
         assert_eq!(layout.focused(), pane(4));
         assert!(layout.close_focused());
         assert_eq!(layout.focused(), pane(2));
+    }
+
+    fn rects(layout: &TileLayout, area: Rect) -> Vec<(u32, Rect)> {
+        layout
+            .panes(area)
+            .into_iter()
+            .map(|info| (info.id.raw(), info.rect))
+            .collect()
+    }
+
+    #[test]
+    fn even_presets_share_space_equally_in_pane_order() {
+        let area = Rect::new(0, 0, 120, 60);
+        let mut layout = sample_layout();
+
+        assert!(layout.apply_preset(
+            LayoutPreset::EvenHorizontal,
+            pane(2),
+            MainPaneSize::Percent(60),
+            MainPaneSize::Percent(60),
+            area
+        ));
+        assert_eq!(
+            rects(&layout, area),
+            vec![
+                (1, Rect::new(0, 0, 30, 60)),
+                (2, Rect::new(30, 0, 30, 60)),
+                (3, Rect::new(60, 0, 30, 60)),
+                (4, Rect::new(90, 0, 30, 60)),
+            ]
+        );
+        assert_eq!(layout.focused(), pane(2));
+
+        assert!(layout.apply_preset(
+            LayoutPreset::EvenVertical,
+            pane(2),
+            MainPaneSize::Percent(60),
+            MainPaneSize::Percent(60),
+            area
+        ));
+        assert_eq!(
+            rects(&layout, area),
+            vec![
+                (1, Rect::new(0, 0, 120, 15)),
+                (2, Rect::new(0, 15, 120, 15)),
+                (3, Rect::new(0, 30, 120, 15)),
+                (4, Rect::new(0, 45, 120, 15)),
+            ]
+        );
+    }
+
+    #[test]
+    fn main_horizontal_mirrored_puts_main_pane_full_width_at_bottom() {
+        let area = Rect::new(0, 0, 120, 60);
+        let mut layout = TileLayout::from_saved(
+            Node::Split {
+                direction: Direction::Horizontal,
+                ratio: 0.5,
+                first: Box::new(Node::Pane(pane(1))),
+                second: Box::new(split_node(pane(2), Direction::Vertical, pane(3), 0.8)),
+            },
+            pane(1),
+        );
+
+        assert!(layout.apply_preset(
+            LayoutPreset::MainHorizontalMirrored,
+            pane(3),
+            MainPaneSize::Percent(60),
+            MainPaneSize::Cells(15),
+            area
+        ));
+        assert_eq!(
+            rects(&layout, area),
+            vec![
+                (1, Rect::new(0, 0, 60, 45)),
+                (2, Rect::new(60, 0, 60, 45)),
+                (3, Rect::new(0, 45, 120, 15)),
+            ]
+        );
+        assert_eq!(layout.focused(), pane(1));
+    }
+
+    #[test]
+    fn main_vertical_leads_with_main_pane_and_mirrored_trails_with_it() {
+        let area = Rect::new(0, 0, 100, 40);
+        let mut layout = sample_layout();
+
+        assert!(layout.apply_preset(
+            LayoutPreset::MainVertical,
+            pane(3),
+            MainPaneSize::Percent(60),
+            MainPaneSize::Percent(60),
+            area
+        ));
+        assert_eq!(rects(&layout, area)[0], (3, Rect::new(0, 0, 60, 40)));
+
+        assert!(layout.apply_preset(
+            LayoutPreset::MainVerticalMirrored,
+            pane(3),
+            MainPaneSize::Percent(60),
+            MainPaneSize::Percent(60),
+            area
+        ));
+        assert_eq!(
+            rects(&layout, area).last().copied(),
+            Some((3, Rect::new(40, 0, 60, 40)))
+        );
+    }
+
+    #[test]
+    fn tiled_preset_builds_a_grid_with_a_wider_last_row() {
+        let area = Rect::new(0, 0, 90, 60);
+        let mut layout = TileLayout::from_saved(Node::Pane(pane(1)), pane(1));
+        for id in 2..=5 {
+            assert!(layout.insert_pane_near(pane(1), pane(id), Direction::Horizontal, 0.5, false));
+        }
+
+        assert!(layout.apply_preset(
+            LayoutPreset::Tiled,
+            pane(1),
+            MainPaneSize::Percent(60),
+            MainPaneSize::Percent(60),
+            area
+        ));
+        let heights: Vec<u16> = layout.panes(area).iter().map(|p| p.rect.height).collect();
+        let widths: Vec<u16> = layout.panes(area).iter().map(|p| p.rect.width).collect();
+        assert_eq!(heights, vec![30, 30, 30, 30, 30]);
+        assert_eq!(widths, vec![30, 30, 30, 45, 45]);
+    }
+
+    #[test]
+    fn apply_preset_reports_unchanged_and_ignores_single_pane() {
+        let area = Rect::new(0, 0, 100, 40);
+        let mut layout = sample_layout();
+        assert!(layout.apply_preset(
+            LayoutPreset::Tiled,
+            pane(1),
+            MainPaneSize::Percent(60),
+            MainPaneSize::Percent(60),
+            area
+        ));
+        assert!(!layout.apply_preset(
+            LayoutPreset::Tiled,
+            pane(1),
+            MainPaneSize::Percent(60),
+            MainPaneSize::Percent(60),
+            area
+        ));
+        assert!(!layout.apply_preset(
+            LayoutPreset::Tiled,
+            pane(9),
+            MainPaneSize::Percent(60),
+            MainPaneSize::Percent(60),
+            area
+        ));
+
+        let mut single = TileLayout::from_saved(Node::Pane(pane(1)), pane(1));
+        assert!(!single.apply_preset(
+            LayoutPreset::EvenHorizontal,
+            pane(1),
+            MainPaneSize::Percent(60),
+            MainPaneSize::Percent(60),
+            area
+        ));
+    }
+
+    #[test]
+    fn cycle_preset_follows_tmux_order_from_the_last_applied() {
+        let area = Rect::new(0, 0, 100, 40);
+        let mut layout = sample_layout();
+        assert_eq!(layout.cycle_preset(false), LayoutPreset::EvenHorizontal);
+        assert_eq!(layout.cycle_preset(true), LayoutPreset::TiledMainBottom);
+
+        layout.apply_preset(
+            LayoutPreset::Tiled,
+            pane(1),
+            MainPaneSize::Percent(60),
+            MainPaneSize::Percent(60),
+            area,
+        );
+        assert_eq!(layout.cycle_preset(false), LayoutPreset::TiledMainBottom);
+        assert_eq!(
+            layout.cycle_preset(true),
+            LayoutPreset::MainVerticalMirrored
+        );
+    }
+
+    #[test]
+    fn spread_evenly_keeps_shape_and_equalizes_runs() {
+        let area = Rect::new(0, 0, 120, 40);
+        let mut layout = TileLayout::from_saved(
+            Node::Split {
+                direction: Direction::Horizontal,
+                ratio: 0.7,
+                first: Box::new(Node::Pane(pane(1))),
+                second: Box::new(Node::Split {
+                    direction: Direction::Horizontal,
+                    ratio: 0.2,
+                    first: Box::new(Node::Pane(pane(2))),
+                    second: Box::new(split_node(pane(3), Direction::Vertical, pane(4), 0.9)),
+                }),
+            },
+            pane(1),
+        );
+
+        assert!(layout.spread_evenly());
+        assert_eq!(
+            rects(&layout, area),
+            vec![
+                (1, Rect::new(0, 0, 40, 40)),
+                (2, Rect::new(40, 0, 40, 40)),
+                (3, Rect::new(80, 0, 40, 20)),
+                (4, Rect::new(80, 20, 40, 20)),
+            ]
+        );
+        assert!(!layout.spread_evenly());
+    }
+
+    #[test]
+    fn tiled_main_bottom_puts_a_grid_over_a_full_width_main_pane() {
+        let area = Rect::new(0, 0, 120, 60);
+        let mut layout = TileLayout::from_saved(Node::Pane(pane(1)), pane(1));
+        for id in 2..=5 {
+            assert!(layout.insert_pane_near(pane(1), pane(id), Direction::Horizontal, 0.5, false));
+        }
+
+        assert!(layout.apply_preset(
+            LayoutPreset::TiledMainBottom,
+            pane(3),
+            MainPaneSize::Percent(60),
+            MainPaneSize::Cells(10),
+            area
+        ));
+        let mut grid = rects(&layout, area);
+        assert_eq!(grid.pop(), Some((3, Rect::new(0, 50, 120, 10))));
+        let cells: Vec<Rect> = grid.iter().map(|(_, rect)| *rect).collect();
+        assert_eq!(
+            cells,
+            vec![
+                Rect::new(0, 0, 60, 25),
+                Rect::new(60, 0, 60, 25),
+                Rect::new(0, 25, 60, 25),
+                Rect::new(60, 25, 60, 25),
+            ]
+        );
     }
 }
