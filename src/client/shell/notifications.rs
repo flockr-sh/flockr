@@ -307,6 +307,7 @@ mod tests {
             tokens: Vec::new(),
             focused: true,
             branch: None,
+            session_empty: false,
         });
         state.set_snapshot(Box::new(snapshot));
 
@@ -354,6 +355,7 @@ mod tests {
             tokens: Vec::new(),
             focused: false,
             branch: None,
+            session_empty: false,
         });
         state.set_snapshot(Box::new(snapshot.clone()));
         let now = std::time::Instant::now();

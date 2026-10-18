@@ -13,6 +13,8 @@ use super::*;
 pub(super) struct AgentRow {
     pub(super) pane_id: String,
     pub(super) status: crate::api::schema::AgentStatus,
+    /// The agent is on a fresh session it has not worked in yet.
+    pub(super) session_empty: bool,
     pub(super) focused: bool,
     pub(super) rows: Vec<Vec<crate::ui::ResolvedToken>>,
     pub(super) workspace_id: String,
@@ -358,6 +360,7 @@ pub(super) fn agent_row(
     Some(AgentRow {
         pane_id: agent.pane_id.clone(),
         status: agent.agent_status,
+        session_empty: agent.session_empty,
         focused: agent.focused,
         rows,
         workspace_id: workspace.workspace_id.clone(),
@@ -421,10 +424,8 @@ pub(super) fn render_agent_row(
     };
     let status_style = Style::default().fg(status_color(row.status, palette));
     let secondary = Style::default().fg(palette.overlay0);
-    let icon = (
-        status_icon(row.status, config.status_indicators),
-        Style::default().fg(status_icon_color(row.status, config)),
-    );
+    let (icon_text, icon_color) = agent_row_icon(row.status, row.session_empty, config);
+    let icon = (icon_text, Style::default().fg(icon_color));
     let rows = if row.rows.is_empty() {
         vec![vec![crate::ui::ResolvedToken {
             kind: crate::ui::ResolvedTokenKind::StateIcon,

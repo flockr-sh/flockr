@@ -9,6 +9,8 @@ mod agent_resume;
 mod agent_suspend_tests;
 pub(crate) mod agent_view;
 mod agents;
+#[cfg(test)]
+mod fresh_pane_tests;
 pub(crate) use agents::{AGENT_START_SETTLE_DELAY, MAX_AGENT_START_TIMEOUT};
 mod api;
 #[cfg(test)]
@@ -153,6 +155,9 @@ pub struct App {
     pub(crate) session_save_thread: Option<std::thread::JoinHandle<()>>,
     session_writer: Arc<std::sync::Mutex<crate::persist::SessionWriter>>,
     pane_exit_checkpoint_pending: bool,
+    /// An event moved panes within a tab; the server must reapply pane
+    /// geometry so each moved runtime takes its new cell's size.
+    pub(crate) pane_order_changed: bool,
     pub(crate) detached_process_children: Vec<std::process::Child>,
     tab_bar_status_generation: u64,
     tab_bar_datetimes: Vec<tab_bar_status::TabBarDatetimeRuntime>,
@@ -547,6 +552,9 @@ impl App {
             pane_outer_borders: config.ui.pane_outer_borders,
             pane_scrollbars: config.ui.pane_scrollbars,
             pane_gaps: config.ui.pane_gaps,
+            keep_agents_in_use_first: config.ui.keep_agents_in_use_first,
+            fresh_session_order: 0,
+            reordered_panes: Vec::new(),
             show_agent_labels_on_pane_borders: config.ui.show_agent_labels_on_pane_borders,
             tab_bar_right: Vec::new(),
             tab_bar_right_separator: String::new(),
@@ -674,6 +682,7 @@ impl App {
             session_save_thread: None,
             session_writer,
             pane_exit_checkpoint_pending: false,
+            pane_order_changed: false,
             detached_process_children: Vec::new(),
             tab_bar_status_generation: 0,
             tab_bar_datetimes: Vec::new(),
@@ -727,7 +736,7 @@ impl App {
         ) {
             app.plugin_installation_cleanup_allowed = false;
         }
-        let (workspaces, terminals, runtimes) = crate::persist::restore_handoff(
+        let (mut workspaces, terminals, runtimes) = crate::persist::restore_handoff(
             snapshot,
             config.advanced.scrollback_limit_bytes,
             &config.terminal.default_shell,
@@ -738,6 +747,8 @@ impl App {
             app.render_dirty.clone(),
         )?;
         let pane_id_aliases = crate::persist::handoff_pane_aliases(snapshot, &workspaces);
+        app.state.fresh_session_order =
+            crate::persist::restore_handoff_fresh_sessions(snapshot, &mut workspaces);
 
         app.state.pane_id_aliases = pane_id_aliases;
         app.state.workspaces = workspaces;
@@ -919,6 +930,7 @@ impl App {
                 self.state.pane_outer_borders = config.ui.pane_outer_borders;
                 self.state.pane_scrollbars = config.ui.pane_scrollbars;
                 self.state.pane_gaps = config.ui.pane_gaps;
+                self.state.keep_agents_in_use_first = config.ui.keep_agents_in_use_first;
                 self.state.show_agent_labels_on_pane_borders =
                     config.ui.show_agent_labels_on_pane_borders;
                 self.configure_tab_bar_status(

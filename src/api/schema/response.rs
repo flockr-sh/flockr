@@ -150,6 +150,9 @@ pub enum ResponseResult {
     LayoutSelected {
         layout: LayoutDescription,
     },
+    LayoutSortedByAge {
+        layout: LayoutDescription,
+    },
     PaneNeighbor {
         neighbor: PaneNeighborResult,
     },

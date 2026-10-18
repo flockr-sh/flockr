@@ -209,6 +209,7 @@ const DEFAULT_CONFIG: &str = r##"# flockr configuration
 # next_layout = "prefix+space"
 # previous_layout = ""    # unset by default
 # spread_layout = "prefix+shift+e"   # keep the shape, give panes equal space
+# sort_panes_by_age = "prefix+shift+s"   # oldest fresh agent session first, within each run of agent panes
 # toggle_sidebar = "prefix+b"
 
 # Navigate-mode movement. These local shortcuts win while navigate mode is open.
@@ -341,6 +342,14 @@ const DEFAULT_CONFIG: &str = r##"# flockr configuration
 
 # Show detected/reported agent labels in split pane borders when no manual pane name is set.
 # show_agent_labels_on_pane_borders = false
+
+# Keep agents in use ahead of empty ones. When an agent starts a fresh session
+# (a new launch or /clear), its pane moves after the last agent in use in its
+# run of adjacent agent panes, ahead of older empty sessions. When that session
+# takes its first prompt, the pane moves there again. Editors, shells, and
+# other non-agent panes keep their slots. Agents report this through their
+# flockr hooks.
+# keep_agents_in_use_first = false
 
 # Hide the tab row when a workspace has exactly one tab.
 # New tabs can still be created with the configured keybinding.

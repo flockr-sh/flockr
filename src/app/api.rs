@@ -417,6 +417,18 @@ impl App {
         if let Some((ws_idx, tab_idx)) = pane_exit_layout_target {
             self.emit_layout_updated_event(ws_idx, tab_idx);
         }
+        for pane_id in std::mem::take(&mut self.state.reordered_panes) {
+            let Some((ws_idx, _)) = self.find_pane(pane_id) else {
+                continue;
+            };
+            let Some(tab_idx) = self.state.workspaces[ws_idx].find_tab_index_for_pane(pane_id)
+            else {
+                continue;
+            };
+            self.pane_order_changed = true;
+            self.schedule_session_save();
+            self.emit_layout_updated_event(ws_idx, tab_idx);
+        }
 
         self.sync_toast_deadline(previous_toast);
         self.shutdown_detached_terminal_runtimes();
@@ -1174,6 +1186,9 @@ impl App {
                 return self.handle_layout_set_split_ratio(request.id, params);
             }
             Method::LayoutSelect(params) => return self.handle_layout_select(request.id, params),
+            Method::LayoutSortByAge(params) => {
+                return self.handle_layout_sort_by_age(request.id, params)
+            }
             Method::PaneNeighbor(params) => return self.handle_pane_neighbor(request.id, params),
             Method::PaneEdges(params) => return self.handle_pane_edges(request.id, params),
             Method::PaneFocusDirection(params) => {

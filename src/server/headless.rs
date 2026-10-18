@@ -2916,6 +2916,22 @@ impl HeadlessServer {
         skip_default_workspace_for_request: bool,
         client_local: bool,
     ) -> bool {
+        let changed =
+            self.dispatch_api_request(msg, skip_default_workspace_for_request, client_local);
+        // Agent hooks report through the API, and a report can move panes.
+        if std::mem::take(&mut self.app.pane_order_changed) {
+            self.reapply_controlled_shell_tab_geometry(false);
+            return true;
+        }
+        changed
+    }
+
+    fn dispatch_api_request(
+        &mut self,
+        msg: api::ApiRequestMessage,
+        skip_default_workspace_for_request: bool,
+        client_local: bool,
+    ) -> bool {
         if self.shutting_down || self.host_shutdown_requested() {
             // During shutdown, respond with server_unavailable.
             Self::reject_api_request_for_shutdown(msg);

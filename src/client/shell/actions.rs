@@ -906,9 +906,10 @@ impl ClientShellState {
         action: crate::input::KeybindAction,
     ) -> Option<crate::api::schema::Method> {
         use crate::api::schema::{
-            LayoutSelectParams, Method, PaneDirection, PaneFocusDirectionParams, PaneResizeParams,
-            PaneSplitParams, PaneSwapParams, PaneTarget, PaneZoomMode, PaneZoomParams,
-            SplitDirection, TabCreateParams, TabMoveParams, TabTarget, WorkspaceTarget,
+            LayoutSelectParams, LayoutSortByAgeParams, Method, PaneDirection,
+            PaneFocusDirectionParams, PaneResizeParams, PaneSplitParams, PaneSwapParams,
+            PaneTarget, PaneZoomMode, PaneZoomParams, SplitDirection, TabCreateParams,
+            TabMoveParams, TabTarget, WorkspaceTarget,
         };
         use crate::input::KeybindAction;
 
@@ -1161,6 +1162,9 @@ impl ClientShellState {
                 tab_id: None,
                 pane_id: focused_pane,
                 layout,
+            })),
+            KeybindAction::SortPanesByAge => Some(Method::LayoutSortByAge(LayoutSortByAgeParams {
+                tab_id: focused_tab,
             })),
             _ => None,
         }

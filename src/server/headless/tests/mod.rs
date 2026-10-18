@@ -8337,3 +8337,74 @@ fn no_handle_internal_event_bypass_in_module() {
         bypass_lines.join("\n  ")
     );
 }
+
+#[tokio::test]
+async fn fresh_session_move_resizes_panes_to_their_new_cells() {
+    let mut server = test_headless_server();
+    let mut workspace = crate::workspace::Workspace::test_new("fresh-session-geometry");
+    let first_pane = workspace.tabs[0].root_pane;
+    let second_pane = workspace.test_split(ratatui::layout::Direction::Vertical);
+    workspace.tabs[0].layout.set_ratio_at(&[], 0.8);
+    for pane_id in [first_pane, second_pane] {
+        workspace.insert_test_runtime(
+            pane_id,
+            crate::terminal::TerminalRuntime::test_with_screen_bytes(80, 24, b""),
+        );
+    }
+    server.app.state.workspaces = vec![workspace];
+    server.app.state.active = Some(0);
+    server.app.state.selected = 0;
+    server.app.state.mode = crate::app::Mode::Terminal;
+    server.app.state.ensure_test_terminals();
+    server.app.state.keep_agents_in_use_first = true;
+    for pane_id in [first_pane, second_pane] {
+        server.handle_internal_event_with_forwarding(AppEvent::AgentProcessDetected {
+            pane_id,
+            agent: crate::detect::Agent::Claude,
+            observed_at: std::time::Instant::now(),
+        });
+    }
+
+    let (control, _) = connect_test_shell(&mut server, 69, 100, 30);
+    let _ = control.recv().expect("snapshot");
+    let size = |server: &HeadlessServer, pane_id| {
+        server.app.state.workspaces[0].test_runtimes[&pane_id].current_size()
+    };
+    let large = size(&server, first_pane);
+    let small = size(&server, second_pane);
+    assert_ne!(large, small);
+
+    // Hooks report through the API, so the move and the resize happen in
+    // the same request.
+    let first_pane_id = server.app.public_pane_id(0, first_pane).unwrap();
+    let (respond_to, _response_rx) = std::sync::mpsc::channel();
+    assert!(
+        server.handle_api_request_with_shutdown_check(crate::api::ApiRequestMessage {
+            request: crate::api::schema::Request {
+                id: "fresh-session".into(),
+                method: crate::api::schema::Method::PaneReportAgentSession(
+                    crate::api::schema::PaneReportAgentSessionParams {
+                        pane_id: first_pane_id,
+                        source: "flockr:claude".into(),
+                        agent: "claude".into(),
+                        seq: Some(1),
+                        agent_session_id: Some("2f0c0c2e-1647-4a4b-9a3e-000000000001".into()),
+                        agent_session_path: None,
+                        session_start_source: Some("clear".into()),
+                        resume_argv: None,
+                    },
+                ),
+            },
+            respond_to,
+            response_write_complete: None,
+        })
+    );
+
+    assert_eq!(
+        server.app.state.workspaces[0].tabs[0].layout.pane_ids(),
+        vec![second_pane, first_pane]
+    );
+    assert_eq!(size(&server, first_pane), small);
+    assert_eq!(size(&server, second_pane), large);
+    shutdown_test_runtimes(&mut server);
+}

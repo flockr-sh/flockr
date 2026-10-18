@@ -2,7 +2,7 @@
 // managed by flockr; reinstalling or updating the integration overwrites this file.
 // add custom hooks/plugins beside this file instead of editing it.
 // FLOCKR_INTEGRATION_ID=opencode
-// FLOCKR_INTEGRATION_VERSION=13
+// FLOCKR_INTEGRATION_VERSION=14
 
 import net from "node:net";
 

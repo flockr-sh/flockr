@@ -187,6 +187,12 @@ pub struct PaneStateUpdate {
 // Focus tracking
 // ---------------------------------------------------------------------------
 
+/// Session start sources that begin an empty conversation, as opposed to
+/// resuming, compacting, or switching to an existing one.
+fn is_fresh_session_start(source: Option<&str>) -> bool {
+    matches!(source, Some("startup" | "clear" | "new"))
+}
+
 impl AppState {
     pub(crate) fn current_pane_focus_target(&self) -> Option<PaneFocusTarget> {
         let ws_idx = self.active?;
@@ -1669,18 +1675,29 @@ impl AppState {
                 seq,
                 session_ref,
                 session_start_source,
-            } => self
-                .update_terminal_state(pane_id, |terminal| {
-                    terminal.set_agent_session_ref_for_session_start(
-                        source,
-                        agent_label,
-                        session_ref,
-                        seq,
-                        session_start_source,
-                    )
-                })
-                .into_iter()
-                .collect(),
+            } => {
+                let fresh = is_fresh_session_start(session_start_source.as_deref());
+                let reported_ref = session_ref.clone();
+                let reported_agent = crate::detect::parse_agent_label(&agent_label);
+                let updates = self
+                    .update_terminal_state(pane_id, |terminal| {
+                        terminal.set_agent_session_ref_for_session_start(
+                            source,
+                            agent_label,
+                            session_ref,
+                            seq,
+                            session_start_source,
+                        )
+                    })
+                    .into_iter()
+                    .collect();
+                if fresh {
+                    self.note_fresh_session(pane_id, reported_agent, reported_ref);
+                } else if let Some(session_ref) = reported_ref {
+                    self.note_session_after_fresh_start(pane_id, session_ref);
+                }
+                updates
+            }
             AppEvent::HookMetadataReported {
                 pane_id,
                 source,
@@ -1802,6 +1819,180 @@ impl AppState {
         }
     }
 
+    /// Stamp a pane whose agent just started a fresh session. A report the
+    /// terminal rejected, or a repeat of the pane's current fresh session, is
+    /// ignored. With `ui.keep_agents_in_use_first` on, the pane moves ahead of
+    /// the other empty sessions in its run of agent panes.
+    ///
+    /// A fresh session without a reference is an agent that creates the session
+    /// only on its first prompt, such as OpenCode on its home screen. It counts
+    /// when that agent runs in the pane.
+    fn note_fresh_session(
+        &mut self,
+        pane_id: PaneId,
+        agent: Option<crate::detect::Agent>,
+        session_ref: Option<crate::agent_resume::AgentSessionRef>,
+    ) {
+        let Some(ws_idx) = self
+            .workspaces
+            .iter()
+            .position(|ws| ws.pane_state(pane_id).is_some())
+        else {
+            return;
+        };
+        let Some(pane) = self.workspaces[ws_idx].pane_state(pane_id) else {
+            return;
+        };
+        let accepted = self
+            .terminals
+            .get(&pane.attached_terminal_id)
+            .is_some_and(|terminal| match &session_ref {
+                Some(session_ref) => terminal.session_ref_is_current(session_ref),
+                None => {
+                    agent.is_some()
+                        && (terminal.effective_known_agent() == agent
+                            || terminal.detected_agent == agent)
+                }
+            });
+        let repeated = pane
+            .fresh_session
+            .as_ref()
+            .is_some_and(|fresh| fresh.session_ref == session_ref);
+        if !accepted || repeated {
+            return;
+        }
+        // Codex fires SessionStart with the first prompt, so its session is
+        // already in use.
+        let started_by_prompt = agent == Some(crate::detect::Agent::Codex);
+        self.fresh_session_order += 1;
+        let order = self.fresh_session_order;
+        if let Some(pane) = self.workspaces[ws_idx].pane_state_mut(pane_id) {
+            pane.fresh_session = Some(crate::pane::FreshSession {
+                order,
+                session_ref,
+                used: started_by_prompt,
+            });
+        }
+        self.move_pane_in_agent_run(ws_idx, pane_id);
+    }
+
+    /// Whether an agent runs in a pane, as opposed to an editor or a shell.
+    fn pane_runs_agent(&self, ws: &crate::workspace::Workspace, pane_id: PaneId) -> bool {
+        ws.pane_state(pane_id).is_some_and(|pane| {
+            self.terminals
+                .get(&pane.attached_terminal_id)
+                .is_some_and(|terminal| terminal.effective_agent_label().is_some())
+        })
+    }
+
+    /// With `ui.keep_agents_in_use_first` on, move a pane after the last
+    /// session in use in its run of adjacent agent panes, ahead of the empty
+    /// ones. Panes outside the run keep their slots.
+    fn move_pane_in_agent_run(&mut self, ws_idx: usize, pane_id: PaneId) {
+        if !self.keep_agents_in_use_first {
+            return;
+        }
+        let ws = &self.workspaces[ws_idx];
+        let Some(tab_idx) = ws.find_tab_index_for_pane(pane_id) else {
+            return;
+        };
+        let mut panes = ws.tabs[tab_idx].layout.pane_ids();
+        let Some(pos) = panes.iter().position(|id| *id == pane_id) else {
+            return;
+        };
+        let not_agent = |id: &PaneId| !self.pane_runs_agent(ws, *id);
+        let start = panes[..pos]
+            .iter()
+            .rposition(not_agent)
+            .map_or(0, |i| i + 1);
+        let end = panes[pos + 1..]
+            .iter()
+            .position(not_agent)
+            .map_or(panes.len(), |i| pos + 1 + i);
+        panes.remove(pos);
+        let others = start..end - 1;
+        let slot = panes[others.clone()]
+            .iter()
+            .rposition(|id| !ws.pane_state(*id).is_some_and(|pane| pane.session_empty()))
+            .map_or(others.start, |i| others.start + i + 1);
+        panes.insert(slot, pane_id);
+        if self.workspaces[ws_idx].tabs[tab_idx]
+            .layout
+            .reorder_panes(&panes)
+        {
+            self.reordered_panes.push(pane_id);
+            self.mark_session_dirty();
+        }
+    }
+
+    /// Give a fresh session reported without a reference the session the agent
+    /// created for it, so the next fresh start counts as new.
+    fn note_session_after_fresh_start(
+        &mut self,
+        pane_id: PaneId,
+        session_ref: crate::agent_resume::AgentSessionRef,
+    ) {
+        let Some(ws) = self
+            .workspaces
+            .iter_mut()
+            .find(|ws| ws.pane_state(pane_id).is_some())
+        else {
+            return;
+        };
+        let Some(pane) = ws.pane_state_mut(pane_id) else {
+            return;
+        };
+        let accepted = self
+            .terminals
+            .get(&pane.attached_terminal_id)
+            .is_some_and(|terminal| terminal.session_ref_is_current(&session_ref));
+        if let Some(fresh) = pane.fresh_session.as_mut() {
+            if accepted && fresh.session_ref.is_none() {
+                fresh.session_ref = Some(session_ref);
+            }
+        }
+    }
+
+    /// Order each run of adjacent agent panes in a tab by when their fresh
+    /// session started, oldest first. Panes without one count as oldest and
+    /// keep their relative order. Other panes keep their slots.
+    pub fn sort_tab_panes_by_age(&mut self, ws_idx: usize, tab_idx: usize) -> bool {
+        let Some(ws) = self.workspaces.get(ws_idx) else {
+            return false;
+        };
+        let Some(tab) = ws.tabs.get(tab_idx) else {
+            return false;
+        };
+        let mut run = 0;
+        let mut previous_agent = false;
+        let mut panes: Vec<_> = tab
+            .layout
+            .pane_ids()
+            .into_iter()
+            .map(|id| {
+                let agent = self.pane_runs_agent(ws, id);
+                if !(agent && previous_agent) {
+                    run += 1;
+                }
+                previous_agent = agent;
+                let order = ws
+                    .pane_state(id)
+                    .and_then(|pane| pane.fresh_session.as_ref())
+                    .map_or(0, |fresh| fresh.order);
+                (run, order, id)
+            })
+            .collect();
+        panes.sort_by_key(|(run, order, _)| (*run, *order));
+        let panes: Vec<_> = panes.into_iter().map(|(_, _, id)| id).collect();
+        let changed = self.workspaces[ws_idx].tabs[tab_idx]
+            .layout
+            .reorder_panes(&panes);
+        if changed {
+            self.mark_session_dirty();
+        }
+        changed
+    }
+
     fn update_terminal_state<F>(&mut self, pane_id: PaneId, update: F) -> Option<PaneStateUpdate>
     where
         F: FnOnce(&mut crate::terminal::TerminalState) -> Option<TerminalStateMutation>,
@@ -1880,6 +2071,17 @@ impl AppState {
         }
         let agent_released = mutation.agent_released;
         let change = mutation.effective_state_change.or(unchanged_change)?;
+        if matches!(change.state, AgentState::Working | AgentState::Blocked) {
+            if let Some(fresh) = self.workspaces[ws_idx]
+                .pane_state_mut(pane_id)?
+                .fresh_session
+                .as_mut()
+                .filter(|fresh| !fresh.used)
+            {
+                fresh.used = true;
+                self.move_pane_in_agent_run(ws_idx, pane_id);
+            }
+        }
         let suppress_completion = force_suppress_completion
             || (change.state == AgentState::Idle && suppress_acquisition_completion);
         if change.previous_state != change.state {

@@ -953,6 +953,7 @@ fn sidebar_scrollbars_use_proportional_shared_geometry_and_drag() {
             tokens: Vec::new(),
             focused: false,
             branch: None,
+            session_empty: false,
         });
     }
     let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));

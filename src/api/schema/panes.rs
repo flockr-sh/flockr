@@ -194,6 +194,16 @@ pub struct LayoutSetSplitRatioParams {
     pub ratio: f32,
 }
 
+/// Order each run of adjacent agent panes in a tab by when their agent last
+/// started a fresh session, oldest first. Panes without one count as oldest
+/// and keep their order. Other panes keep their slots.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct LayoutSortByAgeParams {
+    /// Tab to sort. Defaults to the focused tab.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tab_id: Option<String>,
+}
+
 /// Rearrange a tab's panes into a preset, after tmux's `select-layout`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct LayoutSelectParams {

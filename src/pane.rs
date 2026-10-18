@@ -52,7 +52,7 @@ pub(crate) use self::terminal::{
     TerminalSearchDirection, TerminalSearchWindow, TerminalTextPoint, TerminalWordMotion,
 };
 pub use self::{
-    state::PaneState,
+    state::{FreshSession, PaneState},
     terminal::{ScrollMetrics, TerminalCursorState},
 };
 

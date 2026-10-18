@@ -701,3 +701,54 @@ test("V2 resends the latest state after a failed delivery", async () => {
   expect(states().at(-1)).toBe("idle");
   dispose();
 });
+
+const homeReports = () => requests.filter((r) => requestParam(r, "session_start_source") === "new");
+
+test("V1 reports each home screen visit once, without a session id", async () => {
+  const tui = fakeApi();
+  tui.addSession({ id: "session-a" });
+  await (await loadPlugin()).tui(tui.api);
+  await new Promise((resolve) => setTimeout(resolve, 250));
+
+  expect(homeReports()).toHaveLength(1);
+  expect(requestParam(homeReports()[0], "agent_session_id")).toBeUndefined();
+  expect(requestParam(homeReports()[0], "state")).toBeUndefined();
+
+  tui.select("session-a");
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  tui.home();
+  await new Promise((resolve) => setTimeout(resolve, 250));
+
+  expect(homeReports()).toHaveLength(2);
+});
+
+test("V1 retries a home report the socket dropped", async () => {
+  failConnections = true;
+  const tui = fakeApi();
+  await (await loadPlugin()).tui(tui.api);
+  await flushReports();
+  expect(homeReports()).toHaveLength(0);
+  failConnections = false;
+  await new Promise((resolve) => setTimeout(resolve, 650));
+
+  expect(homeReports()).toHaveLength(1);
+});
+
+test("V2 reports each home screen visit once, without a session id", async () => {
+  const opencode = v2Api();
+  opencode.home();
+  const dispose = (await loadPlugin()).setup(opencode.api);
+  activeDisposers.push(dispose);
+  await new Promise((resolve) => setTimeout(resolve, 250));
+
+  expect(homeReports()).toHaveLength(1);
+  expect(requestParam(homeReports()[0], "agent_session_id")).toBeUndefined();
+
+  opencode.select("a");
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  expect(homeReports()).toHaveLength(1);
+  opencode.home();
+  await new Promise((resolve) => setTimeout(resolve, 250));
+
+  expect(homeReports()).toHaveLength(2);
+});

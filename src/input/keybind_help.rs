@@ -242,6 +242,10 @@ pub(crate) fn keybind_help_groups(
                     binding_label(&keybinds.spread_layout),
                     "spread panes evenly",
                 ),
+                entry(
+                    binding_label(&keybinds.sort_panes_by_age),
+                    "sort panes by age",
+                ),
                 entry(binding_label(&keybinds.toggle_sidebar), "toggle sidebar"),
                 entry(binding_label(&keybinds.focus_pane_left), "focus pane left"),
                 entry(binding_label(&keybinds.focus_pane_down), "focus pane down"),

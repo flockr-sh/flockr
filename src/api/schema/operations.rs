@@ -174,6 +174,7 @@ mod tests {
             "layout.apply",
             "layout.set_split_ratio",
             "layout.select",
+            "layout.sort_by_age",
             "agent.rename",
             "agent.view.set",
             "agent.view.clear",

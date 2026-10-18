@@ -431,6 +431,7 @@ pub struct Keybinds {
     pub next_layout: ActionKeybinds,
     pub previous_layout: ActionKeybinds,
     pub spread_layout: ActionKeybinds,
+    pub sort_panes_by_age: ActionKeybinds,
     pub toggle_sidebar: ActionKeybinds,
     pub custom_commands: Vec<CustomCommandKeybind>,
 }
@@ -634,6 +635,7 @@ impl Config {
             next_layout: empty_action!(),
             previous_layout: empty_action!(),
             spread_layout: empty_action!(),
+            sort_panes_by_age: empty_action!(),
             toggle_sidebar: empty_action!(),
             custom_commands: Vec::new(),
         };
@@ -845,6 +847,7 @@ impl Config {
             apply_action!(keybinds.next_layout, next_layout, source);
             apply_action!(keybinds.previous_layout, previous_layout, source);
             apply_action!(keybinds.spread_layout, spread_layout, source);
+            apply_action!(keybinds.sort_panes_by_age, sort_panes_by_age, source);
             apply_action!(keybinds.toggle_sidebar, toggle_sidebar, source);
 
             if source == field_source!(indexed) {
@@ -1887,6 +1890,13 @@ next_tab = "prefix+n"
             binding_triggers(&kb.spread_layout),
             vec![BindingTrigger::Prefix((
                 KeyCode::Char('e'),
+                KeyModifiers::SHIFT
+            ))]
+        );
+        assert_eq!(
+            binding_triggers(&kb.sort_panes_by_age),
+            vec![BindingTrigger::Prefix((
+                KeyCode::Char('s'),
                 KeyModifiers::SHIFT
             ))]
         );

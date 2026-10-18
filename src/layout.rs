@@ -348,6 +348,25 @@ impl TileLayout {
         true
     }
 
+    /// Put panes into the layout's cells in `order`, keeping the split shape
+    /// and ratios. `order` must name every pane exactly once. Returns true when
+    /// any pane moved.
+    pub fn reorder_panes(&mut self, order: &[PaneId]) -> bool {
+        let ids = self.pane_ids();
+        if order == ids.as_slice() {
+            return false;
+        }
+        let unique: std::collections::HashSet<_> = order.iter().collect();
+        if order.len() != ids.len()
+            || unique.len() != ids.len()
+            || !ids.iter().all(|id| unique.contains(id))
+        {
+            return false;
+        }
+        assign_pane_ids(&mut self.root, &mut order.iter().copied());
+        true
+    }
+
     /// Set the ratio of a split node at the given path.
     pub fn set_ratio_at(&mut self, path: &[bool], ratio: f32) -> bool {
         set_ratio_at(&mut self.root, path, ratio.clamp(0.1, 0.9))
@@ -837,6 +856,20 @@ fn swap_pane_ids(node: &mut Node, first: PaneId, second: PaneId) {
     }
 }
 
+fn assign_pane_ids(node: &mut Node, ids: &mut impl Iterator<Item = PaneId>) {
+    match node {
+        Node::Pane(id) => {
+            if let Some(next) = ids.next() {
+                *id = next;
+            }
+        }
+        Node::Split { first, second, .. } => {
+            assign_pane_ids(first, ids);
+            assign_pane_ids(second, ids);
+        }
+    }
+}
+
 fn find_pane_mut(node: &mut Node, target: PaneId) -> Option<&mut Node> {
     match node {
         Node::Pane(id) if *id == target => Some(node),
@@ -1205,6 +1238,37 @@ mod tests {
         assert_eq!(after_rects[1], (pane(4), before_rects[1].1));
         assert_eq!(after_rects[2], before_rects[2]);
         assert_eq!(after_rects[3], (pane(2), before_rects[3].1));
+    }
+
+    #[test]
+    fn reorder_panes_moves_leaf_ids_without_changing_cells() {
+        let mut layout = sample_layout();
+        let before_rects = pane_rects(&layout);
+        let before_splits = split_snapshot(&layout);
+        let focused = layout.focused();
+
+        assert!(layout.reorder_panes(&[pane(2), pane(3), pane(4), pane(1)]));
+
+        assert_eq!(split_snapshot(&layout), before_splits);
+        assert_eq!(layout.focused(), focused);
+        assert_eq!(layout.pane_ids(), vec![pane(2), pane(3), pane(4), pane(1)]);
+        let after_rects = pane_rects(&layout);
+        for (index, (_, rect)) in before_rects.iter().enumerate() {
+            assert_eq!(after_rects[index].1, *rect);
+        }
+    }
+
+    #[test]
+    fn reorder_panes_rejects_orders_that_are_not_a_permutation() {
+        let mut layout = sample_layout();
+        let before = layout.pane_ids();
+
+        assert!(!layout.reorder_panes(&before));
+        assert!(!layout.reorder_panes(&[pane(1), pane(2), pane(3)]));
+        assert!(!layout.reorder_panes(&[pane(1), pane(1), pane(2), pane(3)]));
+        assert!(!layout.reorder_panes(&[pane(1), pane(2), pane(3), pane(99)]));
+
+        assert_eq!(layout.pane_ids(), before);
     }
 
     #[test]

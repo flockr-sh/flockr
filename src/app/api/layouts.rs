@@ -5,7 +5,7 @@ use ratatui::layout::Direction;
 use crate::api::schema::{
     EventData, EventEnvelope, EventKind, LayoutApplyParams, LayoutDescription, LayoutExportParams,
     LayoutNode, LayoutPane, LayoutSelectParams, LayoutSelection, LayoutSetSplitRatioParams,
-    ResponseResult, SplitDirection,
+    LayoutSortByAgeParams, ResponseResult, SplitDirection,
 };
 use crate::app::{App, Mode};
 use crate::layout::{LayoutPreset, Node, PaneId};
@@ -328,6 +328,27 @@ impl App {
             return encode_error(id, "layout_not_found", "layout unavailable");
         };
         encode_success(id, ResponseResult::LayoutSelected { layout })
+    }
+
+    pub(super) fn handle_layout_sort_by_age(
+        &mut self,
+        id: String,
+        params: LayoutSortByAgeParams,
+    ) -> String {
+        let Some((ws_idx, tab_idx)) = self.resolve_layout_export_target(&LayoutExportParams {
+            tab_id: params.tab_id,
+            pane_id: None,
+        }) else {
+            return encode_error(id, "layout_not_found", "layout target not found");
+        };
+        if self.state.sort_tab_panes_by_age(ws_idx, tab_idx) {
+            self.schedule_session_save();
+            self.emit_layout_updated_event(ws_idx, tab_idx);
+        }
+        let Some(layout) = self.layout_description(ws_idx, tab_idx) else {
+            return encode_error(id, "layout_not_found", "layout unavailable");
+        };
+        encode_success(id, ResponseResult::LayoutSortedByAge { layout })
     }
 
     fn resolve_layout_export_target(&self, params: &LayoutExportParams) -> Option<(usize, usize)> {

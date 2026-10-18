@@ -38,6 +38,7 @@ fn agent(
         tokens: Vec::new(),
         focused: true,
         branch: None,
+        session_empty: false,
     }
 }
 
@@ -3020,4 +3021,41 @@ fn navigator_foreign_workspace_heading_keeps_the_workspace_target() {
             target: Some(ClientEndpointFocusTarget::Workspace(workspace_id)),
         }] if activated == &endpoint_id && workspace_id == "ws_1"
     ));
+}
+
+#[test]
+fn idle_agent_on_an_empty_session_shows_a_dotted_ring() {
+    use crate::api::schema::AgentStatus;
+    use crate::config::AgentSidebarToken;
+
+    let mut config = Config::default();
+    config.ui.sidebar.agents.rows =
+        vec![vec![AgentSidebarToken::StateIcon, AgentSidebarToken::Agent]];
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&config));
+    let mut local = snapshot();
+    let mut empty = agent("empty agent", AgentStatus::Idle, 1);
+    empty.session_empty = true;
+    let mut used = agent("used agent", AgentStatus::Idle, 1);
+    used.pane_id = "w1:p2".into();
+    let mut busy = agent("busy agent", AgentStatus::Working, 1);
+    busy.pane_id = "w1:p3".into();
+    busy.session_empty = true;
+    local.agents = vec![empty, used, busy];
+    state.set_snapshot(Box::new(local));
+    state.set_pane_surface(surface());
+
+    let frame = state.compose(100, 28).expect("frame");
+    let text = frame
+        .cells
+        .chunks(frame.width as usize)
+        .map(|row| {
+            row.iter()
+                .map(|cell| cell.symbol.as_str())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(text.contains("◌ empty agent"), "frame: {text}");
+    assert!(text.contains("○ used agent"), "frame: {text}");
+    assert!(text.contains("● busy agent"), "frame: {text}");
 }

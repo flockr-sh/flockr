@@ -514,6 +514,8 @@ pub struct KeysConfig {
     pub previous_layout: BindingConfig,
     /// Keep the layout's shape and give side-by-side panes equal space. Default: "prefix+shift+e".
     pub spread_layout: BindingConfig,
+    /// Order the tab's panes by fresh agent session, oldest first. Default: "prefix+shift+s".
+    pub sort_panes_by_age: BindingConfig,
     /// Toggle sidebar collapse. Default: "prefix+b"
     pub toggle_sidebar: BindingConfig,
     /// Optional indexed shortcuts expanded over number keys 1-9.
@@ -691,6 +693,8 @@ pub(crate) struct KeysConfigOverlay {
     #[serde(skip_serializing_if = "Option::is_none")]
     spread_layout: Option<BindingConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    sort_panes_by_age: Option<BindingConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     toggle_sidebar: Option<BindingConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     indexed: Option<IndexedKeysConfig>,
@@ -823,6 +827,7 @@ impl<'de> Deserialize<'de> for KeysConfig {
         apply_field!(next_layout);
         apply_field!(previous_layout);
         apply_field!(spread_layout);
+        apply_field!(sort_panes_by_age);
         apply_field!(toggle_sidebar);
         apply_field!(indexed);
         apply_field!(command);
@@ -957,6 +962,7 @@ impl KeysConfig {
         copy_effective_action_field!(next_layout, keybinds.next_layout);
         copy_effective_action_field!(previous_layout, keybinds.previous_layout);
         copy_effective_action_field!(spread_layout, keybinds.spread_layout);
+        copy_effective_action_field!(sort_panes_by_age, keybinds.sort_panes_by_age);
         copy_effective_action_field!(toggle_sidebar, keybinds.toggle_sidebar);
         copy_user_field!(indexed);
 
@@ -1190,6 +1196,11 @@ pub struct UiConfig {
     pub main_pane_height: MainPaneSize,
     /// Show agent labels in split pane borders when no manual pane label is set. Default: false.
     pub show_agent_labels_on_pane_borders: bool,
+    /// When an agent starts a fresh session (a new launch or /clear) or that
+    /// session takes its first prompt, move its pane after the last agent in
+    /// use in its run of adjacent agent panes, ahead of older empty sessions.
+    /// Non-agent panes keep their slots. Default: false.
+    pub keep_agents_in_use_first: bool,
     /// Hide the tab row when the workspace has one tab. Default: false.
     pub hide_tab_bar_when_single_tab: bool,
     /// Desktop tab row placement. Default: top.
@@ -1417,6 +1428,7 @@ impl Default for KeysConfig {
             next_layout: BindingConfig::one("prefix+space"),
             previous_layout: BindingConfig::empty(),
             spread_layout: BindingConfig::one("prefix+shift+e"),
+            sort_panes_by_age: BindingConfig::one("prefix+shift+s"),
             toggle_sidebar: BindingConfig::one("prefix+b"),
             indexed: IndexedKeysConfig::default(),
             command: Vec::new(),
@@ -1460,6 +1472,7 @@ impl Default for UiConfig {
             main_pane_width: MainPaneSize::Cells(80),
             main_pane_height: MainPaneSize::Cells(24),
             show_agent_labels_on_pane_borders: false,
+            keep_agents_in_use_first: false,
             hide_tab_bar_when_single_tab: false,
             tab_bar_position: TabBarPositionConfig::Top,
             tab_bar_right: Vec::new(),
@@ -1782,6 +1795,7 @@ pulse_working = false
         assert!(default_config.ui.pane_scrollbars);
         assert!(default_config.ui.pane_gaps);
         assert!(!default_config.ui.show_agent_labels_on_pane_borders);
+        assert!(!default_config.ui.keep_agents_in_use_first);
         assert!(!default_config.ui.hide_tab_bar_when_single_tab);
         assert_eq!(
             default_config.ui.tab_bar_position,
@@ -1797,6 +1811,7 @@ pane_outer_borders = false
 pane_scrollbars = false
 pane_gaps = true
 show_agent_labels_on_pane_borders = true
+keep_agents_in_use_first = true
 hide_tab_bar_when_single_tab = true
 tab_bar_position = "bottom"
 tab_bar_right = [
@@ -1814,6 +1829,7 @@ tab_bar_right_separator = " · "
         assert!(!config.ui.pane_scrollbars);
         assert!(config.ui.pane_gaps);
         assert!(config.ui.show_agent_labels_on_pane_borders);
+        assert!(config.ui.keep_agents_in_use_first);
         assert!(config.ui.hide_tab_bar_when_single_tab);
         assert_eq!(config.ui.tab_bar_position, TabBarPositionConfig::Bottom);
         assert_eq!(config.ui.tab_bar_right.len(), 5);

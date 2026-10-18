@@ -118,6 +118,41 @@ pub fn restore_handoff(
     )
 }
 
+/// Give handed-off panes their fresh agent sessions back, and return the
+/// largest session order so new sessions sort after them.
+#[cfg(unix)]
+pub fn restore_handoff_fresh_sessions(
+    snapshot: &SessionSnapshot,
+    workspaces: &mut [Workspace],
+) -> u64 {
+    let mut max_order = 0;
+    for (ws_snap, workspace) in snapshot.workspaces.iter().zip(workspaces) {
+        for (tab_snap, tab) in ws_snap.tabs.iter().zip(&mut workspace.tabs) {
+            let old_ids = collect_snapshot_pane_ids(&tab_snap.layout);
+            let new_ids = tab.layout.pane_ids();
+            for (old_id, new_id) in old_ids.into_iter().zip(new_ids) {
+                let Some(fresh) = tab_snap
+                    .panes
+                    .get(&old_id)
+                    .and_then(|pane| pane.fresh_session.as_ref())
+                else {
+                    continue;
+                };
+                let Some(pane) = tab.panes.get_mut(&new_id) else {
+                    continue;
+                };
+                max_order = max_order.max(fresh.order);
+                pane.fresh_session = Some(crate::pane::FreshSession {
+                    order: fresh.order,
+                    session_ref: fresh.session_ref.clone(),
+                    used: fresh.used,
+                });
+            }
+        }
+    }
+    max_order
+}
+
 #[cfg(unix)]
 pub fn handoff_pane_aliases(
     snapshot: &SessionSnapshot,
@@ -1683,6 +1718,7 @@ mod tests {
                             agent_resume: None,
                             launch_argv: None,
                             agent_launch: None,
+                            fresh_session: None,
                         },
                     )]),
                     zoomed: false,
@@ -1766,6 +1802,7 @@ mod tests {
                                 agent_resume: None,
                                 launch_argv: None,
                                 agent_launch: None,
+                                fresh_session: None,
                             },
                         ),
                         (
@@ -1779,6 +1816,7 @@ mod tests {
                                 agent_resume: None,
                                 launch_argv: None,
                                 agent_launch: None,
+                                fresh_session: None,
                             },
                         ),
                     ]),
@@ -1834,6 +1872,7 @@ mod tests {
                     agent_resume: None,
                     launch_argv: None,
                     agent_launch: None,
+                    fresh_session: None,
                 },
             )
         };
@@ -1851,6 +1890,7 @@ mod tests {
             agent_resume: None,
             launch_argv: None,
             agent_launch: None,
+            fresh_session: None,
         };
         let snapshot = SessionSnapshot {
             version: super::super::snapshot::SNAPSHOT_VERSION,
@@ -2004,6 +2044,7 @@ mod tests {
                             agent_resume: None,
                             launch_argv: None,
                             agent_launch: None,
+                            fresh_session: None,
                         },
                     )]),
                     zoomed: false,
@@ -2311,6 +2352,7 @@ mod tests {
                 agent_resume: None,
                 launch_argv: None,
                 agent_launch: None,
+                fresh_session: None,
             },
         );
         let mut history = SessionHistorySnapshot {

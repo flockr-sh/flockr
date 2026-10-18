@@ -2416,6 +2416,19 @@
           ],
           "type": "object"
         },
+        "LayoutSortByAgeParams": {
+          "description": "Order each run of adjacent agent panes in a tab by when their agent last\nstarted a fresh session, oldest first. Panes without one count as oldest\nand keep their order. Other panes keep their slots.",
+          "properties": {
+            "tab_id": {
+              "description": "Tab to sort. Defaults to the focused tab.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "type": "object"
+        },
         "NotificationShowParams": {
           "properties": {
             "body": {
@@ -5666,6 +5679,22 @@
             },
             "params": {
               "$ref": "#/schemas/request/$defs/LayoutSelectParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "layout.sort_by_age",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/LayoutSortByAgeParams"
             }
           },
           "required": [
@@ -9887,6 +9916,22 @@
                 },
                 "type": {
                   "const": "layout_selected",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "layout"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "layout": {
+                  "$ref": "#/schemas/success_response/$defs/LayoutDescription"
+                },
+                "type": {
+                  "const": "layout_sorted_by_age",
                   "type": "string"
                 }
               },

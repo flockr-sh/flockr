@@ -843,6 +843,14 @@ pub struct AppState {
     pub sidebar_agents: crate::config::AgentsSidebarConfig,
     pub sidebar_spaces: crate::config::SpacesSidebarConfig,
     pub next_agent_state_change_seq: u64,
+    /// `ui.keep_agents_in_use_first`: move a pane behind the agents in use
+    /// when its agent starts a fresh session or takes its first prompt.
+    pub keep_agents_in_use_first: bool,
+    /// Last order handed to a pane's fresh session.
+    pub fresh_session_order: u64,
+    /// Panes moved within their tab by a fresh or newly used agent session,
+    /// waiting for the app to announce the layout change.
+    pub reordered_panes: Vec<PaneId>,
     pub confirm_close: bool,
     pub pane_borders: crate::config::PaneBordersConfig,
     pub pane_outer_borders: bool,
@@ -1093,6 +1101,9 @@ impl AppState {
             sidebar_agents: crate::config::AgentsSidebarConfig::default(),
             sidebar_spaces: crate::config::SpacesSidebarConfig::default(),
             next_agent_state_change_seq: 0,
+            keep_agents_in_use_first: false,
+            fresh_session_order: 0,
+            reordered_panes: Vec::new(),
             confirm_close: true,
             pane_borders: crate::config::PaneBordersConfig::Auto,
             pane_outer_borders: true,

@@ -163,6 +163,15 @@ pub(super) fn snapshot_with_completions(
                 .agent_work_branches
                 .get(&agent.terminal_id)
                 .and_then(|work| work.branch.clone());
+            let session_empty = app
+                .parse_pane_id(&pane_id)
+                .and_then(|(workspace_index, pane_id)| {
+                    app.state
+                        .workspaces
+                        .get(workspace_index)?
+                        .pane_state(pane_id)
+                })
+                .is_some_and(crate::pane::PaneState::session_empty);
             protocol::ClientShellAgent {
                 pane_id,
                 workspace_id: agent.workspace_id,
@@ -179,6 +188,7 @@ pub(super) fn snapshot_with_completions(
                 tokens,
                 focused,
                 branch,
+                session_empty,
             }
         })
         .collect();

@@ -1,7 +1,7 @@
 // installed by flockr
 // managed by flockr; reinstalling or updating the integration overwrites this file.
 // FLOCKR_INTEGRATION_ID=opencode-tui
-// FLOCKR_INTEGRATION_VERSION=13
+// FLOCKR_INTEGRATION_VERSION=14
 
 import net from "node:net";
 
@@ -29,7 +29,7 @@ function requestOnce(sessionID, state, seq, isCurrent = () => true) {
       source: SOURCE,
       agent: AGENT,
       agent_session_id: sessionID,
-      ...(state === undefined ? { session_start_source: "select" } : { state, seq }),
+      ...(state === undefined ? { session_start_source: sessionID ? "select" : "new" } : { state, seq }),
     },
   };
 
@@ -62,6 +62,26 @@ function requestOnce(sessionID, state, seq, isCurrent = () => true) {
   });
 }
 
+// OpenCode's home screen holds no session yet, like Claude after /clear. Report
+// each visit once, with no session id, so Flockr can treat the pane as fresh.
+function homeReporter(isHome, schedule) {
+  let reported = false;
+  let retryAt = 0;
+  return () => {
+    if (!isHome()) {
+      reported = false;
+      return;
+    }
+    if (reported || Date.now() < retryAt) return;
+    reported = true;
+    schedule(async () => {
+      if (isHome() && await requestOnce(undefined, undefined, undefined, isHome)) return;
+      reported = false;
+      retryAt = Date.now() + 500;
+    });
+  };
+}
+
 export default {
   id: "flockr.opencode.session-selection",
   // Keep this plain object dependency-free: V1 and V2 expose different SDK
@@ -77,6 +97,10 @@ async function tui(api) {
   let context;
   let sequence = Date.now() * 1000;
   let chain = Promise.resolve();
+  const syncHome = homeReporter(
+    () => !disposed && api.route.current?.name === "home",
+    (work) => { chain = chain.then(work).catch(() => {}); },
+  );
 
   function routeID() {
     const route = api.route.current;
@@ -342,6 +366,7 @@ async function tui(api) {
 
   function syncSelection(reset = false) {
     if (disposed) return;
+    syncHome();
     const id = routeID();
     if (reset || id !== context?.route) {
       if (typeof id !== "string" || !id) {
@@ -420,6 +445,10 @@ function setup(api) {
   // Event callbacks may precede cache updates. Retain each delta until the
   // cache reflects it, so late hydration cannot undo a reply or lose an ask.
   const blockerChanges = new Map();
+  const syncHome = homeReporter(
+    () => !disposed && api.ui.router.current().type === "home",
+    (work) => { chain = chain.then(work).catch(() => {}); },
+  );
 
   function root(id) {
     const seen = new Set();
@@ -508,6 +537,7 @@ function setup(api) {
 
   function syncSelection() {
     if (disposed) return;
+    syncHome();
     const id = current();
     if (id !== selected) {
       selected = id;

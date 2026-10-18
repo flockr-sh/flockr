@@ -298,7 +298,16 @@ impl HeadlessServer {
     /// in the headless server — use this method instead.
     ///
     /// Returns true if the event changed visual state (requiring a re-render).
-    pub(super) fn handle_internal_event_with_forwarding(&mut self, mut ev: AppEvent) -> bool {
+    pub(super) fn handle_internal_event_with_forwarding(&mut self, ev: AppEvent) -> bool {
+        let changed = self.forward_internal_event(ev);
+        if std::mem::take(&mut self.app.pane_order_changed) {
+            self.reapply_controlled_shell_tab_geometry(false);
+            return true;
+        }
+        changed
+    }
+
+    fn forward_internal_event(&mut self, mut ev: AppEvent) -> bool {
         if self.host_shutdown_requested() {
             return false;
         }

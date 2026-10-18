@@ -100,6 +100,7 @@ operations::define_operations! {
     LayoutApply(LayoutApplyParams) => "layout.apply", true, false;
     LayoutSetSplitRatio(LayoutSetSplitRatioParams) => "layout.set_split_ratio", true, true;
     LayoutSelect(LayoutSelectParams) => "layout.select", true, true;
+    LayoutSortByAge(LayoutSortByAgeParams) => "layout.sort_by_age", true, true;
     PaneNeighbor(PaneNeighborParams) => "pane.neighbor", false, false;
     PaneEdges(PaneEdgesParams) => "pane.edges", false, false;
     PaneFocusDirection(PaneFocusDirectionParams) => "pane.focus_direction", true, true;

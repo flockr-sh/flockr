@@ -62,6 +62,7 @@ pub(crate) enum KeybindAction {
     ResizePaneUp,
     ResizePaneRight,
     SelectLayout(crate::api::schema::LayoutSelection),
+    SortPanesByAge,
     ToggleSidebar,
     CyclePaneNext,
     CyclePanePrevious,
@@ -340,6 +341,11 @@ pub(crate) fn action_table(
             &keybinds.spread_layout,
             KeybindAction::SelectLayout(LayoutSelection::Spread),
             "spread panes evenly",
+        ),
+        (
+            &keybinds.sort_panes_by_age,
+            KeybindAction::SortPanesByAge,
+            "sort panes by age",
         ),
         (
             &keybinds.toggle_sidebar,

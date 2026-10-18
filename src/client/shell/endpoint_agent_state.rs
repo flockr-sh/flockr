@@ -285,6 +285,7 @@ mod tests {
             tokens: Vec::new(),
             focused: true,
             branch: None,
+            session_empty: false,
         }
     }
 

@@ -1089,6 +1089,10 @@ pub struct ClientShellAgent {
     /// Git branch of the agent's own working directory. Absent from older servers.
     #[serde(default)]
     pub branch: Option<String>,
+    /// The agent is on a fresh session it has not worked in yet. Absent from
+    /// older servers.
+    #[serde(default)]
+    pub session_empty: bool,
 }
 
 /// Origin-relative geometry for one pane in a rendered pane surface.

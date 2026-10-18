@@ -199,6 +199,22 @@ fn status_icon(
     }
 }
 
+/// Status icon and color for an agent row. An idle agent on a fresh session it
+/// has not worked in yet shows a dotted ring, so empty panes stand out.
+fn agent_row_icon(
+    status: crate::api::schema::AgentStatus,
+    session_empty: bool,
+    config: &ClientShellConfig,
+) -> (&'static str, ratatui::style::Color) {
+    if session_empty && status == crate::api::schema::AgentStatus::Idle {
+        return ("◌", config.palette.overlay1);
+    }
+    (
+        status_icon(status, config.status_indicators),
+        status_icon_color(status, config),
+    )
+}
+
 fn status_dot(status: crate::api::schema::AgentStatus) -> &'static str {
     status_icon(status, crate::config::StatusIndicatorStyle::Dots)
 }

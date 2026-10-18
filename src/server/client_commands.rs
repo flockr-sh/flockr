@@ -266,6 +266,10 @@ mod tests {
             actual.remove("layout.select").as_deref(),
             Some("28a477b7d1e86b714206406b2702489aacf3a2e75d25a6a764608402358e8942")
         );
+        assert_eq!(
+            actual.remove("layout.sort_by_age").as_deref(),
+            Some("0961e92445bdae3d2bd947adf6cf9941fd5c7faf63b55835fd096f37d725c44c")
+        );
 
         assert_eq!(
             actual, expected,

@@ -113,6 +113,19 @@ pub struct PaneSnapshot {
     pub launch_argv: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_launch: Option<PaneAgentLaunchSnapshot>,
+    /// Carried across a server handoff only; a cold restore starts agents
+    /// over and ignores it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fresh_session: Option<PaneFreshSessionSnapshot>,
+}
+
+/// A pane's last fresh agent session. See [`crate::pane::FreshSession`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PaneFreshSessionSnapshot {
+    pub order: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_ref: Option<crate::agent_resume::AgentSessionRef>,
+    pub used: bool,
 }
 
 /// The options an agent was started with, replayed when Flockr resumes its
@@ -398,6 +411,15 @@ fn capture_tab(
                 agent: resume.agent.clone(),
                 argv: resume.argv.clone(),
             });
+        let fresh_session = tab
+            .panes
+            .get(id)
+            .and_then(|pane| pane.fresh_session.as_ref())
+            .map(|fresh| PaneFreshSessionSnapshot {
+                order: fresh.order,
+                session_ref: fresh.session_ref.clone(),
+                used: fresh.used,
+            });
         panes.insert(
             id.raw(),
             PaneSnapshot {
@@ -409,6 +431,7 @@ fn capture_tab(
                 agent_resume,
                 launch_argv,
                 agent_launch,
+                fresh_session,
             },
         );
     }
@@ -729,6 +752,7 @@ mod tests {
                 agent_resume: None,
                 launch_argv: None,
                 agent_launch: None,
+                fresh_session: None,
             },
         );
         panes.insert(
@@ -742,6 +766,7 @@ mod tests {
                 agent_resume: None,
                 launch_argv: None,
                 agent_launch: None,
+                fresh_session: None,
             },
         );
 
@@ -1463,6 +1488,7 @@ mod tests {
                 agent_resume: None,
                 launch_argv: None,
                 agent_launch: None,
+                fresh_session: None,
             },
         );
         panes.insert(
@@ -1478,6 +1504,7 @@ mod tests {
                 agent_resume: None,
                 launch_argv: None,
                 agent_launch: None,
+                fresh_session: None,
             },
         );
 
