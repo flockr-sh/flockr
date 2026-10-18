@@ -66,7 +66,7 @@ pub enum ToastDelivery {
     #[default]
     Off,
     // Upstream's name for in-app toasts, so a copied upstream config still parses.
-    #[serde(alias = "herdr")] // rebrand: keep
+    #[serde(alias = "herdr")]
     Flockr,
     Terminal,
     System,
@@ -2138,7 +2138,7 @@ seen_delay_ms = 750
         let config: Config = toml::from_str(
             r#"
 [ui.toast]
-delivery = "herdr" # rebrand: keep
+delivery = "herdr"
 "#,
         )
         .unwrap();

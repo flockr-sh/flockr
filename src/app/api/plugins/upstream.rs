@@ -1,13 +1,12 @@
 //! Lets plugins written for upstream run unchanged: every `FLOCKR_*` variable
 //! a plugin gets also comes as its upstream name, and the upstream command
-//! name runs this binary. Lines naming upstream carry "rebrand: keep" so the
-//! rebrand script leaves them alone.
+//! name runs this binary.
 
-const UPSTREAM_ENV_PREFIX: &str = "HERDR_"; // rebrand: keep
+const UPSTREAM_ENV_PREFIX: &str = "HERDR_";
 
 // Only Unix links the command; Windows still names it in tests.
 #[cfg_attr(not(unix), allow(dead_code))]
-const UPSTREAM_COMMAND: &str = "herdr"; // rebrand: keep
+const UPSTREAM_COMMAND: &str = "herdr";
 
 /// The upstream name for a `FLOCKR_*` variable.
 pub(crate) fn upstream_env_key(key: &str) -> Option<String> {

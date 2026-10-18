@@ -65,10 +65,9 @@ check: ci windows-lint
 check:
     & .\scripts\windows_check.ps1 -Mode check
 
-# Install repo-local git hooks and the merge driver that keeps flockr's own docs on upstream merges
+# Install repo-local git hooks
 install-hooks:
     git config core.hooksPath .githooks
-    git config merge.ours.driver true
     chmod +x .githooks/pre-commit
     @echo "installed git hooks from .githooks"
 

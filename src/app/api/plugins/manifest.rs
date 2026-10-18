@@ -15,7 +15,7 @@ struct RawPluginManifest {
     version: String,
     // Upstream manifests name the same gate after upstream. Flockr keeps
     // upstream's version number, so the check is the same.
-    #[serde(default, alias = "min_herdr_version")] // rebrand: keep
+    #[serde(default, alias = "min_herdr_version")]
     min_flockr_version: Option<String>,
     #[serde(default)]
     description: Option<String>,
@@ -124,7 +124,7 @@ pub(crate) fn load_plugin_manifest(
     let path = std::path::PathBuf::from(path);
     let manifest_path = if path.is_dir() {
         let manifest = path.join("flockr-plugin.toml");
-        let upstream = path.join("herdr-plugin.toml"); // rebrand: keep
+        let upstream = path.join("herdr-plugin.toml");
         if !manifest.exists() && upstream.exists() {
             upstream
         } else {

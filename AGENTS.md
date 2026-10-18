@@ -1,25 +1,22 @@
 # flockr
 
-Terminal workspace for coding agents. A fork of [herdr](https://github.com/herdrdev/herdr)
-(Apache-2.0) with fixes and features upstream won't take. Runs beside a stock
+Terminal workspace for coding agents. A hard fork of
+[herdr](https://github.com/herdrdev/herdr) (Apache-2.0). Runs beside a stock
 herdr: own binary, `~/.config/flockr` (`flockr-dev` for debug builds), own
 socket, `FLOCKR_*` env vars, own integration hooks.
 
-## Upstream
+## Origin
 
-- `origin` is `dmkenney/flockr`, `upstream` is `herdrdev/herdr`. Work on `master`.
-- Code is renamed herdr → flockr by `scripts/flockr-rebrand`. It is idempotent.
-  It also deletes upstream-only files (release, website, docs snapshots,
-  contributor policy, CI, nix) listed in its `prune` array.
-- Sync: `git fetch upstream && git merge upstream/master`, resolve conflicts,
-  run `scripts/flockr-rebrand`, build, test, commit. `just install-hooks` sets
-  the `merge=ours` driver that keeps flockr's own README, AGENTS.md, and
-  justfile on merges (`.gitattributes`).
-- The rebrand rewrites every "herdr" in `src/`, `tests/`, `skills/`,
-  `docs/next/api/`, and `.agents/`. When a comment or string must name upstream,
-  write "upstream", or add a protected pattern to the script.
+- Forked from herdr's `master` at `143bf5fd` (after herdr v0.9.5). flockr does
+  not merge from herdr; changes here are flockr's own. Work on `master`;
+  `origin` is `dmkenney/flockr`.
+- Versions are flockr's own, starting at 1.0.0. `CHANGELOG.md` holds flockr's
+  changes and links to herdr's changelog for history before the fork.
+- Name things flockr. "herdr" stays only where flockr accepts herdr plugins and
+  configs (`src/app/api/plugins/upstream.rs`, the `min_herdr_version` and
+  `delivery = "herdr"` aliases).
 - Self-update and background auto-update are off (`src/update.rs`,
-  `src/app/mod.rs`): the upstream feed would install herdr over flockr.
+  `src/app/mod.rs`).
 
 ## Toolchain
 
@@ -103,8 +100,7 @@ Client and server talk over a versioned endpoint protocol.
 - New JSON fields are optional or defaulted; new enums need an `Unknown`
   fallback. Treat enums reachable from a frozen codec as append-closed.
 - `tests/fixtures/endpoint-method-shapes-v1.json` and the frozen digests guard
-  this. Don't re-bless them for a wire change. Exception: the rebrand changes
-  two schema descriptions, and the script rewrites those two digests.
+  this. Don't re-bless them for a wire change.
 - Bump `src/protocol/wire.rs::PROTOCOL_VERSION` only for an incompatible wire
   change, once per release.
 

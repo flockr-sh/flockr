@@ -1,7 +1,2 @@
 * text=auto eol=lf
 packaging/windows/licenses/* binary
-# Keep flockr's own versions of these on upstream merges (needs
-# `just install-hooks`, which sets merge.ours.driver).
-README.md merge=ours
-AGENTS.md merge=ours
-justfile merge=ours
