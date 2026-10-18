@@ -12,9 +12,34 @@ either one seeing the other.
 
 ## Install
 
-Build from source. Needs Rust (via [rustup](https://rustup.rs)) and Zig
-0.16.0; with [mise](https://mise.jdx.dev), `mise install` in the repo sets up
-Zig.
+macOS and Linux:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/flockr-sh/flockr/master/distribution/install.sh | sh
+```
+
+This installs to `~/.local/bin` (set `FLOCKR_INSTALL_DIR` to change it) and
+checks the SHA-256 of the download.
+
+Windows:
+
+```powershell
+powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/flockr-sh/flockr/master/distribution/install.ps1 | iex"
+```
+
+[mise](https://mise.jdx.dev):
+
+```bash
+mise use -g github:flockr-sh/flockr
+```
+
+Binaries for each release are also on the
+[releases page](https://github.com/flockr-sh/flockr/releases).
+
+### Build from source
+
+Needs Rust (via [rustup](https://rustup.rs)) and Zig 0.16.0; with
+[mise](https://mise.jdx.dev), `mise install` in the repo sets up Zig.
 
 ```bash
 mise exec -- cargo build --release --locked
@@ -86,8 +111,9 @@ See [CHANGELOG.md](CHANGELOG.md) for each release.
 
 ## Platforms
 
-flockr is developed on Linux. The macOS and Windows code comes from herdr and
-has not been tested in flockr yet.
+flockr is developed on Linux. Release binaries are built for macOS and
+Windows too, but those come from herdr's code and have not been tested in
+flockr yet.
 
 ## License
 
