@@ -58,6 +58,13 @@ pub struct PaneLinkActivateParams {
     pub offset_from_bottom: Option<u64>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PaneLinkListParams {
+    pub pane_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offset_from_bottom: Option<u64>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PaneDirection {
@@ -775,4 +782,14 @@ pub struct PaneLinkRegion {
     pub row: u16,
     pub start_col: u16,
     pub end_col: u16,
+}
+
+/// A web link visible on a pane's current viewport. `viewport_row` and `col`
+/// name its first visible cell, which `pane.link.activate` accepts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PaneLink {
+    pub url: String,
+    pub viewport_row: u16,
+    pub col: u16,
+    pub regions: Vec<PaneLinkRegion>,
 }

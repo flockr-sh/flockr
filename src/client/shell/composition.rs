@@ -419,6 +419,7 @@ impl ClientShellState {
             frame.replace_from_ratatui_buffer_preserving_effects(&composed, cursor);
         }
         self.render_link_hover(&mut frame, &mut occlusion);
+        self.render_link_hints(&mut frame, &mut occlusion);
         if self.mode == ClientShellMode::Copy {
             frame.cursor = None;
             if let Some(copy_mode) = self.copy_mode.as_ref() {

@@ -448,6 +448,14 @@ impl TerminalRuntime {
         self.0.link_target_at(col, row)
     }
 
+    pub(crate) fn visible_links(
+        &self,
+        resolve: fn(&str, usize) -> Option<std::ops::Range<usize>>,
+        url_of: fn(crate::ghostty::LinkTarget) -> Option<String>,
+    ) -> Vec<crate::api::schema::PaneLink> {
+        self.0.visible_links(resolve, url_of)
+    }
+
     pub fn kitty_image_placements_with_data_filter<F>(
         &self,
         needs_data: F,

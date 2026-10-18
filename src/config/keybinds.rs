@@ -398,6 +398,7 @@ pub struct Keybinds {
     pub edit_scrollback: ActionKeybinds,
     pub clear_pane: ActionKeybinds,
     pub copy_mode: ActionKeybinds,
+    pub link_hints: ActionKeybinds,
     pub focus_pane_left: ActionKeybinds,
     pub focus_pane_down: ActionKeybinds,
     pub focus_pane_up: ActionKeybinds,
@@ -599,6 +600,7 @@ impl Config {
             edit_scrollback: empty_action!(),
             clear_pane: empty_action!(),
             copy_mode: empty_action!(),
+            link_hints: empty_action!(),
             focus_pane_left: empty_action!(),
             focus_pane_down: empty_action!(),
             focus_pane_up: empty_action!(),
@@ -788,6 +790,7 @@ impl Config {
             apply_action!(keybinds.edit_scrollback, edit_scrollback, source);
             apply_action!(keybinds.clear_pane, clear_pane, source);
             apply_action!(keybinds.copy_mode, copy_mode, source);
+            apply_action!(keybinds.link_hints, link_hints, source);
             apply_action!(keybinds.focus_pane_left, focus_pane_left, source);
             apply_action!(keybinds.focus_pane_down, focus_pane_down, source);
             apply_action!(keybinds.focus_pane_up, focus_pane_up, source);
@@ -1952,6 +1955,36 @@ focus_next_attention = "prefix+shift+a"
             vec![BindingTrigger::Prefix((
                 KeyCode::Char('['),
                 KeyModifiers::empty()
+            ))]
+        );
+    }
+
+    #[test]
+    fn link_hints_defaults_to_prefix_f() {
+        let kb = Config::default().keybinds();
+        assert_eq!(
+            binding_triggers(&kb.link_hints),
+            vec![BindingTrigger::Prefix((
+                KeyCode::Char('f'),
+                KeyModifiers::empty()
+            ))]
+        );
+    }
+
+    #[test]
+    fn link_hints_key_parses_from_config() {
+        let config: Config = toml::from_str(
+            r#"
+[keys]
+link_hints = "ctrl+shift+o"
+"#,
+        )
+        .unwrap();
+        assert_eq!(
+            binding_triggers(&config.keybinds().link_hints),
+            vec![BindingTrigger::Direct((
+                KeyCode::Char('o'),
+                KeyModifiers::CONTROL | KeyModifiers::SHIFT
             ))]
         );
     }

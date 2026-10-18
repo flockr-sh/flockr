@@ -7,11 +7,11 @@ pub(crate) mod upstream;
 
 use super::responses::{encode_error, encode_success};
 use crate::api::schema::{
-    InstalledPluginInfo, PaneLinkActivateParams, PluginActionInfo, PluginActionInvokeParams,
-    PluginActionListParams, PluginLinkParams, PluginListParams, PluginLogListParams,
-    PluginManifestAction, PluginManifestLinkHandler, PluginPaneCloseParams, PluginPaneFocusParams,
-    PluginPaneInfo, PluginPaneOpenParams, PluginPanePlacement, PluginSetEnabledParams,
-    PluginUnlinkParams, ResponseResult,
+    InstalledPluginInfo, PaneLinkActivateParams, PaneLinkListParams, PluginActionInfo,
+    PluginActionInvokeParams, PluginActionListParams, PluginLinkParams, PluginListParams,
+    PluginLogListParams, PluginManifestAction, PluginManifestLinkHandler, PluginPaneCloseParams,
+    PluginPaneFocusParams, PluginPaneInfo, PluginPaneOpenParams, PluginPanePlacement,
+    PluginSetEnabledParams, PluginUnlinkParams, ResponseResult,
 };
 use crate::app::App;
 pub(super) use manifest::normalize_plugin_id;
@@ -263,8 +263,31 @@ impl App {
         operation: &str,
         read: impl FnOnce(&crate::terminal::TerminalRuntime, u16, u16) -> T,
     ) -> Result<(crate::layout::PaneId, T), String> {
+        self.read_checked_pane_viewport(
+            id,
+            &params.pane_id,
+            params.content_revision,
+            params.offset_from_bottom,
+            operation,
+            |runtime| read(runtime, params.col, params.viewport_row),
+        )
+        .map(|(pane_id, value, _)| (pane_id, value))
+    }
+
+    /// Reads a visible pane's viewport, rejecting the read if the content or
+    /// scroll position differs from what the caller expects or changes during
+    /// it. Returns the content revision that was read.
+    fn read_checked_pane_viewport<T>(
+        &self,
+        id: &str,
+        pane_id: &str,
+        expected_revision: Option<u64>,
+        expected_offset: Option<u64>,
+        operation: &str,
+        read: impl FnOnce(&crate::terminal::TerminalRuntime) -> T,
+    ) -> Result<(crate::layout::PaneId, T, u64), String> {
         let error = |code, message: &str| encode_error(id.to_owned(), code, message);
-        let Some((ws_idx, pane_id)) = self.parse_pane_id(&params.pane_id) else {
+        let Some((ws_idx, pane_id)) = self.parse_pane_id(pane_id) else {
             return Err(error("pane_not_found", "pane not found"));
         };
         if !self.state.pane_visible_on_active_surface(ws_idx, pane_id) {
@@ -279,10 +302,7 @@ impl App {
         let current_offset = runtime
             .scroll_metrics()
             .map(|metrics| metrics.offset_from_bottom as u64);
-        if params
-            .offset_from_bottom
-            .is_some_and(|expected| current_offset != Some(expected))
-        {
+        if expected_offset.is_some_and(|expected| current_offset != Some(expected)) {
             return Err(error(
                 "stale_content",
                 &format!("pane viewport changed before link {operation}"),
@@ -290,16 +310,14 @@ impl App {
         }
         let content_revision = runtime.content_seq();
         if content_revision % 2 != 0
-            || params
-                .content_revision
-                .is_some_and(|expected| expected != content_revision)
+            || expected_revision.is_some_and(|expected| expected != content_revision)
         {
             return Err(error(
                 "stale_content",
                 &format!("pane content changed before link {operation}"),
             ));
         }
-        let value = read(runtime, params.col, params.viewport_row);
+        let value = read(runtime);
         if runtime.content_seq() != content_revision
             || runtime
                 .scroll_metrics()
@@ -311,7 +329,39 @@ impl App {
                 &format!("pane content or viewport changed during link {operation}"),
             ));
         }
-        Ok((pane_id, value))
+        Ok((pane_id, value, content_revision))
+    }
+
+    pub(super) fn handle_pane_link_list(
+        &mut self,
+        id: String,
+        params: PaneLinkListParams,
+    ) -> String {
+        match self.read_checked_pane_viewport(
+            &id,
+            &params.pane_id,
+            None,
+            params.offset_from_bottom,
+            "listing",
+            |runtime| {
+                runtime.visible_links(
+                    crate::app::actions::url_byte_range,
+                    crate::app::actions::url_from_link_target,
+                )
+            },
+        ) {
+            Ok((_, mut links, content_revision)) => {
+                links.retain(|link| crate::app::actions::safe_web_url(&link.url).is_some());
+                encode_success(
+                    id,
+                    ResponseResult::PaneLinkList {
+                        content_revision,
+                        links,
+                    },
+                )
+            }
+            Err(error) => error,
+        }
     }
 
     pub(super) fn handle_pane_link_resolve(

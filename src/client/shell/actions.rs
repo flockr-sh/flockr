@@ -179,6 +179,10 @@ impl ClientShellState {
                     outcome.repaint = true;
                     return;
                 }
+                if action == crate::input::KeybindAction::LinkHints {
+                    self.request_link_hints(outcome);
+                    return;
+                }
                 if action == crate::input::KeybindAction::CopyMode {
                     if self.enter_copy_mode(outcome) {
                         outcome.repaint = true;
@@ -682,6 +686,18 @@ impl ClientShellState {
                 generation,
             } => {
                 return self.complete_word_selection_row(pane_id, absolute_row, generation, result);
+            }
+            PendingEndpointKind::PaneLinkList {
+                pane_id,
+                offset_from_bottom,
+            } => {
+                return (
+                    self.complete_link_hints(pane_id, offset_from_bottom, result),
+                    Vec::new(),
+                );
+            }
+            PendingEndpointKind::LinkHintActivate { url } => {
+                return (false, self.complete_link_hint_activate(url, result));
             }
             PendingEndpointKind::PaneLinkActivate {
                 pane_id,

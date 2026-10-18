@@ -1190,6 +1190,9 @@ impl App {
             Method::PaneLinkResolve(params) => {
                 return self.handle_pane_link_resolve(request.id, params);
             }
+            Method::PaneLinkList(params) => {
+                return self.handle_pane_link_list(request.id, params);
+            }
             Method::PaneLinkActivate(params) => {
                 return self.handle_pane_link_activate(request.id, params);
             }

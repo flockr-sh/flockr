@@ -255,6 +255,10 @@ mod tests {
             Some("f5e4a3e01453ae7b188f127ce951c12c20e0bebcc17cc364eeb6d1a01fd5bf81")
         );
         assert_eq!(
+            actual.remove("pane.link.list").as_deref(),
+            Some("a832272ea30affc161e2444dc62f6cf3e8ffa2fb7140d93f6f0779941d4005c9")
+        );
+        assert_eq!(
             actual.remove("pane.mark_unread").as_deref(),
             Some("a315674137bc4cfa8228c8a90798f02fff88823e282de328ef6578f32dc29751")
         );

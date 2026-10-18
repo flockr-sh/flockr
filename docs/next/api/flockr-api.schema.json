@@ -2727,6 +2727,25 @@
           ],
           "type": "object"
         },
+        "PaneLinkListParams": {
+          "properties": {
+            "offset_from_bottom": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "pane_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "pane_id"
+          ],
+          "type": "object"
+        },
         "PaneListParams": {
           "properties": {
             "workspace_id": {
@@ -6406,6 +6425,22 @@
             "params"
           ],
           "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "pane.link.list",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/PaneLinkListParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
         }
       ],
       "properties": {
@@ -8202,6 +8237,39 @@
             "direction",
             "ratio",
             "rect"
+          ],
+          "type": "object"
+        },
+        "PaneLink": {
+          "description": "A web link visible on a pane's current viewport. `viewport_row` and `col`\nname its first visible cell, which `pane.link.activate` accepts.",
+          "properties": {
+            "col": {
+              "format": "uint16",
+              "maximum": 65535,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "regions": {
+              "items": {
+                "$ref": "#/schemas/success_response/$defs/PaneLinkRegion"
+              },
+              "type": "array"
+            },
+            "url": {
+              "type": "string"
+            },
+            "viewport_row": {
+              "format": "uint16",
+              "maximum": 65535,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "url",
+            "viewport_row",
+            "col",
+            "regions"
           ],
           "type": "object"
         },
@@ -10376,6 +10444,31 @@
               "required": [
                 "type",
                 "regions"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "content_revision": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "links": {
+                  "items": {
+                    "$ref": "#/schemas/success_response/$defs/PaneLink"
+                  },
+                  "type": "array"
+                },
+                "type": {
+                  "const": "pane_link_list",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "content_revision",
+                "links"
               ],
               "type": "object"
             },

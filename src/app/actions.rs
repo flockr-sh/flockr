@@ -1151,7 +1151,7 @@ impl AppState {
     }
 }
 
-pub(super) fn url_from_link_target(target: crate::ghostty::LinkTarget) -> Option<String> {
+pub(crate) fn url_from_link_target(target: crate::ghostty::LinkTarget) -> Option<String> {
     match target {
         crate::ghostty::LinkTarget::Uri(uri) => Some(uri),
         crate::ghostty::LinkTarget::Text { text, clicked_byte } => {
@@ -1212,7 +1212,7 @@ fn url_at_byte(text: &str, clicked_byte: usize) -> Option<&str> {
     text.get(range)
 }
 
-pub(super) fn url_byte_range(text: &str, clicked_byte: usize) -> Option<std::ops::Range<usize>> {
+pub(crate) fn url_byte_range(text: &str, clicked_byte: usize) -> Option<std::ops::Range<usize>> {
     let clicked_idx = text.get(..clicked_byte)?.chars().count();
     let cells = text_cells(text);
     let span = url_span_at_column(&cells, clicked_idx)?;

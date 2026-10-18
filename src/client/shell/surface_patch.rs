@@ -244,6 +244,7 @@ impl ClientShellState {
                 }
             }
             self.invalidate_link_hover();
+            self.invalidate_link_hints();
             self.reconcile_input_source();
         } else {
             let mut next = current.clone();

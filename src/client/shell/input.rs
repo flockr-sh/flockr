@@ -727,6 +727,10 @@ impl ClientShellState {
                 self.route_resize_key(key, outcome);
                 None
             }
+            ClientShellMode::LinkHints => {
+                self.route_link_hints_key(key, outcome);
+                None
+            }
             ClientShellMode::Copy => {
                 if self
                     .copy_mode

@@ -286,6 +286,7 @@ pub(super) enum ClientShellMode {
     Navigate,
     Resize,
     Copy,
+    LinkHints,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -673,6 +674,13 @@ pub(super) enum PendingEndpointKind {
     PaneLinkResolve {
         target: super::link_hover::LinkHoverTarget,
     },
+    PaneLinkList {
+        pane_id: String,
+        offset_from_bottom: Option<u64>,
+    },
+    LinkHintActivate {
+        url: String,
+    },
     PaneLinkActivate {
         pane_id: String,
         inner_rect: Rect,
@@ -933,6 +941,7 @@ pub(crate) struct ClientShellState {
     pub(super) previous_pane_id: Option<String>,
     pub(super) pane_mouse_gesture: Option<ClientPaneMouseGesture>,
     pub(super) link_hover: Option<super::link_hover::LinkHover>,
+    pub(super) link_hints: Option<super::link_hints::LinkHints>,
     pub(super) url_click_consumes_until_up: bool,
     /// The host terminal reports key releases (Kitty event types), so text
     /// presses can be tracked until their release arrives.
@@ -1113,6 +1122,7 @@ impl ClientShellState {
             previous_pane_id: None,
             pane_mouse_gesture: None,
             link_hover: None,
+            link_hints: None,
             url_click_consumes_until_up: false,
             host_reports_key_releases: false,
             host_erase_is_ctrl_h: false,
@@ -1311,6 +1321,7 @@ impl ClientShellState {
         self.previous_pane_id = None;
         self.pane_mouse_gesture = None;
         self.link_hover = None;
+        self.exit_link_hints();
         self.url_click_consumes_until_up = false;
         self.replaying_url_click = false;
         self.selection = None;
@@ -1840,6 +1851,7 @@ impl ClientShellState {
         self.pane_surface = Some(surface);
         self.pane_surface_generation = self.active_snapshot_generation;
         self.invalidate_link_hover();
+        self.invalidate_link_hints();
         self.resume_mobile_switcher_if_ready();
         self.reconcile_input_source();
     }

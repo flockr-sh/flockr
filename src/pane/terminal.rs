@@ -573,6 +573,14 @@ impl PaneTerminal {
         self.ghostty.link_target_at(col, row)
     }
 
+    pub(crate) fn visible_links(
+        &self,
+        resolve: fn(&str, usize) -> Option<std::ops::Range<usize>>,
+        url_of: fn(crate::ghostty::LinkTarget) -> Option<String>,
+    ) -> Vec<crate::api::schema::PaneLink> {
+        self.ghostty.visible_links(resolve, url_of)
+    }
+
     pub(crate) fn kitty_graphics_may_have_placements(&self) -> bool {
         self.ghostty.kitty_graphics_may_have_placements()
     }
@@ -2305,6 +2313,20 @@ impl GhosttyPaneTerminal {
             .flatten()
     }
 
+    /// Every link on the viewport: OSC 8 runs plus plain-text URLs, the latter
+    /// resolved the same way a click at their first cell would be.
+    pub(crate) fn visible_links(
+        &self,
+        resolve: fn(&str, usize) -> Option<std::ops::Range<usize>>,
+        url_of: fn(crate::ghostty::LinkTarget) -> Option<String>,
+    ) -> Vec<crate::api::schema::PaneLink> {
+        self.core
+            .lock()
+            .ok()
+            .and_then(|mut core| ghostty_visible_links(&mut core, resolve, url_of).ok())
+            .unwrap_or_default()
+    }
+
     pub fn extract_selection(&self, selection: &crate::selection::Selection) -> Option<String> {
         self.core
             .lock()
@@ -2807,6 +2829,115 @@ fn ghostty_visible_hyperlinks(
         }
         y += 1;
     }
+    Ok(links)
+}
+
+fn ghostty_visible_links(
+    core: &mut GhosttyPaneCore,
+    resolve: fn(&str, usize) -> Option<std::ops::Range<usize>>,
+    url_of: fn(crate::ghostty::LinkTarget) -> Option<String>,
+) -> Result<Vec<crate::api::schema::PaneLink>, crate::ghostty::Error> {
+    use crate::api::schema::{PaneLink, PaneLinkRegion};
+
+    let GhosttyPaneCore {
+        terminal,
+        render_state,
+        ..
+    } = core;
+    render_state.update(terminal)?;
+    let cols = terminal.cols()?;
+    let mut row_iterator = crate::ghostty::RowIterator::new()?;
+    let mut row_cells = crate::ghostty::RowCells::new()?;
+    let mut rows = render_state.populate_row_iterator(&mut row_iterator)?;
+    let mut links: Vec<PaneLink> = Vec::new();
+    let mut text_starts = Vec::new();
+    let mut y = 0u16;
+    while rows.next() {
+        let mut cells = rows.populate_cells(&mut row_cells)?;
+        let mut line = String::new();
+        let mut line_cols = Vec::new();
+        let mut x = 0u16;
+        while x < cols && cells.next() {
+            let uri = if cells.has_hyperlink()? {
+                terminal.viewport_hyperlink_uri(x, y.into())?
+            } else {
+                None
+            };
+            if let Some(uri) = uri {
+                let cell = PaneLinkRegion {
+                    row: y,
+                    start_col: x,
+                    end_col: x,
+                };
+                // Join a run of cells that share a destination, across a wrap too.
+                let run = links.last_mut().filter(|link| {
+                    link.url == uri
+                        && link.regions.last().is_some_and(|last| {
+                            (last.row == y && last.end_col + 1 == x)
+                                || (last.row + 1 == y && x == 0 && last.end_col + 1 == cols)
+                        })
+                });
+                match run {
+                    Some(link) => match link.regions.last_mut().filter(|last| last.row == y) {
+                        Some(last) => last.end_col = x,
+                        None => link.regions.push(cell),
+                    },
+                    None => links.push(PaneLink {
+                        url: uri,
+                        viewport_row: y,
+                        col: x,
+                        regions: vec![cell],
+                    }),
+                }
+            }
+            let symbol = ghostty_cell_symbol(&cells)?;
+            line_cols.extend(std::iter::repeat_n(x, symbol.len()));
+            line.push_str(&symbol);
+            x += 1;
+        }
+        for (byte, _) in line.match_indices("http") {
+            let rest = &line[byte..];
+            if rest.starts_with("https://") || rest.starts_with("http://") {
+                text_starts.push((line_cols[byte], y));
+            }
+        }
+        y += 1;
+    }
+    for (col, row) in text_starts {
+        let covered = links.iter().any(|link| {
+            link.regions
+                .iter()
+                .any(|region| region.row == row && col >= region.start_col && col <= region.end_col)
+        });
+        if covered {
+            continue;
+        }
+        let Some(url) = terminal
+            .viewport_link_target(col, u32::from(row))?
+            .and_then(url_of)
+        else {
+            continue;
+        };
+        let regions: Vec<PaneLinkRegion> = terminal
+            .viewport_link_regions(col, u32::from(row), resolve)?
+            .into_iter()
+            .map(|region| PaneLinkRegion {
+                row: region.row,
+                start_col: region.start_col,
+                end_col: region.end_col,
+            })
+            .collect();
+        let Some(first) = regions.first().copied() else {
+            continue;
+        };
+        links.push(PaneLink {
+            url,
+            viewport_row: first.row,
+            col: first.start_col,
+            regions,
+        });
+    }
+    links.sort_by_key(|link| (link.viewport_row, link.col));
     Ok(links)
 }
 
@@ -3717,6 +3848,46 @@ mod tests {
             pane.collect_dirty_patch(4, 3),
             TerminalDirtyPatchOutcome::Clean
         ));
+    }
+
+    #[test]
+    fn visible_links_lists_text_urls_and_osc8_runs_in_screen_order() {
+        let (tx, _rx) = mpsc::channel(4);
+        let mut terminal = crate::ghostty::Terminal::new(20, 4, 200).unwrap();
+        terminal.write(
+            b"\x1b]8;;https://osc8.example/\x1b\\click\x1b]8;;\x1b\\ x\r\n(https://example.com/abcdefghij), not file:///tmp/a",
+        );
+        let pane = PaneTerminal::new(GhosttyPaneTerminal::new(terminal, tx).unwrap());
+
+        let links = pane.visible_links(
+            crate::app::actions::url_byte_range,
+            crate::app::actions::url_from_link_target,
+        );
+
+        let summary = links
+            .iter()
+            .map(|link| {
+                (
+                    link.url.as_str(),
+                    (link.viewport_row, link.col),
+                    link.regions
+                        .iter()
+                        .map(|region| (region.row, region.start_col, region.end_col))
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            summary,
+            vec![
+                ("https://osc8.example/", (0, 0), vec![(0, 0, 4)]),
+                (
+                    "https://example.com/abcdefghij",
+                    (1, 1),
+                    vec![(1, 1, 19), (2, 0, 10)]
+                ),
+            ]
+        );
     }
 
     #[test]

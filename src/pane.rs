@@ -3745,6 +3745,14 @@ impl PaneRuntime {
         self.terminal.link_target_at(col, row)
     }
 
+    pub(crate) fn visible_links(
+        &self,
+        resolve: fn(&str, usize) -> Option<std::ops::Range<usize>>,
+        url_of: fn(crate::ghostty::LinkTarget) -> Option<String>,
+    ) -> Vec<crate::api::schema::PaneLink> {
+        self.terminal.visible_links(resolve, url_of)
+    }
+
     pub(crate) fn kitty_graphics_may_have_placements(&self) -> bool {
         self.terminal.kitty_graphics_may_have_placements()
     }

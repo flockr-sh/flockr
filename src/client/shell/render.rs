@@ -121,6 +121,18 @@ pub(super) fn render_mode_bar(
                     (" done".to_owned(), base),
                 ]);
             }
+            ClientShellMode::LinkHints => {
+                segments.extend([
+                    (" LINKS ".to_owned(), mode_style),
+                    (" ".to_owned(), base),
+                    ("label".to_owned(), key),
+                    (" open  ".to_owned(), base),
+                    ("shift+label".to_owned(), key),
+                    (" copy  ".to_owned(), base),
+                    ("esc".to_owned(), key),
+                    (" cancel".to_owned(), base),
+                ]);
+            }
             ClientShellMode::Copy => {
                 let copy_mode = copy_mode?;
                 if let Some(prompt) = copy_mode.search_prompt.as_ref() {
