@@ -41,6 +41,7 @@ use std::time::{Duration, Instant};
 
 pub(crate) const MIN_RENDER_INTERVAL: Duration = Duration::from_millis(16);
 const GIT_REMOTE_STATUS_REFRESH_INTERVAL: Duration = Duration::from_millis(1500);
+const GIT_DIFF_STAT_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
 const GIT_REPO_DISCOVERY_REFRESH_INTERVAL: Duration = Duration::from_secs(5 * 60);
 const AUTO_UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(30 * 60);
 const PENDING_AGENT_RESUME_THEME_WAIT: Duration = Duration::from_millis(750);
@@ -119,6 +120,7 @@ pub struct App {
     pub(crate) toast_deadline: Option<Instant>,
     pub(crate) last_api_notification_at: Option<Instant>,
     pub(crate) last_git_remote_status_refresh: Instant,
+    pub(crate) last_git_diff_stat_refresh: Instant,
     pub(crate) last_git_repo_discovery_refresh: Instant,
     pub(crate) git_refresh_in_flight: bool,
     pub(crate) git_refresh_due_after_in_flight: bool,
@@ -129,6 +131,8 @@ pub struct App {
         Vec<(String, crate::workspace::WorktreeSpaceMembership)>,
     pub(crate) restored_worktree_validation_retry_at: Option<Instant>,
     pub(crate) git_status_cache: HashMap<std::path::PathBuf, crate::workspace::GitStatusCacheEntry>,
+    /// Work checkout and branch per agent terminal id, from the git refresh.
+    pub(crate) agent_work_branches: HashMap<String, crate::workspace::AgentWorkBranch>,
     pub(crate) pending_api_worktree_creates: HashMap<std::path::PathBuf, u64>,
     pub(crate) worktree_read_slots: std::sync::Arc<tokio::sync::Semaphore>,
     pub(crate) pending_api_worktree_removes: HashMap<String, u64>,
@@ -636,6 +640,7 @@ impl App {
             event_tx,
             event_rx,
             last_git_remote_status_refresh: Instant::now() - GIT_REMOTE_STATUS_REFRESH_INTERVAL,
+            last_git_diff_stat_refresh: Instant::now() - GIT_DIFF_STAT_REFRESH_INTERVAL,
             last_git_repo_discovery_refresh: Instant::now(),
             git_refresh_in_flight: false,
             git_refresh_due_after_in_flight: false,
@@ -644,6 +649,7 @@ impl App {
             pending_restored_worktree_spaces: Vec::new(),
             restored_worktree_validation_retry_at: None,
             git_status_cache: HashMap::new(),
+            agent_work_branches: HashMap::new(),
             pending_api_worktree_creates: HashMap::new(),
             worktree_read_slots: std::sync::Arc::new(tokio::sync::Semaphore::new(8)),
             pending_api_worktree_removes: HashMap::new(),
@@ -1137,10 +1143,40 @@ mod tests {
         let changed = app.handle_internal_event_with_render_impact(AppEvent::GitStatusRefreshed {
             results: Vec::new(),
             cache_updates: Vec::new(),
+            agent_branches: None,
         });
 
         assert!(!changed);
         assert!(!app.git_refresh_in_flight);
+    }
+
+    #[test]
+    fn agent_branch_changes_have_render_impact_and_missing_ones_keep_the_last() {
+        let mut app = test_app();
+        let work = |checkout: &str, branch: &str| crate::workspace::AgentWorkBranch {
+            checkout: Some(checkout.into()),
+            branch: Some(branch.into()),
+            seen_start: 0,
+        };
+        let branches = HashMap::from([("term_1".to_string(), work("/repo", "main"))]);
+        let refreshed = |app: &mut App, agent_branches| {
+            app.handle_internal_event_with_render_impact(AppEvent::GitStatusRefreshed {
+                results: Vec::new(),
+                cache_updates: Vec::new(),
+                agent_branches,
+            })
+        };
+
+        assert!(refreshed(&mut app, Some(branches.clone())));
+        assert!(!refreshed(&mut app, Some(branches.clone())));
+        assert!(!refreshed(&mut app, None));
+        assert_eq!(app.agent_work_branches, branches);
+        // A new checkout on the same branch is kept but draws nothing new.
+        let moved = HashMap::from([("term_1".to_string(), work("/repo-wt", "main"))]);
+        assert!(!refreshed(&mut app, Some(moved.clone())));
+        assert_eq!(app.agent_work_branches, moved);
+        assert!(refreshed(&mut app, Some(HashMap::new())));
+        assert!(app.agent_work_branches.is_empty());
     }
 
     #[test]
@@ -1184,6 +1220,7 @@ mod tests {
         app.handle_internal_event(AppEvent::GitStatusRefreshed {
             results: Vec::new(),
             cache_updates: Vec::new(),
+            agent_branches: None,
         });
 
         assert!(!app.git_refresh_in_flight);
@@ -1207,9 +1244,11 @@ mod tests {
                 auto_label: "one".into(),
                 branch: Some("render-dirty-test".into()),
                 ahead_behind: Some((1, 0)),
+                diff_stat: None,
                 space: None,
             }],
             cache_updates: Vec::new(),
+            agent_branches: None,
         });
 
         assert!(app.render_dirty.is_pending());
@@ -1357,6 +1396,7 @@ mod tests {
             .try_send(AppEvent::GitStatusRefreshed {
                 results: Vec::new(),
                 cache_updates: Vec::new(),
+                agent_branches: None,
             })
             .unwrap();
 

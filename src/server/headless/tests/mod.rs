@@ -4795,9 +4795,11 @@ fn unchanged_git_refresh_does_not_request_headless_render() {
             auto_label: "cached".into(),
             branch: None,
             ahead_behind: None,
+            diff_stat: None,
             space: None,
         }],
         cache_updates: Vec::new(),
+        agent_branches: None,
     });
 
     assert!(!changed);
@@ -4853,9 +4855,11 @@ fn changed_git_refresh_requests_headless_render() {
             auto_label: "one".into(),
             branch: Some("changed".into()),
             ahead_behind: None,
+            diff_stat: None,
             space: None,
         }],
         cache_updates: Vec::new(),
+        agent_branches: None,
     });
 
     assert!(changed);

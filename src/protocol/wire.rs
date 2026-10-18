@@ -1027,6 +1027,9 @@ pub struct ClientShellWorkspace {
     pub custom_label: bool,
     pub branch: Option<String>,
     pub git_ahead_behind: Option<(usize, usize)>,
+    /// Lines added and removed by uncommitted changes. Absent from older servers.
+    #[serde(default)]
+    pub git_diff_stat: Option<(usize, usize)>,
     pub tokens: Vec<(String, String)>,
     pub worktree: Option<ClientShellWorktree>,
     pub focused: bool,
@@ -1083,6 +1086,9 @@ pub struct ClientShellAgent {
     pub state_labels: Vec<(String, String)>,
     pub tokens: Vec<(String, String)>,
     pub focused: bool,
+    /// Git branch of the agent's own working directory. Absent from older servers.
+    #[serde(default)]
+    pub branch: Option<String>,
 }
 
 /// Origin-relative geometry for one pane in a rendered pane surface.
@@ -2826,6 +2832,7 @@ mod tests {
                 custom_label: false,
                 branch: Some("main".into()),
                 git_ahead_behind: None,
+                git_diff_stat: None,
                 tokens: Vec::new(),
                 worktree: None,
                 focused: true,

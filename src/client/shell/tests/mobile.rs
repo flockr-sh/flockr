@@ -203,6 +203,7 @@ fn mobile_header_and_switcher_render_released_sections_and_stable_targets() {
         state_labels: vec![("blocked".into(), "waiting".into())],
         tokens: Vec::new(),
         focused: true,
+        branch: None,
     });
     projected.workspaces[0].agent_status = AgentStatus::Blocked;
     state.set_snapshot(Box::new(projected));
@@ -368,6 +369,7 @@ fn mobile_background_workspace_uses_its_own_active_tab_status() {
         custom_label: true,
         branch: Some("feature".into()),
         git_ahead_behind: None,
+        git_diff_stat: None,
         tokens: Vec::new(),
         worktree: None,
         focused: false,
@@ -567,6 +569,7 @@ fn mobile_previous_workspace_action_wraps_across_expanded_entries() {
             custom_label: true,
             branch: None,
             git_ahead_behind: None,
+            git_diff_stat: None,
             tokens: Vec::new(),
             worktree: None,
             focused: false,
@@ -607,6 +610,7 @@ fn mobile_switcher_scroll_close_and_width_transition_clear_mobile_hits() {
             custom_label: true,
             branch: None,
             git_ahead_behind: None,
+            git_diff_stat: None,
             tokens: Vec::new(),
             worktree: None,
             focused: false,

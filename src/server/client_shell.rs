@@ -86,6 +86,7 @@ pub(super) fn snapshot_with_completions(
                 custom_label: state.custom_name.is_some(),
                 branch: state.branch(),
                 git_ahead_behind: state.git_ahead_behind(),
+                git_diff_stat: state.git_diff_stat(),
                 tokens,
                 worktree: workspace
                     .worktree
@@ -158,6 +159,10 @@ pub(super) fn snapshot_with_completions(
             state_labels.sort_by(|left, right| left.0.cmp(&right.0));
             let mut tokens = agent.tokens.into_iter().collect::<Vec<_>>();
             tokens.sort_by(|left, right| left.0.cmp(&right.0));
+            let branch = app
+                .agent_work_branches
+                .get(&agent.terminal_id)
+                .and_then(|work| work.branch.clone());
             protocol::ClientShellAgent {
                 pane_id,
                 workspace_id: agent.workspace_id,
@@ -173,6 +178,7 @@ pub(super) fn snapshot_with_completions(
                 state_labels,
                 tokens,
                 focused,
+                branch,
             }
         })
         .collect();

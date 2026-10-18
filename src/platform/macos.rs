@@ -1085,6 +1085,11 @@ fn procargs2_env(buf: &[u8]) -> Option<&[u8]> {
 /// Get the current working directory of a process.
 ///
 /// Uses `proc_pidinfo(PROC_PIDVNODEPATHINFO)` to read `pvi_cdir.vip_path`.
+/// Not implemented here yet: agent branches use the agent's own cwd only.
+pub fn descendant_cwds(_root_pid: u32) -> Vec<(u64, PathBuf)> {
+    Vec::new()
+}
+
 pub fn process_cwd(pid: u32) -> Option<PathBuf> {
     if pid == 0 {
         return None;

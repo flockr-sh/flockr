@@ -17,6 +17,9 @@ use super::{
 pub struct GitStatusRefreshDemand {
     pub branch: bool,
     pub ahead_behind: bool,
+    pub diff_stat: bool,
+    /// Branches of agent panes' own working directories.
+    pub agent_branch: bool,
 }
 
 impl GitStatusRefreshDemand {
@@ -24,10 +27,12 @@ impl GitStatusRefreshDemand {
     pub const ALL: Self = Self {
         branch: true,
         ahead_behind: true,
+        diff_stat: true,
+        agent_branch: true,
     };
 
     pub fn is_empty(self) -> bool {
-        !self.branch && !self.ahead_behind
+        !self.branch && !self.ahead_behind && !self.diff_stat && !self.agent_branch
     }
 }
 
@@ -335,6 +340,45 @@ fn git_ahead_behind_between(
     parse_git_ahead_behind_output(&stdout)
 }
 
+/// The checkout root of `cwd` and the Git directory its repository shares
+/// with all of its worktrees.
+pub fn git_checkout_and_common_dir(cwd: &Path) -> Option<(PathBuf, PathBuf)> {
+    let info = git_worktree_info(cwd)?;
+    Some((info.repo_root, info.git_common_dir))
+}
+
+/// Lines added and removed by uncommitted changes, staged or not, against
+/// HEAD. Untracked files are not counted.
+pub fn git_diff_stat(repo_root: &Path) -> Option<(usize, usize)> {
+    let output = crate::noninteractive_process::command("git")
+        .arg("--no-optional-locks")
+        .arg("-C")
+        .arg(repo_root)
+        .args(["diff", "HEAD", "--shortstat"])
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8(output.stdout).ok()?;
+    Some(parse_git_shortstat_output(&stdout))
+}
+
+/// Parses ` 2 files changed, 10 insertions(+), 3 deletions(-)`. Git omits
+/// a zero side, and prints nothing for a clean tree.
+fn parse_git_shortstat_output(stdout: &str) -> (usize, usize) {
+    let count = |marker: &str| {
+        stdout
+            .split(',')
+            .find(|part| part.contains(marker))
+            .and_then(|part| part.split_whitespace().next()?.parse().ok())
+            .unwrap_or(0)
+    };
+    (count("insertion"), count("deletion"))
+}
+
 fn parse_git_ahead_behind_output(stdout: &str) -> Option<(usize, usize)> {
     let mut parts = stdout.split_whitespace();
     let ahead = parts.next()?.parse().ok()?;
@@ -437,6 +481,8 @@ mod tests {
             GitStatusRefreshDemand {
                 branch: true,
                 ahead_behind: false,
+                diff_stat: false,
+                agent_branch: false,
             },
         );
 
@@ -682,5 +728,41 @@ mod tests {
         assert_eq!(updated.ahead_behind, Some((1, 0)));
 
         std::fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn shortstat_parses_either_side_and_clean_output() {
+        assert_eq!(
+            parse_git_shortstat_output(" 2 files changed, 10 insertions(+), 3 deletions(-)\n"),
+            (10, 3)
+        );
+        assert_eq!(
+            parse_git_shortstat_output(" 1 file changed, 1 insertion(+)\n"),
+            (1, 0)
+        );
+        assert_eq!(
+            parse_git_shortstat_output(" 1 file changed, 4 deletions(-)\n"),
+            (0, 4)
+        );
+        assert_eq!(parse_git_shortstat_output(""), (0, 0));
+    }
+
+    #[test]
+    fn diff_stat_counts_staged_and_unstaged_changes_against_head() {
+        let repo = temp_test_dir("diff-stat");
+        run_git(&repo, &["init"]);
+        run_git(&repo, &["config", "user.email", "flockr@example.invalid"]);
+        run_git(&repo, &["config", "user.name", "Flockr Test"]);
+        std::fs::write(repo.join("a.txt"), "one\ntwo\nthree\n").unwrap();
+        run_git(&repo, &["add", "a.txt"]);
+        run_git(&repo, &["commit", "-m", "initial"]);
+        assert_eq!(git_diff_stat(&repo), Some((0, 0)));
+
+        std::fs::write(repo.join("a.txt"), "one\n").unwrap();
+        std::fs::write(repo.join("b.txt"), "new\n").unwrap();
+        run_git(&repo, &["add", "b.txt"]);
+        assert_eq!(git_diff_stat(&repo), Some((1, 2)));
+
+        std::fs::remove_dir_all(repo).unwrap();
     }
 }

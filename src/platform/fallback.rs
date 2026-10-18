@@ -218,6 +218,11 @@ pub fn foreground_process_group_id(_child_pid: u32) -> Option<u32> {
 }
 
 /// Unsupported platform stub.
+pub fn descendant_cwds(_root_pid: u32) -> Vec<(u64, PathBuf)> {
+    Vec::new()
+}
+
+/// Unsupported platform stub.
 pub fn process_cwd(_pid: u32) -> Option<PathBuf> {
     None
 }

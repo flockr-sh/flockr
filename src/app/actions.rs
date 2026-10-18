@@ -1491,6 +1491,10 @@ impl AppState {
                 ws.cached_git_ahead_behind = result.ahead_behind;
                 changed = true;
             }
+            if result.demand.diff_stat && ws.cached_git_diff_stat != result.diff_stat {
+                ws.cached_git_diff_stat = result.diff_stat;
+                changed = true;
+            }
             if ws.cached_git_space != result.space {
                 ws.cached_git_space = result.space;
                 changed = true;
@@ -1758,14 +1762,7 @@ impl AppState {
                 }
                 Vec::new()
             }
-            AppEvent::GitStatusRefreshed {
-                results,
-                cache_updates,
-            } => {
-                let _ = results;
-                let _ = cache_updates;
-                Vec::new()
-            }
+            AppEvent::GitStatusRefreshed { .. } => Vec::new(),
             AppEvent::RestoredWorktreeSpaceChecked {
                 workspace_id,
                 expected,
@@ -2728,6 +2725,7 @@ mod tests {
                 auto_label: "one".into(),
                 branch: Some("main".into()),
                 ahead_behind: Some((2, 1)),
+                diff_stat: Some((12, 3)),
                 space: None,
             }],
         );
@@ -2735,6 +2733,7 @@ mod tests {
         assert!(changed);
         assert_eq!(state.workspaces[0].branch().as_deref(), Some("main"));
         assert_eq!(state.workspaces[0].git_ahead_behind(), Some((2, 1)));
+        assert_eq!(state.workspaces[0].git_diff_stat(), Some((12, 3)));
         assert_eq!(state.workspaces[1].id, second_id);
         assert_eq!(state.workspaces[1].git_ahead_behind(), None);
     }
@@ -2797,6 +2796,7 @@ mod tests {
                 auto_label: "stale".into(),
                 branch: Some("main".into()),
                 ahead_behind: Some((0, 1)),
+                diff_stat: None,
                 space: None,
             }],
         );
@@ -2824,10 +2824,13 @@ mod tests {
                 demand: crate::workspace::GitStatusRefreshDemand {
                     branch: false,
                     ahead_behind: true,
+                    diff_stat: false,
+                    agent_branch: false,
                 },
                 auto_label: "one".into(),
                 branch: Some("new".into()),
                 ahead_behind: None,
+                diff_stat: None,
                 space: None,
             }],
         );
@@ -2855,6 +2858,7 @@ mod tests {
                 auto_label: "one".into(),
                 branch: None,
                 ahead_behind: None,
+                diff_stat: None,
                 space: None,
             }],
         );
@@ -2883,6 +2887,7 @@ mod tests {
                 auto_label: "other".into(),
                 branch: Some("scratch".into()),
                 ahead_behind: None,
+                diff_stat: None,
                 space: Some(crate::workspace::GitSpaceMetadata {
                     key: "other-repo-key".into(),
                     checkout_key: "/other/checkout".into(),

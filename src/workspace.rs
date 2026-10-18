@@ -23,8 +23,9 @@ use self::git::git_status_cache_key_for_space;
 pub(crate) use self::{git::git_status_snapshot_for_cwd_with_demand, tab::MovedPane};
 pub use self::{
     git::{
-        derive_label_from_cwd, fallback_label_from_cwd, git_branch, git_space_metadata,
-        git_status_cache_key, GitSpaceMetadata, GitStatusCacheEntry, GitStatusRefreshDemand,
+        derive_label_from_cwd, fallback_label_from_cwd, git_branch, git_checkout_and_common_dir,
+        git_diff_stat, git_space_metadata, git_status_cache_key, GitSpaceMetadata,
+        GitStatusCacheEntry, GitStatusRefreshDemand,
     },
     tab::{NewPane, Tab},
 };
@@ -47,7 +48,19 @@ pub struct WorkspaceGitStatus {
     pub auto_label: String,
     pub branch: Option<String>,
     pub ahead_behind: Option<(usize, usize)>,
+    /// Lines added and removed by uncommitted changes.
+    pub diff_stat: Option<(usize, usize)>,
     pub space: Option<GitSpaceMetadata>,
+}
+
+/// Where an agent last ran commands, and the branch it works on.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AgentWorkBranch {
+    /// Checkout of the agent's newest command in its own repository.
+    pub checkout: Option<PathBuf>,
+    pub branch: Option<String>,
+    /// Newest start token among the agent's processes so far.
+    pub seen_start: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -96,6 +109,7 @@ impl WorkspaceGitStatusSnapshot {
             auto_label,
             branch: self.branch,
             ahead_behind: self.ahead_behind,
+            diff_stat: None,
             space: self.space,
         }
     }
@@ -190,6 +204,8 @@ pub struct Workspace {
     pub(crate) cached_git_branch: Option<String>,
     /// Cached ahead/behind counts for the workspace repo's current branch upstream.
     pub(crate) cached_git_ahead_behind: Option<(usize, usize)>,
+    /// Cached lines added and removed by uncommitted changes in the workspace repo.
+    pub(crate) cached_git_diff_stat: Option<(usize, usize)>,
     /// Cached derived Git repo metadata for worktree actions and status display.
     pub(crate) cached_git_space: Option<GitSpaceMetadata>,
     /// Explicit Flockr-managed worktree grouping provenance.
@@ -258,6 +274,7 @@ impl Workspace {
             cached_git_status_key,
             cached_git_branch: git_branch(&identity_cwd),
             cached_git_ahead_behind: None,
+            cached_git_diff_stat: None,
             cached_git_space,
             worktree_space: None,
             metadata_tokens: crate::metadata_tokens::MetadataTokens::default(),
@@ -410,6 +427,7 @@ impl Workspace {
                 cached_git_status_key,
                 cached_git_branch: git_branch(&initial_cwd),
                 cached_git_ahead_behind: None,
+                cached_git_diff_stat: None,
                 cached_git_space,
                 worktree_space: None,
                 metadata_tokens: crate::metadata_tokens::MetadataTokens::default(),
@@ -1071,6 +1089,10 @@ impl Workspace {
         self.cached_git_ahead_behind
     }
 
+    pub fn git_diff_stat(&self) -> Option<(usize, usize)> {
+        self.cached_git_diff_stat
+    }
+
     pub fn git_space(&self) -> Option<&GitSpaceMetadata> {
         self.cached_git_space.as_ref()
     }
@@ -1194,6 +1216,7 @@ impl Workspace {
             cached_git_status_key: identity_cwd.clone(),
             cached_git_branch: git_branch(&identity_cwd),
             cached_git_ahead_behind: None,
+            cached_git_diff_stat: None,
             cached_git_space: None,
             worktree_space: None,
             metadata_tokens: crate::metadata_tokens::MetadataTokens::default(),

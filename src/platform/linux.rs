@@ -784,6 +784,40 @@ pub fn process_cwd(pid: u32) -> Option<PathBuf> {
     std::fs::read_link(format!("/proc/{pid}/cwd")).ok()
 }
 
+/// Working directory and start token of every descendant of `root_pid`.
+pub fn descendant_cwds(root_pid: u32) -> Vec<(u64, PathBuf)> {
+    const SCAN_LIMIT: usize = 256;
+    let mut found = Vec::new();
+    let mut pending = VecDeque::from([root_pid]);
+    let mut scanned = 0;
+    while let Some(pid) = pending.pop_front() {
+        scanned += 1;
+        if pid == 0 || scanned > SCAN_LIMIT {
+            break;
+        }
+        let Ok(tasks) = std::fs::read_dir(format!("/proc/{pid}/task")) else {
+            continue;
+        };
+        for tid in tasks
+            .flatten()
+            .filter_map(|entry| numeric_file_name(&entry))
+        {
+            let children = std::fs::read_to_string(format!("/proc/{pid}/task/{tid}/children"))
+                .unwrap_or_default();
+            for child in children
+                .split_whitespace()
+                .filter_map(|pid| pid.parse().ok())
+            {
+                if let Some(entry) = process_start_token(child).zip(process_cwd(child)) {
+                    found.push(entry);
+                }
+                pending.push_back(child);
+            }
+        }
+    }
+    found
+}
+
 /// Read a Flockr agent identity hint from a process environment.
 pub fn process_agent_hint(pid: u32) -> Option<crate::detect::Agent> {
     if pid == 0 {
@@ -1245,6 +1279,47 @@ mod tests {
     fn env_lock() -> &'static Mutex<()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
         LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    #[test]
+    fn descendant_cwds_reports_children_and_grandchildren() {
+        use std::os::unix::process::CommandExt;
+        let shell_dir =
+            std::env::temp_dir().join(format!("flockr-shell-cwds-{}", std::process::id()));
+        std::fs::create_dir_all(&shell_dir).unwrap();
+        let shell_dir = std::fs::canonicalize(&shell_dir).unwrap();
+        let mut shell = std::process::Command::new("bash")
+            .arg("-c")
+            .arg(format!("cd '{}' && sleep 30; true", shell_dir.display()))
+            .process_group(0)
+            .spawn()
+            .unwrap();
+        let mut direct = std::process::Command::new("sleep")
+            .arg("30")
+            .current_dir("/")
+            .spawn()
+            .unwrap();
+
+        let mut cwds = Vec::new();
+        for _ in 0..100 {
+            cwds = descendant_cwds(std::process::id())
+                .into_iter()
+                .map(|(_, cwd)| cwd)
+                .collect();
+            if cwds.contains(&shell_dir) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        // Kill the shell's whole group so its sleep does not outlive the test.
+        unsafe { libc::kill(-(shell.id() as libc::pid_t), libc::SIGKILL) };
+        let _ = direct.kill();
+        let _ = shell.wait();
+        let _ = direct.wait();
+        let _ = std::fs::remove_dir_all(&shell_dir);
+
+        assert!(cwds.contains(&shell_dir), "{cwds:?}");
+        assert!(cwds.contains(&std::path::PathBuf::from("/")), "{cwds:?}");
     }
 
     #[test]

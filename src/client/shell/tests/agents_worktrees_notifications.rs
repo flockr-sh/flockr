@@ -108,6 +108,7 @@ fn grouped_worktrees_render_parent_branch_and_indented_child() {
         custom_label: false,
         branch: Some("worktree/feature".into()),
         git_ahead_behind: None,
+        git_diff_stat: None,
         tokens: Vec::new(),
         worktree: Some(ClientShellWorktree {
             key: "repo".into(),
@@ -582,6 +583,7 @@ fn pane_cycle_last_and_agent_actions_resolve_to_stable_pane_ids() {
             state_labels: Vec::new(),
             tokens: Vec::new(),
             focused: true,
+            branch: None,
         },
         ClientShellAgent {
             pane_id: "pane_2".into(),
@@ -598,6 +600,7 @@ fn pane_cycle_last_and_agent_actions_resolve_to_stable_pane_ids() {
             state_labels: Vec::new(),
             tokens: Vec::new(),
             focused: false,
+            branch: None,
         },
     ];
     let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
@@ -672,6 +675,7 @@ fn agent_sidebar_honors_priority_symbols_tokens_and_stable_hits() {
             state_labels: Vec::new(),
             tokens: vec![("summary".into(), "review complete".into())],
             focused: true,
+            branch: None,
         },
         ClientShellAgent {
             pane_id: "pane_2".into(),
@@ -688,6 +692,7 @@ fn agent_sidebar_honors_priority_symbols_tokens_and_stable_hits() {
             state_labels: vec![("blocked".into(), "needs input".into())],
             tokens: vec![("summary".into(), "waiting for Can".into())],
             focused: false,
+            branch: None,
         },
     ];
     let mut config = Config::default();
@@ -813,6 +818,7 @@ fn grouped_agent_sidebar_shows_each_space_once_and_aligns_its_agents() {
         state_labels: Vec::new(),
         tokens: Vec::new(),
         focused,
+        branch: None,
     };
     projected.agents = vec![
         agent("pane_1", "ws_1", "agent-a", false),
@@ -917,6 +923,7 @@ fn sidebar_numbers_show_the_keys_that_focus_agents_and_switch_spaces() {
         state_labels: Vec::new(),
         tokens: Vec::new(),
         focused: false,
+        branch: None,
     };
     projected.agents = vec![
         agent("pane_1", "ws_1", "agent-a"),
@@ -995,6 +1002,7 @@ fn muted_agent_sidebar_rows_do_not_stack_terminal_faint() {
         state_labels: Vec::new(),
         tokens: Vec::new(),
         focused: true,
+        branch: None,
     }];
     let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
     state.set_snapshot(Box::new(projected));
@@ -1062,6 +1070,7 @@ fn active_agent_view_controls_sidebar_order_and_focus_indices() {
             state_labels: Vec::new(),
             tokens: Vec::new(),
             focused: true,
+            branch: None,
         },
         ClientShellAgent {
             pane_id: "pane_2".into(),
@@ -1078,6 +1087,7 @@ fn active_agent_view_controls_sidebar_order_and_focus_indices() {
             state_labels: Vec::new(),
             tokens: Vec::new(),
             focused: false,
+            branch: None,
         },
         ClientShellAgent {
             pane_id: "pane_3".into(),
@@ -1094,6 +1104,7 @@ fn active_agent_view_controls_sidebar_order_and_focus_indices() {
             state_labels: Vec::new(),
             tokens: Vec::new(),
             focused: false,
+            branch: None,
         },
     ];
     projected.agent_view_label = Some("review".into());
@@ -1168,6 +1179,7 @@ fn agent_sort_toggle_is_client_local_and_persists_per_endpoint() {
         state_labels: Vec::new(),
         tokens: Vec::new(),
         focused: true,
+        branch: None,
     });
     let config =
         ClientShellConfig::from_config(&Config::default()).with_preferences_path(path.clone());
@@ -1733,6 +1745,7 @@ fn semantic_notifications_use_client_policy_and_stable_navigation_targets() {
         state_labels: Vec::new(),
         tokens: Vec::new(),
         focused: false,
+        branch: None,
     });
     state.set_snapshot(Box::new(projected));
     state.set_pane_surface(surface());
@@ -1884,6 +1897,7 @@ fn next_attention_steps_through_blocked_and_unseen_done_agents_oldest_first_then
         state_labels: Vec::new(),
         tokens: Vec::new(),
         focused: false,
+        branch: None,
     };
     let frame = |revision, focused: &str, agents| {
         let mut frame = snapshot();
@@ -1977,6 +1991,7 @@ fn working_pulse_cycles_only_while_an_agent_works_and_the_setting_is_on() {
         state_labels: Vec::new(),
         tokens: Vec::new(),
         focused: true,
+        branch: None,
     }];
     let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
     state.set_snapshot(Box::new(working.clone()));
@@ -2035,6 +2050,7 @@ fn working_pulse_blends_named_theme_colors_through_the_host_palette() {
         state_labels: Vec::new(),
         tokens: Vec::new(),
         focused: true,
+        branch: None,
     }];
     let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
     state.config.palette.yellow = ratatui::style::Color::Yellow;

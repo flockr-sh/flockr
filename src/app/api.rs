@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 mod agent_view;
@@ -32,7 +33,8 @@ impl App {
             AppEvent::GitStatusRefreshed {
                 results,
                 cache_updates,
-            } => self.handle_git_status_refreshed(results, cache_updates),
+                agent_branches,
+            } => self.handle_git_status_refreshed(results, cache_updates, agent_branches),
             AppEvent::TabBarCommandFinished {
                 generation,
                 segment_index,
@@ -61,6 +63,7 @@ impl App {
         &mut self,
         results: Vec<crate::workspace::WorkspaceGitStatus>,
         cache_updates: Vec<(std::path::PathBuf, crate::workspace::GitStatusCacheEntry)>,
+        agent_branches: Option<HashMap<String, crate::workspace::AgentWorkBranch>>,
     ) -> bool {
         self.git_refresh_in_flight = false;
         for (key, entry) in cache_updates {
@@ -72,9 +75,20 @@ impl App {
         } else {
             self.last_git_remote_status_refresh = Instant::now();
         }
-        let changed = self
+        let mut changed = self
             .state
             .apply_workspace_git_statuses(&self.terminal_runtimes, results);
+        if let Some(agent_branches) =
+            agent_branches.filter(|branches| *branches != self.agent_work_branches)
+        {
+            changed |= agent_branches.len() != self.agent_work_branches.len()
+                || agent_branches.iter().any(|(terminal_id, work)| {
+                    self.agent_work_branches
+                        .get(terminal_id)
+                        .is_none_or(|previous| previous.branch != work.branch)
+                });
+            self.agent_work_branches = agent_branches;
+        }
         if changed {
             self.render_dirty.request_generic();
             self.render_notify.notify_one();
@@ -117,9 +131,10 @@ impl App {
         if let AppEvent::GitStatusRefreshed {
             results,
             cache_updates,
+            agent_branches,
         } = ev
         {
-            self.handle_git_status_refreshed(results, cache_updates);
+            self.handle_git_status_refreshed(results, cache_updates, agent_branches);
             return Vec::new();
         }
 

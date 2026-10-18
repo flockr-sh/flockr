@@ -1147,6 +1147,7 @@ fn two_agents_in_two_workspaces(config: &str) -> ClientShellState {
         state_labels: Vec::new(),
         tokens: Vec::new(),
         focused,
+        branch: None,
     };
     projected.agents = vec![
         agent("pane_1", "ws_1", true),

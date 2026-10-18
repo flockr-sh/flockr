@@ -196,6 +196,9 @@ pub enum AppEvent {
     GitStatusRefreshed {
         results: Vec<WorkspaceGitStatus>,
         cache_updates: Vec<(std::path::PathBuf, GitStatusCacheEntry)>,
+        /// Work branch per agent terminal id, when requested.
+        agent_branches:
+            Option<std::collections::HashMap<String, crate::workspace::AgentWorkBranch>>,
     },
     /// Background validation of a saved membership after session restore.
     RestoredWorktreeSpaceChecked {

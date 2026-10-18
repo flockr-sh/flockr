@@ -392,7 +392,9 @@ const DEFAULT_CONFIG: &str = r##"# flockr configuration
 # grab = "marker"
 
 # Expanded agent rows. Built-ins are state_icon, state_text, number, machine, workspace, tab,
-# pane, agent, terminal_title, and terminal_title_stripped.
+# pane, agent, terminal_title, terminal_title_stripped, and branch.
+# branch is the Git branch of the agent's own working directory, which may differ from its
+# space's branch when the agent works in another checkout.
 # number shows the focus_agent key for that agent.
 # Custom values reported through pane metadata use a $name token.
 # A token occurrence may be styled with { token = "workspace", fg = "#89b4fa", bold = true, dim = false }.
@@ -407,7 +409,11 @@ const DEFAULT_CONFIG: &str = r##"# flockr configuration
 # [ui.sidebar.agents.rows_by_agent]
 # claude = [["state_icon", "machine", "workspace", "tab"], ["terminal_title_stripped"], ["agent"]]
 
-# Expanded space rows. Built-ins are state_icon, state_text, number, workspace, branch, and git_status.
+# Expanded space rows. Built-ins are state_icon, state_text, number, workspace, branch, git_status,
+# and diff_stat.
+# git_status shows commits ahead/behind the branch's upstream (↑2 ↓1).
+# diff_stat shows lines added/removed by uncommitted changes against HEAD (+12 -3),
+# not counting untracked files.
 # number shows the switch_workspace key for that space.
 # Custom values reported through workspace metadata use a $name token, for example $jj_status.
 # Inline token styles accept strict #RGB/#RRGGBB foregrounds plus bold and dim booleans.
@@ -416,7 +422,7 @@ const DEFAULT_CONFIG: &str = r##"# flockr configuration
 # row_gap = 0
 # Marks where each space ends: "none", "underline" (no extra rows), or "bracket" (left column).
 # border = "none"
-# rows = [["state_icon", "number", "workspace"], ["branch", "git_status"]]
+# rows = [["state_icon", "number", "workspace"], ["branch", "git_status", "diff_stat"]]
 
 # Background notification popup delivery
 [ui.toast]

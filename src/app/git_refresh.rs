@@ -6,7 +6,10 @@ use std::time::Instant;
 
 use tracing::warn;
 
-use super::{App, GIT_REMOTE_STATUS_REFRESH_INTERVAL, GIT_REPO_DISCOVERY_REFRESH_INTERVAL};
+use super::{
+    App, GIT_DIFF_STAT_REFRESH_INTERVAL, GIT_REMOTE_STATUS_REFRESH_INTERVAL,
+    GIT_REPO_DISCOVERY_REFRESH_INTERVAL,
+};
 use crate::events::AppEvent;
 use crate::workspace::{GitStatusCacheEntry, GitStatusRefreshDemand, WorkspaceGitStatus};
 
@@ -133,14 +136,35 @@ impl App {
         if self.git_identity_refresh_requested {
             demand.branch = true;
         }
+        // Each diff stat runs git over the whole working tree, so it refreshes
+        // less often than the ref-based fields.
+        let diff_stat_due = demand.diff_stat
+            && now.saturating_duration_since(self.last_git_diff_stat_refresh)
+                >= GIT_DIFF_STAT_REFRESH_INTERVAL;
+        demand.diff_stat = diff_stat_due;
+        let agent_probes = if demand.agent_branch {
+            self.agent_branch_probes()
+        } else {
+            Vec::new()
+        };
         let spawned = crate::thread_spawn::spawn_named("flockr-git-refresh", move || {
             let output =
                 refresh_workspace_git_statuses_with_cache_and_demand(workspaces, &cache, demand);
+            let agent_branches = demand.agent_branch.then(|| {
+                agent_probes
+                    .into_iter()
+                    .map(|probe| (probe.terminal_id.clone(), resolve_agent_work_branch(probe)))
+                    .collect()
+            });
             let _ = event_tx.blocking_send(AppEvent::GitStatusRefreshed {
                 results: output.results,
                 cache_updates: output.cache_updates,
+                agent_branches,
             });
         });
+        if spawned.is_ok() && diff_stat_due {
+            self.last_git_diff_stat_refresh = now;
+        }
         if let Err(err) = spawned {
             // Keep the pending requests and retry after the normal interval.
             warn!(err = %err, "failed to spawn git refresh thread; retrying later");
@@ -187,10 +211,68 @@ impl App {
             match token.parts().0 {
                 crate::config::SpaceSidebarToken::Branch => demand.branch = true,
                 crate::config::SpaceSidebarToken::GitStatus => demand.ahead_behind = true,
+                crate::config::SpaceSidebarToken::DiffStat => demand.diff_stat = true,
                 _ => {}
             }
         }
+        let agents = &self.state.sidebar_agents;
+        if agents
+            .rows
+            .iter()
+            .chain(agents.rows_by_agent.values().flatten())
+            .flatten()
+            .any(|token| matches!(token.parts().0, crate::config::AgentSidebarToken::Branch))
+        {
+            demand.agent_branch = true;
+        }
         demand
+    }
+
+    /// One probe per agent pane. Agents often work in another checkout by
+    /// running `cd <worktree> && ...` per command while their own process
+    /// stays put, so the background refresh also looks at their commands.
+    fn agent_branch_probes(&self) -> Vec<AgentBranchProbe> {
+        let mut probes = Vec::new();
+        for ws in &self.state.workspaces {
+            for tab in &ws.tabs {
+                for pane_id in tab.layout.pane_ids() {
+                    let Some(terminal_id) = ws
+                        .pane_state(pane_id)
+                        .map(|pane| &pane.attached_terminal_id)
+                        .filter(|terminal_id| {
+                            self.state
+                                .terminals
+                                .get(*terminal_id)
+                                .is_some_and(|terminal| terminal.is_agent_terminal())
+                        })
+                    else {
+                        continue;
+                    };
+                    let terminal_key = terminal_id.to_string();
+                    probes.push(AgentBranchProbe {
+                        shell_pid: self
+                            .terminal_runtimes
+                            .get(terminal_id)
+                            .and_then(|runtime| runtime.child_pid()),
+                        cwd: tab
+                            .foreground_cwd_for_pane(pane_id, &self.terminal_runtimes)
+                            .or_else(|| {
+                                tab.cwd_for_pane(
+                                    pane_id,
+                                    &self.state.terminals,
+                                    &self.terminal_runtimes,
+                                )
+                            }),
+                        previous: self
+                            .agent_work_branches
+                            .get(&terminal_key)
+                            .and_then(|work| Some((work.checkout.clone()?, work.seen_start))),
+                        terminal_id: terminal_key,
+                    });
+                }
+            }
+        }
+        probes
     }
 
     fn workspace_git_refresh_items(
@@ -213,6 +295,80 @@ impl App {
             })
             .collect()
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct AgentBranchProbe {
+    terminal_id: String,
+    shell_pid: Option<u32>,
+    /// The agent process's own cwd, else the pane cwd.
+    cwd: Option<PathBuf>,
+    /// Checkout and newest process start token from the previous refresh.
+    previous: Option<(PathBuf, u64)>,
+}
+
+fn resolve_agent_work_branch(probe: AgentBranchProbe) -> crate::workspace::AgentWorkBranch {
+    let processes = probe
+        .shell_pid
+        .and_then(|shell_pid| {
+            crate::platform::foreground_process_group_id(shell_pid)
+                .filter(|agent_pid| *agent_pid != shell_pid)
+        })
+        .map(crate::platform::descendant_cwds)
+        .unwrap_or_default();
+    let selected = select_agent_checkout(
+        probe.cwd.as_deref(),
+        processes,
+        probe.previous,
+        crate::workspace::git_checkout_and_common_dir,
+    );
+    let branch = selected
+        .as_ref()
+        .map(|(checkout, _)| checkout.as_path())
+        .or(probe.cwd.as_deref())
+        .and_then(crate::workspace::git_branch);
+    let (checkout, seen_start) =
+        selected.map_or((None, 0), |(checkout, seen)| (Some(checkout), seen));
+    crate::workspace::AgentWorkBranch {
+        checkout,
+        branch,
+        seen_start,
+    }
+}
+
+/// The checkout an agent works in, with the newest process start token seen.
+/// Processes started since the previous refresh are the evidence: the newest
+/// one in the repository the agent started in names the checkout. Older
+/// processes, such as language servers left in the launch directory, and
+/// processes in other repositories never move it. Without new evidence the
+/// previous checkout stays, else the agent's own.
+fn select_agent_checkout(
+    agent_cwd: Option<&std::path::Path>,
+    processes: Vec<(u64, PathBuf)>,
+    previous: Option<(PathBuf, u64)>,
+    identify: impl Fn(&std::path::Path) -> Option<(PathBuf, PathBuf)>,
+) -> Option<(PathBuf, u64)> {
+    let (own_checkout, common_dir) = identify(agent_cwd?)?;
+    let seen = previous.as_ref().map_or(0, |(_, seen)| *seen);
+    let newest = processes
+        .iter()
+        .map(|(start, _)| *start)
+        .max()
+        .unwrap_or(0)
+        .max(seen);
+    let mut fresh = processes
+        .into_iter()
+        .filter(|(start, _)| *start > seen)
+        .collect::<Vec<_>>();
+    fresh.sort_by_key(|(start, _)| std::cmp::Reverse(*start));
+    let checkout = fresh
+        .into_iter()
+        .map(|(_, cwd)| cwd)
+        .chain(previous.map(|(checkout, _)| checkout))
+        .filter_map(|cwd| identify(&cwd))
+        .find(|(_, candidate)| *candidate == common_dir)
+        .map_or(own_checkout, |(checkout, _)| checkout);
+    Some((checkout, newest))
 }
 
 fn deduplicate_git_refresh_items(
@@ -267,13 +423,19 @@ fn refresh_workspace_git_statuses_with_cache_and_demand(
         if let Some(cache_entry) = cache_entry {
             cache_updates.push((job.cache_key.clone(), cache_entry));
         }
+        // Not cached: working tree edits do not change the status fingerprint.
+        let diff_stat = (demand.diff_stat && snapshot.space.is_some())
+            .then(|| crate::workspace::git_diff_stat(&job.cache_key))
+            .flatten();
         results.extend(job.targets.into_iter().map(move |target| {
-            snapshot.clone().into_workspace_status(
+            let mut status = snapshot.clone().into_workspace_status(
                 target.workspace_id,
                 target.resolved_identity_cwd,
                 job.cache_key.clone(),
                 demand,
-            )
+            );
+            status.diff_stat = diff_stat;
+            status
         }));
     }
 
@@ -653,6 +815,79 @@ mod tests {
         app.state.assert_invariants_for_test();
     }
 
+    fn identify(path: &std::path::Path) -> Option<(PathBuf, PathBuf)> {
+        // /repo and /repo-wt share one repository; /other is a different one.
+        let path = path.to_str()?;
+        let (checkout, common) = if path.starts_with("/repo-wt") {
+            ("/repo-wt", "/repo/.git")
+        } else if path.starts_with("/repo") {
+            ("/repo", "/repo/.git")
+        } else if path.starts_with("/other") {
+            ("/other", "/other/.git")
+        } else {
+            return None;
+        };
+        Some((checkout.into(), common.into()))
+    }
+
+    #[test]
+    fn agent_checkout_follows_new_processes_in_its_own_repository() {
+        let agent = Some(std::path::Path::new("/repo"));
+        let processes = |entries: &[(u64, &str)]| {
+            entries
+                .iter()
+                .map(|(start, cwd)| (*start, PathBuf::from(cwd)))
+                .collect::<Vec<_>>()
+        };
+        let select = |processes, previous: Option<(&str, u64)>| {
+            select_agent_checkout(
+                agent,
+                processes,
+                previous.map(|(checkout, seen)| (PathBuf::from(checkout), seen)),
+                identify,
+            )
+        };
+
+        // Nothing yet: the agent's own checkout.
+        assert_eq!(select(Vec::new(), None), Some(("/repo".into(), 0)));
+        // A new command in a worktree of the same repository wins, newest first.
+        assert_eq!(
+            select(processes(&[(5, "/repo"), (9, "/repo-wt/crates")]), None),
+            Some(("/repo-wt".into(), 9))
+        );
+        // An old helper in the launch directory does not move it back.
+        assert_eq!(
+            select(processes(&[(5, "/repo")]), Some(("/repo-wt", 9))),
+            Some(("/repo-wt".into(), 9))
+        );
+        // A new command in another repository never counts.
+        assert_eq!(
+            select(
+                processes(&[(5, "/repo"), (12, "/other")]),
+                Some(("/repo-wt", 9))
+            ),
+            Some(("/repo-wt".into(), 12))
+        );
+        // A new command back in the main checkout moves it there.
+        assert_eq!(
+            select(
+                processes(&[(5, "/repo"), (14, "/repo")]),
+                Some(("/repo-wt", 12))
+            ),
+            Some(("/repo".into(), 14))
+        );
+        // An agent outside any repository has no checkout.
+        assert_eq!(
+            select_agent_checkout(
+                Some(std::path::Path::new("/tmp")),
+                processes(&[(1, "/repo")]),
+                None,
+                identify
+            ),
+            None
+        );
+    }
+
     #[test]
     fn git_refresh_demand_matches_sidebar_rows() {
         let cases = [
@@ -664,17 +899,34 @@ mod tests {
                 crate::config::SpaceSidebarToken::Branch,
                 GitStatusRefreshDemand {
                     branch: true,
-                    ahead_behind: false,
+                    ..GitStatusRefreshDemand::default()
                 },
             ),
             (
                 crate::config::SpaceSidebarToken::GitStatus,
                 GitStatusRefreshDemand {
-                    branch: false,
                     ahead_behind: true,
+                    ..GitStatusRefreshDemand::default()
+                },
+            ),
+            (
+                crate::config::SpaceSidebarToken::DiffStat,
+                GitStatusRefreshDemand {
+                    diff_stat: true,
+                    ..GitStatusRefreshDemand::default()
                 },
             ),
         ];
+        let mut config = crate::config::Config::default();
+        config.ui.sidebar.spaces.rows = vec![vec![crate::config::SpaceSidebarToken::Workspace]];
+        config.ui.sidebar.agents.rows = vec![vec![crate::config::AgentSidebarToken::Branch]];
+        assert_eq!(
+            test_app(&config).git_refresh_demand(),
+            GitStatusRefreshDemand {
+                agent_branch: true,
+                ..GitStatusRefreshDemand::default()
+            }
+        );
 
         for (token, expected) in cases {
             let mut config = crate::config::Config::default();
@@ -776,6 +1028,7 @@ mod tests {
         app.handle_internal_event(AppEvent::GitStatusRefreshed {
             results: Vec::new(),
             cache_updates: Vec::new(),
+            agent_branches: None,
         });
 
         assert!(!app.git_refresh_in_flight);

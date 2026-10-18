@@ -115,6 +115,8 @@ pub enum AgentSidebarToken {
     Agent,
     TerminalTitle,
     TerminalTitleStripped,
+    /// The Git branch of the agent's own working directory.
+    Branch,
     /// The key that focuses this agent.
     Number,
     Custom(String),
@@ -132,6 +134,8 @@ pub enum SpaceSidebarToken {
     Workspace,
     Branch,
     GitStatus,
+    /// Lines added and removed by uncommitted changes.
+    DiffStat,
     /// The key that switches to this space.
     Number,
     Custom(String),
@@ -204,7 +208,10 @@ impl RawSidebarToken {
                     return Err("sidebar tokens may contain at most 16 rules".into());
                 }
                 if !token.rules.is_empty()
-                    && matches!(token.token.as_str(), "state_icon" | "git_status")
+                    && matches!(
+                        token.token.as_str(),
+                        "state_icon" | "git_status" | "diff_stat"
+                    )
                 {
                     return Err("sidebar rules require a text-valued token".into());
                 }
@@ -283,6 +290,7 @@ fn agent_token_name(token: &AgentSidebarToken) -> String {
         AgentSidebarToken::Agent => "agent".into(),
         AgentSidebarToken::TerminalTitle => "terminal_title".into(),
         AgentSidebarToken::TerminalTitleStripped => "terminal_title_stripped".into(),
+        AgentSidebarToken::Branch => "branch".into(),
         AgentSidebarToken::Number => "number".into(),
         AgentSidebarToken::Custom(name) => format!("${name}"),
         AgentSidebarToken::Styled { token, .. } => agent_token_name(token),
@@ -296,6 +304,7 @@ fn space_token_name(token: &SpaceSidebarToken) -> String {
         SpaceSidebarToken::Workspace => "workspace".into(),
         SpaceSidebarToken::Branch => "branch".into(),
         SpaceSidebarToken::GitStatus => "git_status".into(),
+        SpaceSidebarToken::DiffStat => "diff_stat".into(),
         SpaceSidebarToken::Number => "number".into(),
         SpaceSidebarToken::Custom(name) => format!("${name}"),
         SpaceSidebarToken::Styled { token, .. } => space_token_name(token),
@@ -344,6 +353,7 @@ impl<'de> Deserialize<'de> for AgentSidebarToken {
                 ("agent", Self::Agent),
                 ("terminal_title", Self::TerminalTitle),
                 ("terminal_title_stripped", Self::TerminalTitleStripped),
+                ("branch", Self::Branch),
                 ("number", Self::Number),
             ],
         )
@@ -394,6 +404,7 @@ impl<'de> Deserialize<'de> for SpaceSidebarToken {
                 ("workspace", Self::Workspace),
                 ("branch", Self::Branch),
                 ("git_status", Self::GitStatus),
+                ("diff_stat", Self::DiffStat),
                 ("number", Self::Number),
             ],
         )
@@ -496,7 +507,11 @@ impl Default for SpacesSidebarConfig {
                     SpaceSidebarToken::Number,
                     SpaceSidebarToken::Workspace,
                 ],
-                vec![SpaceSidebarToken::Branch, SpaceSidebarToken::GitStatus],
+                vec![
+                    SpaceSidebarToken::Branch,
+                    SpaceSidebarToken::GitStatus,
+                    SpaceSidebarToken::DiffStat,
+                ],
             ],
             row_gap: DEFAULT_SIDEBAR_ROW_GAP,
             border: SidebarBorder::None,
@@ -628,7 +643,11 @@ mod tests {
                     SpaceSidebarToken::Number,
                     SpaceSidebarToken::Workspace,
                 ],
-                vec![SpaceSidebarToken::Branch, SpaceSidebarToken::GitStatus],
+                vec![
+                    SpaceSidebarToken::Branch,
+                    SpaceSidebarToken::GitStatus,
+                    SpaceSidebarToken::DiffStat,
+                ],
             ]
         );
         assert_eq!(config.spaces.row_gap, 0);
@@ -816,6 +835,7 @@ rows = [[{ token = "$status", rules = [{ contains = "error", bold = true }] }]]
             ("agents", "state_icon"),
             ("spaces", "state_icon"),
             ("spaces", "git_status"),
+            ("spaces", "diff_stat"),
         ] {
             let input = format!(
                 "[{section}]\nrows = [[{{ token = '{token}', rules = [{{ equals = 'x' }}] }}]]"

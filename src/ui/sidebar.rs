@@ -123,6 +123,11 @@ pub(crate) fn resolved_token_spans(
                     + usize::from(*behind > 0) * display_width(&format!("↓{behind}"))
                     + usize::from(*ahead > 0 && *behind > 0)
             }
+            ResolvedTokenKind::DiffStat { added, removed } => {
+                usize::from(*added > 0) * display_width(&format!("+{added}"))
+                    + usize::from(*removed > 0) * display_width(&format!("-{removed}"))
+                    + usize::from(*added > 0 && *removed > 0)
+            }
             _ => 0,
         })
         .collect::<Vec<_>>();
@@ -264,6 +269,26 @@ pub(crate) fn resolved_token_spans(
                 if *behind > 0 {
                     spans.push(Span::styled(
                         format!("↓{behind}"),
+                        apply_token_style(Style::default().fg(palette.red), token.style),
+                    ));
+                }
+            }
+            ResolvedTokenKind::DiffStat { added, removed } => {
+                if *added > 0 {
+                    spans.push(Span::styled(
+                        format!("+{added}"),
+                        apply_token_style(Style::default().fg(palette.green), token.style),
+                    ));
+                }
+                if *added > 0 && *removed > 0 {
+                    spans.push(Span::styled(
+                        " ",
+                        apply_token_style(Style::default(), token.style),
+                    ));
+                }
+                if *removed > 0 {
+                    spans.push(Span::styled(
+                        format!("-{removed}"),
                         apply_token_style(Style::default().fg(palette.red), token.style),
                     ));
                 }
