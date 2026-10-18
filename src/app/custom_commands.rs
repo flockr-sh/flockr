@@ -238,7 +238,16 @@ impl App {
                 width: binding.width,
                 height: binding.height,
             },
-        )
+        )?;
+        // The popup border shows the terminal's label, like plugin popups.
+        if let Some(description) = binding.description.clone() {
+            if let Some(popup) = self.state.popup_pane.as_ref() {
+                if let Some(terminal) = self.state.terminals.get_mut(&popup.terminal_id) {
+                    terminal.set_manual_label(description);
+                }
+            }
+        }
+        Ok(())
     }
 
     pub(crate) fn custom_command_env(&self) -> (Vec<(String, String)>, Option<std::path::PathBuf>) {
@@ -764,6 +773,24 @@ mod tests {
         }
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "invoked");
         let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn custom_popup_is_titled_with_its_description() {
+        let mut app = test_app();
+        app.state.workspaces = vec![crate::workspace::Workspace::test_new("popup")];
+        app.state.active = Some(0);
+        let mut popup = binding(crate::config::CustomCommandAction::Popup);
+        popup.command = "true".into();
+
+        app.spawn_custom_popup_command(&popup).unwrap();
+
+        let terminal_id = &app.state.popup_pane.as_ref().unwrap().terminal_id;
+        assert_eq!(
+            app.state.terminals[terminal_id].manual_label.as_deref(),
+            Some("safe description")
+        );
+        app.close_popup_pane();
     }
 
     #[test]
