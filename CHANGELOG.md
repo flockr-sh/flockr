@@ -44,6 +44,8 @@ Version numbers start over at 1.0.0.
 
 ### Removed
 - Self-update and background update checks.
+- Downloading agent detection rules between releases
+  (`flockr server update-agent-manifests`). Rules ship with each release.
 - The sidebar's priority sort, replaced by the All and Active tabs.
 
 ### Compatibility

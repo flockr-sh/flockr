@@ -169,7 +169,7 @@ fn server_command() -> Command {
         )
         .subcommand(
             Command::new("update-agent-manifests")
-                .about("Fetch and reload agent detection manifests")
+                .about("Fetch and reload agent detection manifests (disabled in flockr)")
                 .arg(json_flag()),
         )
         .subcommand(

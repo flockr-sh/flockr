@@ -263,7 +263,7 @@ fn print_server_help() {
     eprintln!("  flockr server live-handoff   hand off live panes to a new local server");
     eprintln!("  flockr server reload-config  reload config.toml in the running server");
     eprintln!("  flockr server agent-manifests [--json]  show agent detection manifest status");
-    eprintln!("  flockr server update-agent-manifests [--json]  fetch and reload agent detection manifests");
+    eprintln!("  flockr server update-agent-manifests [--json]  fetch and reload agent detection manifests (disabled)");
     eprintln!("  flockr server reload-agent-manifests  reload agent detection manifests in the running server");
 }
 

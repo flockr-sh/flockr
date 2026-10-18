@@ -233,6 +233,14 @@ pub(crate) struct ManifestUpdateOutput {
 }
 
 pub(crate) fn check_and_update() -> Result<ManifestUpdateOutput, String> {
+    // The default catalog is upstream's, which would replace flockr's bundled
+    // rules. Rules ship with releases until flockr hosts its own catalog.
+    if !cfg!(test) {
+        return Err(
+            "flockr does not download agent detection manifests; they ship with each release"
+                .into(),
+        );
+    }
     check_and_update_from_url(&catalog_url())
 }
 
