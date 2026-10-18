@@ -92,6 +92,9 @@ case "$scenario" in
     step "Read" "${DEMO_FILE:-src/limits/window.ts}"
     step "Edit" "${DEMO_FILE:-src/limits/window.ts}"
     diff_line 63 21 "${DEMO_FILE:-src/limits/window.ts}"
+    if [[ -n "${DEMO_LINK:-}" ]]; then
+      printf '    %ssee %s%s\n' "$dim" "$reset$cyan$DEMO_LINK" "$reset"
+    fi
     wait_for_go
     spin 600 "Thinking…"
     ;;

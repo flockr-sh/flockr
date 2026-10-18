@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Renders assets/demo.gif: builds the fake world with setup.sh, plays
-# demo.tape through VHS, then stops the demo server.
+# demo.tape through VHS, adds the key captions with captions.py, then stops
+# the demo server.
 #
 # usage: scripts/demo/record.sh [flockr-binary]
 # Needs vhs and ttyd (Arch: pacman -S vhs ttyd) and JetBrainsMono Nerd Font.
@@ -20,4 +21,5 @@ export FLOCKR_SOCKET_PATH=/tmp/flockr-demo/home/.config/flockr/flockr.sock
 export FLOCKR_CLIENT_SOCKET_PATH=/tmp/flockr-demo/home/.config/flockr/flockr-client.sock
 trap 'HOME=/tmp/flockr-demo/home XDG_CONFIG_HOME=/tmp/flockr-demo/home/.config "$flockr_bin" server stop >/dev/null 2>&1 || true' EXIT
 vhs scripts/demo/demo.tape
+python3 -I scripts/demo/captions.py scripts/demo/demo.tape /tmp/flockr-demo/demo.mp4 assets/demo.gif
 ls -lh assets/demo.gif

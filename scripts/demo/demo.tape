@@ -1,6 +1,10 @@
 # README demo. Render with scripts/demo/record.sh, not vhs directly: the
-# script builds the fake world this tape drives.
-Output assets/demo.gif
+# script builds the fake world this tape drives and adds the key captions.
+#
+# "#cap <keys> | <what they do>" lines are captions: record.sh times them
+# from the Sleep and key commands below and draws them under the terminal.
+# A caption stays until the next one; "#cap -" clears it.
+Output "/tmp/flockr-demo/demo.mp4"
 
 Set Shell bash
 Set FontFamily "JetBrainsMono Nerd Font"
@@ -10,7 +14,7 @@ Set Height 880
 Set Padding 12
 Set Theme "TokyoNight"
 Set Framerate 20
-Set TypingSpeed 120ms
+Set TypingSpeed 100ms
 
 Hide
 Type "/tmp/flockr-demo/start"
@@ -18,69 +22,71 @@ Enter
 Sleep 2.5s
 Show
 
-# The overview: spaces with branches and changes, worktrees nested under
-# acme-api, and agents working, blocked, and done.
-Sleep 2.5s
+#cap | four Claude agents working on web-app at once
+Sleep 3s
 
-# Layout presets cycle the web-app panes.
+#cap ctrl+b space | next layout
 Ctrl+B
 Space
-Sleep 1.2s
+Sleep 1.4s
 Ctrl+B
 Space
-Sleep 1.2s
+Sleep 1.4s
+#cap ctrl+b alt+5 | tiled layout
 Ctrl+B
-# Alt+1 (VHS's Alt+ takes letters only; a terminal sends Alt as ESC first).
-Type "1"
-Sleep 1s
+# Alt+5 (VHS's Alt+ takes letters only; a terminal sends Alt as Escape first).
+Type "5"
+Sleep 1.2s
 
-# acme-api finishes in the background and raises a toast.
-Sleep 1.5s
+#cap | acme-api finished in the background
+Sleep 2s
 
-# Jump to the agent that needs you and approve its edit.
+#cap ctrl+b a | jump to the agent that needs you
 Ctrl+B
 Type "a"
 Sleep 2.2s
+#cap 1 | approve the edit
 Type "1"
 Sleep 2s
 
-# Jump to the next one: the agent that just finished.
+#cap ctrl+b a | jump to the next one
 Ctrl+B
 Type "a"
 Sleep 2.2s
 
-# Link hints label every link on screen.
-# Alt+4: focus agent 4, back to web-app.
+#cap alt+4 | jump to agent 4
+# Alt+4: back to web-app's first agent.
 Type "4"
-Sleep 0.6s
-# Focus the dev server pane to the right; hints cover the focused pane.
-Ctrl+B
-Type "l"
-Sleep 0.6s
+Sleep 1.2s
+#cap ctrl+b f | label every link, type a label to open it
 Ctrl+B
 Type "f"
-Sleep 2s
+Sleep 2.2s
 Escape
-Sleep 0.5s
+Sleep 0.4s
 
-# The command palette searches every action.
+#cap ctrl+b : | command palette: search every action
 Ctrl+B
 Type ":"
 Sleep 0.6s
 Type "layout"
 Sleep 1.8s
 Escape
-Sleep 0.5s
+Sleep 0.4s
 
-# Settings save to the config file and apply at once.
+#cap ctrl+b s | settings
 Ctrl+B
 Type "s"
 Sleep 1.2s
+#cap tab | next section
 Tab
-Sleep 1s
-Right
-Sleep 2s
-Left
 Sleep 1.2s
+#cap → | sidebar on the right: saved and applied at once
+Right
+Sleep 2.2s
+#cap ← | back to the left
+Left
+Sleep 1.4s
+#cap -
 Escape
 Sleep 1.5s

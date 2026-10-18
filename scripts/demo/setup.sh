@@ -66,7 +66,7 @@ cat >"$home/.gitconfig" <<'EOF'
 	name = Sam Rivera
 	email = sam@example.com
 [init]
-	defaultBranch = main
+	defaultBranch = master
 [advice]
 	detachedHead = false
 EOF
@@ -112,7 +112,7 @@ make_repo() {
   git clone -q --bare "$dir" "$root/remotes/$name.git"
   git -C "$dir" remote add origin "$root/remotes/$name.git"
   git -C "$dir" fetch -q origin
-  git -C "$dir" branch -q -u origin/main main
+  git -C "$dir" branch -q -u origin/master master
 }
 local_commit() {
   local dir="$home/code/$1" file="$2" message="$3"
@@ -187,12 +187,15 @@ run "$AUTH_PANE" "fake-agent claude ask"
 LIMITS_PANE="$(worktree "$API_WS" "$home/code/acme-api-rate-limits")"
 run "$LIMITS_PANE" "fake-agent codex busy"
 
-read -r WEB_WS WEB_MAIN < <(space "$home/code/web-app")
-WEB_DEV="$(split "$WEB_MAIN" right)"
-WEB_TESTS="$(split "$WEB_DEV" down)"
-run "$WEB_MAIN" "DEMO_TASK='Add a dark mode toggle to the settings page' DEMO_READ=src/routes/settings.tsx DEMO_FILE=src/theme/dark.css fake-agent claude busy"
-run "$WEB_DEV" "clear; printf '\n  \e[32mVITE v6.2.0\e[0m  ready in 412 ms\n\n  ➜  Local:   \e[36mhttp://localhost:5173/\e[0m\n  ➜  Docs:    \e[36mhttps://vite.dev/guide/\e[0m\n\n'"
-run "$WEB_TESTS" "clear; printf '\n \e[32m✓\e[0m src/routes/settings.test.tsx (12 tests)\n \e[32m✓\e[0m src/App.test.tsx (4 tests)\n\n \e[1mTest Files\e[0m  2 passed\n      \e[1mTests\e[0m  16 passed\n\n'"
+# Four agents at once on web-app's master, in a 2x2 grid.
+read -r WEB_WS WEB_1 < <(space "$home/code/web-app")
+WEB_2="$(split "$WEB_1" right)"
+WEB_3="$(split "$WEB_1" down)"
+WEB_4="$(split "$WEB_2" down)"
+run "$WEB_1" "DEMO_TASK='Add a dark mode toggle to the settings page' DEMO_READ=src/routes/settings.tsx DEMO_FILE=src/theme/dark.css DEMO_LINK=http://localhost:5173/settings fake-agent claude busy"
+run "$WEB_2" "DEMO_TASK='Fix the flaky checkout test' DEMO_READ=src/checkout/cart.test.tsx DEMO_FILE=src/checkout/cart.ts DEMO_LINK=https://github.com/acme/web-app/issues/412 fake-agent claude busy"
+run "$WEB_3" "DEMO_TASK='Lazy-load the analytics dashboard' DEMO_READ=src/routes/analytics.tsx DEMO_FILE=src/routes/analytics.tsx fake-agent claude busy"
+run "$WEB_4" "DEMO_TASK='Write tests for the date helpers' DEMO_READ=src/lib/dates.ts DEMO_FILE=src/lib/dates.test.ts fake-agent claude busy"
 
 read -r _ INFRA_PANE < <(space "$home/code/infra")
 run "$INFRA_PANE" "DEMO_TASK='Plan the staging cluster upgrade' DEMO_READ=terraform/main.tf DEMO_FILE=terraform/staging.tf fake-agent codex busy"
