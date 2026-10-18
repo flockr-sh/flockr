@@ -1,0 +1,229 @@
+name: Release
+
+# Push a v<version> tag to build, publish a GitHub release, and update
+# distribution/latest.json on master. Run it by hand (workflow_dispatch) to
+# build every target without publishing anything.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  RUST_TOOLCHAIN_VERSION: 1.96.1
+
+jobs:
+  build:
+    if: github.repository == 'flockr-sh/flockr'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            name: flockr-linux-x86_64
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-latest
+            name: flockr-linux-aarch64
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            name: flockr-macos-x86_64
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            name: flockr-macos-aarch64
+          - target: x86_64-pc-windows-msvc
+            os: windows-2022
+            name: flockr-windows-x86_64.zip
+
+    runs-on: ${{ matrix.os }}
+    env:
+      LIBGHOSTTY_VT_OPTIMIZE: ReleaseFast
+      LIBGHOSTTY_VT_SIMD: "true"
+
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+
+      - name: Verify tag matches Cargo.toml version
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          CARGO_VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          if [ "$CARGO_VERSION" != "$TAG_VERSION" ]; then
+            echo "error: tag $GITHUB_REF_NAME doesn't match Cargo.toml version $CARGO_VERSION"
+            exit 1
+          fi
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # v1
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN_VERSION }}
+          targets: ${{ matrix.target }}
+
+      - name: Install Zig
+        uses: vercel-labs/setup-zig@83c1594f26b86da8a9a8ddd9b5ee5f3af0f96943 # v1.0.2
+        with:
+          version: 0.16.0
+
+      - name: Install Linux build tools
+        if: runner.os == 'Linux'
+        run: |
+          sudo find /etc/apt/sources.list.d -type f \( -iname '*microsoft*' -o -iname '*azure-cli*' \) -print -delete
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build musl-tools gcc-aarch64-linux-gnu crossbuild-essential-arm64
+
+      - name: Install macOS build tools
+        if: runner.os == 'macOS'
+        run: HOMEBREW_NO_AUTO_UPDATE=1 brew install cmake ninja
+
+      - name: Set Linux aarch64 linker
+        if: matrix.target == 'aarch64-unknown-linux-musl'
+        run: echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        with:
+          key: release-${{ matrix.target }}
+
+      - name: Remove Zig caches
+        shell: bash
+        run: rm -rf .zig-cache vendor/libghostty-vt/.zig-cache vendor/libghostty-vt/zig-out
+
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Package artifact
+        if: runner.os != 'Windows'
+        shell: bash
+        run: cp target/${{ matrix.target }}/release/flockr ${{ matrix.name }}
+
+      - name: Package artifact
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $package = Join-Path $env:RUNNER_TEMP "Microsoft.Windows.Console.ConPTY.nupkg"
+          $stage = Join-Path $env:RUNNER_TEMP "flockr-windows-x86_64"
+          .\scripts\package_windows_conpty.ps1 `
+            -FlockrExe target\${{ matrix.target }}\release\flockr.exe `
+            -PackagePath $package `
+            -StageDir $stage `
+            -OutputPath ${{ matrix.name }}
+          $version = (& (Join-Path $stage "flockr.exe") --version | Out-String).Trim()
+          Write-Host "Packaged $version"
+          if ($env:GITHUB_EVENT_NAME -eq "push") {
+            $tagVersion = $env:GITHUB_REF_NAME -replace '^v', ''
+            if ($version -notmatch [regex]::Escape($tagVersion)) {
+              throw "Packaged Windows binary has unexpected version: $version"
+            }
+          }
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ matrix.name }}
+
+  release:
+    needs: build
+    if: github.repository == 'flockr-sh/flockr' && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Write checksums and release notes
+        run: |
+          (cd dist && sha256sum flockr-* > SHA256SUMS)
+          cat dist/SHA256SUMS
+          python3 scripts/release.py notes --version "${GITHUB_REF_NAME#v}" > RELEASE_NOTES.md
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/flockr-*
+
+      - name: Create release
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
+        with:
+          files: |
+            dist/flockr-linux-x86_64
+            dist/flockr-linux-aarch64
+            dist/flockr-macos-x86_64
+            dist/flockr-macos-aarch64
+            dist/flockr-windows-x86_64.zip
+            dist/SHA256SUMS
+          body_path: RELEASE_NOTES.md
+
+      - name: Upload checksums for the manifest job
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: SHA256SUMS
+          path: dist/SHA256SUMS
+
+  update-latest-json:
+    needs: release
+    if: github.repository == 'flockr-sh/flockr' && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          ref: master
+
+      - name: Download checksums
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: SHA256SUMS
+          path: ${{ runner.temp }}
+
+      - name: Update distribution/latest.json
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          # Notes and protocol come from the tagged source, not newer master.
+          git show "$GITHUB_REF_NAME:CHANGELOG.md" > "$RUNNER_TEMP/CHANGELOG.md"
+          git show "$GITHUB_REF_NAME:src/protocol/wire.rs" > "$RUNNER_TEMP/wire.rs"
+          git show "$GITHUB_REF_NAME:src/protocol/endpoint.rs" > "$RUNNER_TEMP/endpoint.rs"
+          python3 scripts/release.py manifest --version "$VERSION" \
+            --changelog "$RUNNER_TEMP/CHANGELOG.md" \
+            --wire "$RUNNER_TEMP/wire.rs" \
+            --endpoint "$RUNNER_TEMP/endpoint.rs" \
+            --sha256sums "$RUNNER_TEMP/SHA256SUMS"
+
+      - name: Commit and push
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add distribution/latest.json
+          git diff --cached --quiet && exit 0
+          git commit -m "Update latest.json for v$VERSION"
+          for attempt in 1 2 3; do
+            git pull --rebase origin master
+            if git push origin master; then
+              exit 0
+            fi
+            sleep $((attempt * 2))
+          done
+          echo "failed to push distribution/latest.json after 3 attempts" >&2
+          exit 1
