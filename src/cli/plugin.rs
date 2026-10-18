@@ -1272,6 +1272,27 @@ fn scrub_flockr_runtime_env(command: &mut Command) {
             command.env_remove(key);
         }
     }
+    // The upstream names plugin processes also get.
+    for key in [
+        crate::api::SOCKET_PATH_ENV_VAR,
+        "FLOCKR_BIN_PATH",
+        "FLOCKR_ENV",
+        "FLOCKR_WORKSPACE_ID",
+        "FLOCKR_TAB_ID",
+        "FLOCKR_PANE_ID",
+    ] {
+        if let Some(key) = crate::app::upstream_plugin_env_key(key) {
+            command.env_remove(key);
+        }
+    }
+    for (key, _) in std::env::vars_os() {
+        let key = key.to_string_lossy();
+        if crate::app::flockr_plugin_env_key(&key)
+            .is_some_and(|key| key.starts_with("FLOCKR_PLUGIN_"))
+        {
+            command.env_remove(key.as_ref());
+        }
+    }
 }
 
 fn build_platform_supported(

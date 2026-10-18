@@ -768,7 +768,7 @@ fn main() -> io::Result<()> {
         println!("Config: {}", config::config_path().display());
         println!("Logs:   {}", logging::help_log_paths_summary());
         println!("Env:    FLOCKR_CONFIG_PATH overrides config file path");
-        println!("Home:   https://herdr.dev");
+        println!("Home:   https://github.com/dmkenney/flockr (fork of https://herdr.dev)");
         println!();
         println!("{}", cli::AGENT_HELP_FOOTER);
         return Ok(());

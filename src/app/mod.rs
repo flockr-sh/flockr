@@ -14,6 +14,9 @@ mod api;
 #[cfg(test)]
 pub(crate) use api::test_support::exiting_test_command;
 mod api_helpers;
+pub(crate) use api::plugins::upstream::{
+    flockr_env_key as flockr_plugin_env_key, upstream_env_key as upstream_plugin_env_key,
+};
 pub(crate) use api_helpers::limit_snapshot_lines;
 mod creation;
 mod custom_commands;

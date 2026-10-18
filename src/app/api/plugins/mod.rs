@@ -3,6 +3,7 @@ mod env;
 mod manifest;
 mod panes;
 mod runtime;
+pub(crate) mod upstream;
 
 use super::responses::{encode_error, encode_success};
 use crate::api::schema::{

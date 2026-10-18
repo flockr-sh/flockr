@@ -215,6 +215,25 @@ fn apply_pane_launch_env(cmd: &mut CommandBuilder, launch_env: &PaneLaunchEnv) {
             );
             cmd.env(crate::integration::FLOCKR_TAB_ID_ENV_VAR, tab_id);
             cmd.env(crate::integration::FLOCKR_PANE_ID_ENV_VAR, pane_id);
+            // Plugin panes also get the upstream names, like the rest of their env.
+            if launch_env
+                .extra
+                .iter()
+                .any(|(key, _)| key == "FLOCKR_PLUGIN_ID")
+            {
+                for (key, value) in [
+                    (
+                        crate::integration::FLOCKR_WORKSPACE_ID_ENV_VAR,
+                        workspace_id,
+                    ),
+                    (crate::integration::FLOCKR_TAB_ID_ENV_VAR, tab_id),
+                    (crate::integration::FLOCKR_PANE_ID_ENV_VAR, pane_id),
+                ] {
+                    if let Some(key) = crate::app::upstream_plugin_env_key(key) {
+                        cmd.env(key, value);
+                    }
+                }
+            }
         }
         PaneLaunchIdentity::OmitPane => {
             cmd.env_remove(crate::integration::FLOCKR_PANE_ID_ENV_VAR);

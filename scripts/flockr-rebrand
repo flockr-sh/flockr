@@ -45,7 +45,10 @@ find src tests skills docs/next/api .agents scripts -depth -name '*herdr*' | whi
 done
 
 # Text replacement. Upstream links are swapped out first and put back after.
+# Lines marked "rebrand: keep" name upstream on purpose (compatibility
+# aliases) and are left alone.
 grep -rlIi herdr src tests skills docs/next/api .agents scripts distribution/latest.json build.rs Cargo.toml | grep -vE '^scripts/(flockr-rebrand|test_vendor_portable_pty\.py)$' | xargs -r perl -pi -e '
+  next if /rebrand: keep/;
   s#(herdrdev|ogulcancelik)/herdr#\x01$1\x01#g;
   s/herdrdev/\x01DEV\x01/g;
   s/herdr\.dev/\x01SITE\x01/g;

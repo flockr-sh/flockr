@@ -46,10 +46,11 @@ const TERMINAL_SESSION_CONTROL_USAGE: &str =
     "usage: flockr terminal session control <target> [--takeover] [--cols N] [--rows N]";
 pub(crate) const AGENT_HELP_FOOTER: &str = concat!(
     "Are you an AI? Use these resources ONLY IF your task specifically asks you to:\n",
-    "  Help a human understand or set up Flockr for the first time:\n",
-    "    https://herdr.dev/agent-guide.md\n",
+    "  Help a human understand or set up Flockr:\n",
+    "    Run: flockr --default-config (every config key, documented)\n",
     "  Debug or investigate a problem with Flockr:\n",
-    "    https://herdr.dev/llms.txt\n",
+    "    Run: flockr --help for the log paths, and flockr agent explain <pane> --json\n",
+    "    Flockr is a fork; https://herdr.dev/llms.txt describes upstream\n",
     "  Control Flockr panes, agents, or workspaces:\n",
     "    SKIP if a Flockr skill is already in your context. Otherwise run: flockr --skill",
 );

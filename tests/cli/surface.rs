@@ -287,8 +287,8 @@ fn root_and_command_group_help_point_agents_to_plain_text_docs() {
         let stdout = String::from_utf8_lossy(&output.stdout);
         for expected in [
             "Are you an AI? Use these resources ONLY IF your task specifically asks you to:",
-            "https://herdr.dev/agent-guide.md",
-            "https://herdr.dev/llms.txt",
+            "flockr --default-config",
+            "flockr agent explain <pane> --json",
             "flockr --skill",
         ] {
             assert!(

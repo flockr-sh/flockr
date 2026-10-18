@@ -276,6 +276,7 @@ impl App {
                 current_exe.display().to_string(),
             ));
         }
+        super::upstream::add_upstream_env(&mut env);
         Ok(env)
     }
 
@@ -354,6 +355,9 @@ impl App {
 }
 
 fn plugin_pane_protected_env_key(key: &str) -> bool {
+    if let Some(key) = super::upstream::flockr_env_key(key) {
+        return plugin_pane_protected_env_key(&key);
+    }
     matches!(
         key,
         crate::api::SOCKET_PATH_ENV_VAR

@@ -65,6 +65,8 @@ fn default_update_channel_for_build(is_windows: bool, is_preview: bool) -> Updat
 pub enum ToastDelivery {
     #[default]
     Off,
+    // Upstream's name for in-app toasts, so a copied upstream config still parses.
+    #[serde(alias = "herdr")] // rebrand: keep
     Flockr,
     Terminal,
     System,
@@ -2091,6 +2093,18 @@ seen_delay_ms = 750
 "#;
         let config: Config = toml::from_str(toml).unwrap();
         assert_eq!(config.ui.seen_delay_ms, 750);
+    }
+
+    #[test]
+    fn toast_delivery_accepts_the_upstream_name_for_in_app_toasts() {
+        let config: Config = toml::from_str(
+            r#"
+[ui.toast]
+delivery = "herdr" # rebrand: keep
+"#,
+        )
+        .unwrap();
+        assert_eq!(config.ui.toast.delivery, ToastDelivery::Flockr);
     }
 
     #[test]
