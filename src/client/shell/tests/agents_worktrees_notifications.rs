@@ -905,6 +905,115 @@ fn grouped_agent_sidebar_shows_each_space_once_and_aligns_its_agents() {
 }
 
 #[test]
+fn agent_sidebar_nests_worktree_agents_under_their_main_checkout() {
+    let mut projected = snapshot();
+    projected.workspaces[0].worktree = Some(ClientShellWorktree {
+        key: "repo".into(),
+        label: "repo".into(),
+        is_linked_worktree: false,
+    });
+    let mut other = projected.workspaces[0].clone();
+    other.workspace_id = "ws_2".into();
+    other.label = "other-space".into();
+    other.focused = false;
+    other.worktree = None;
+    projected.workspaces.push(other);
+    // The server lists the worktree last, apart from its main checkout.
+    let mut child = projected.workspaces[0].clone();
+    child.workspace_id = "ws_3".into();
+    child.label = "worktree-feature".into();
+    child.focused = false;
+    child.branch = Some("worktree/feature".into());
+    child.worktree.as_mut().unwrap().is_linked_worktree = true;
+    projected.workspaces.push(child);
+    let agent = |pane_id: &str, workspace_id: &str, name: &str| ClientShellAgent {
+        pane_id: pane_id.into(),
+        workspace_id: workspace_id.into(),
+        tab_id: "tab_1".into(),
+        name: Some(name.into()),
+        display_agent: None,
+        agent: Some("pi".into()),
+        title: None,
+        terminal_title: None,
+        terminal_title_stripped: None,
+        agent_status: AgentStatus::Idle,
+        state_change_seq: 0,
+        state_labels: Vec::new(),
+        tokens: Vec::new(),
+        focused: false,
+        branch: None,
+        session_empty: false,
+    };
+    projected.agents = vec![
+        agent("pane_1", "ws_1", "agent-main"),
+        agent("pane_2", "ws_2", "agent-other"),
+        agent("pane_3", "ws_3", "agent-tree"),
+    ];
+    let mut config = Config::default();
+    config.ui.sidebar.agents.rows = vec![vec![
+        crate::config::AgentSidebarToken::StateIcon,
+        crate::config::AgentSidebarToken::Agent,
+    ]];
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&config));
+    state.set_snapshot(Box::new(projected.clone()));
+    state.set_pane_surface(surface());
+
+    let panel_lines = |state: &mut ClientShellState| {
+        let frame = state.compose(106, 30).expect("agent sidebar frame");
+        let lines = frame
+            .cells
+            .chunks(frame.width as usize)
+            .map(|row| {
+                row.iter()
+                    .map(|cell| cell.symbol.as_str())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>();
+        let panel = lines
+            .iter()
+            .position(|line| line.starts_with(" AGENTS"))
+            .expect("agent panel title");
+        lines[panel..].to_vec()
+    };
+    let line_of = |lines: &[String], needle: &str| {
+        lines
+            .iter()
+            .position(|line| line.contains(needle))
+            .unwrap_or_else(|| panic!("missing {needle}: {}", lines.join("\n")))
+    };
+    let column_of = |lines: &[String], needle: &str| {
+        let line = &lines[line_of(lines, needle)];
+        line.find(needle).map(|byte| line[..byte].chars().count())
+    };
+
+    // The worktree's agents follow the main checkout's own agents, under a
+    // sub-header named like the spaces list names the worktree.
+    let lines = panel_lines(&mut state);
+    let header = line_of(&lines, " client-shell");
+    assert_eq!(line_of(&lines, "agent-main"), header + 1);
+    assert_eq!(line_of(&lines, "└ feature"), header + 2);
+    assert_eq!(line_of(&lines, "agent-tree"), header + 3);
+    assert_eq!(line_of(&lines, " other-space"), header + 4);
+    assert!(!lines.iter().any(|line| line.contains("worktree-feature")));
+    assert!(column_of(&lines, "agent-tree") > column_of(&lines, "agent-main"));
+    assert_eq!(
+        super::super::agent_sidebar::ordered_agent_pane_ids(
+            state.snapshot.as_deref().unwrap(),
+            Default::default()
+        ),
+        ["pane_1", "pane_3", "pane_2"]
+    );
+
+    // With no agents of its own, the main checkout still heads its worktrees.
+    projected.agents.remove(0);
+    state.set_snapshot(Box::new(projected));
+    let lines = panel_lines(&mut state);
+    let header = line_of(&lines, " client-shell");
+    assert_eq!(line_of(&lines, "└ feature"), header + 1);
+    assert_eq!(line_of(&lines, "agent-tree"), header + 2);
+}
+
+#[test]
 fn sidebar_numbers_show_the_keys_that_focus_agents_and_switch_spaces() {
     let mut projected = snapshot();
     let mut second_workspace = projected.workspaces[0].clone();

@@ -929,6 +929,42 @@ pub(crate) fn workspace_entries(
     entries
 }
 
+/// Name of a worktree space drawn under its repo's main checkout: its branch,
+/// unless the user renamed it.
+pub(in crate::client::shell) fn nested_worktree_label(workspace: &ClientShellWorkspace) -> &str {
+    if workspace.custom_label {
+        return &workspace.label;
+    }
+    workspace
+        .branch
+        .as_deref()
+        .map(short_worktree_branch)
+        .unwrap_or(&workspace.label)
+}
+
+/// Drops the `worktree/` namespace that new worktree branches get.
+pub(in crate::client::shell) fn short_worktree_branch(branch: &str) -> &str {
+    branch.strip_prefix("worktree/").unwrap_or(branch)
+}
+
+/// The main checkout a worktree space is drawn under in the spaces list, if
+/// that checkout is open as a space.
+pub(in crate::client::shell) fn worktree_parent<'a>(
+    snapshot: &'a ClientShellSnapshot,
+    workspace: &ClientShellWorkspace,
+) -> Option<&'a ClientShellWorkspace> {
+    let worktree = workspace
+        .worktree
+        .as_ref()
+        .filter(|worktree| worktree.is_linked_worktree)?;
+    snapshot.workspaces.iter().find(|candidate| {
+        candidate
+            .worktree
+            .as_ref()
+            .is_some_and(|candidate| candidate.key == worktree.key && !candidate.is_linked_worktree)
+    })
+}
+
 fn parent_group_key(snapshot: &ClientShellSnapshot, index: usize) -> Option<String> {
     let workspace = snapshot.workspaces.get(index)?;
     let worktree = workspace.worktree.as_ref()?;
@@ -1043,12 +1079,8 @@ pub(in crate::client::shell) fn workspace_rows(
     number: Option<char>,
     config: &SpacesSidebarConfig,
 ) -> Vec<Vec<crate::ui::ResolvedToken>> {
-    let label = if indented && !workspace.custom_label {
-        workspace
-            .branch
-            .as_deref()
-            .and_then(|branch| branch.strip_prefix("worktree/").or(Some(branch)))
-            .unwrap_or(&workspace.label)
+    let label = if indented {
+        nested_worktree_label(workspace)
     } else {
         &workspace.label
     };

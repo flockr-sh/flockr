@@ -173,7 +173,7 @@ fn agent_rows(
     if !agent_view {
         super::agent_sidebar::mark_space_groups(rows.iter_mut().map(|row| {
             (
-                (row.endpoint_id.clone(), row.agent.workspace_id.clone()),
+                (row.endpoint_id.clone(), row.agent.group_id.clone()),
                 &mut row.agent,
             )
         }));

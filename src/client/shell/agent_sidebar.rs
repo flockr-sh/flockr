@@ -41,9 +41,17 @@ pub(super) struct AgentRow {
     pub(super) focused: bool,
     pub(super) rows: Vec<Vec<crate::ui::ResolvedToken>>,
     pub(super) workspace_id: String,
-    pub(super) workspace_label: String,
-    /// Space name drawn above the first agent of each space.
+    /// Space the agent is grouped under: the repo's main checkout when the
+    /// agent works in one of its worktrees, as in the spaces list.
+    pub(super) group_id: String,
+    pub(super) group_label: String,
+    /// Name of the worktree space the agent works in, when it is grouped
+    /// under the main checkout.
+    pub(super) worktree_label: Option<String>,
+    /// Space name drawn above the first agent of each group.
     pub(super) header: Option<String>,
+    /// Worktree name drawn above the first agent of each worktree in a group.
+    pub(super) subheader: Option<String>,
     /// Indents the agent under its space header.
     pub(super) grouped: bool,
     /// Last agent before the next space header, or any agent when ungrouped.
@@ -52,11 +60,14 @@ pub(super) struct AgentRow {
 
 impl AgentRow {
     pub(super) fn lines(&self) -> usize {
-        self.rows.len().max(1) + usize::from(self.header.is_some())
+        self.rows.len().max(1)
+            + usize::from(self.header.is_some())
+            + usize::from(self.subheader.is_some())
     }
 }
 
-/// Group agents that sit next to each other in the same space under one header.
+/// Group agents that sit next to each other in the same space under one
+/// header, with a sub-header for each worktree of that space.
 pub(super) fn mark_space_groups<'a, K: PartialEq>(
     rows: impl IntoIterator<Item = (K, &'a mut AgentRow)>,
 ) {
@@ -66,7 +77,14 @@ pub(super) fn mark_space_groups<'a, K: PartialEq>(
         row.grouped = true;
         let starts_group = last.as_ref() != Some(&key);
         if starts_group {
-            row.header = Some(row.workspace_label.clone());
+            row.header = Some(row.group_label.clone());
+        }
+        let starts_worktree = starts_group
+            || previous
+                .as_ref()
+                .is_some_and(|previous| previous.workspace_id != row.workspace_id);
+        if starts_worktree {
+            row.subheader = row.worktree_label.clone();
         }
         if let Some(previous) = previous.take() {
             previous.group_end = starts_group;
@@ -93,10 +111,31 @@ pub(super) fn ordered_agent_pane_ids(
             .cloned()
             .collect();
     }
-    snapshot
+    // List agents in spaces-list order, so worktree agents follow their
+    // repo's main checkout. The sort is stable, keeping each space's order.
+    let order = super::sidebar::workspace_entries(snapshot, &HashSet::new())
+        .into_iter()
+        .enumerate()
+        .map(|(position, entry)| {
+            (
+                snapshot.workspaces[entry.index].workspace_id.as_str(),
+                position,
+            )
+        })
+        .collect::<HashMap<_, _>>();
+    let mut agents = snapshot
         .agents
         .iter()
         .filter(|agent| filter.shows(agent.agent_status))
+        .collect::<Vec<_>>();
+    agents.sort_by_key(|agent| {
+        order
+            .get(agent.workspace_id.as_str())
+            .copied()
+            .unwrap_or(usize::MAX)
+    });
+    agents
+        .into_iter()
         .map(|agent| agent.pane_id.clone())
         .collect()
 }
@@ -327,7 +366,7 @@ pub(super) fn agent_rows(
         })
         .collect::<Vec<_>>();
     if snapshot.agent_view_label.is_none() {
-        mark_space_groups(rows.iter_mut().map(|row| (row.workspace_id.clone(), row)));
+        mark_space_groups(rows.iter_mut().map(|row| (row.group_id.clone(), row)));
     }
     rows
 }
@@ -380,6 +419,8 @@ pub(super) fn agent_row(
         .agent
         .as_deref()
         .and_then(crate::detect::parse_agent_label);
+    let parent = super::sidebar::worktree_parent(snapshot, workspace);
+    let group = parent.unwrap_or(workspace);
     let rows = crate::ui::sidebar_agent_rows(
         &config.agents,
         crate::ui::AgentTokenContext {
@@ -393,7 +434,10 @@ pub(super) fn agent_row(
             agent_label,
             terminal_title: agent.terminal_title.as_deref(),
             terminal_title_stripped: agent.terminal_title_stripped.as_deref(),
-            branch: agent.branch.as_deref(),
+            branch: agent
+                .branch
+                .as_deref()
+                .map(super::sidebar::short_worktree_branch),
             canonical_agent,
             number,
             tokens: &tokens,
@@ -407,8 +451,11 @@ pub(super) fn agent_row(
         focused: agent.focused,
         rows,
         workspace_id: workspace.workspace_id.clone(),
-        workspace_label: workspace.label.clone(),
+        group_id: group.workspace_id.clone(),
+        group_label: group.label.clone(),
+        worktree_label: parent.map(|_| super::sidebar::nested_worktree_label(workspace).to_owned()),
         header: None,
+        subheader: None,
         grouped: false,
         group_end: true,
     })
@@ -450,7 +497,37 @@ pub(super) fn render_agent_row(
         );
         rect = Rect::new(rect.x, rect.y + 1, rect.width, rect.height - 1);
     }
-    let group_indent = if row.grouped { 2 } else { 0 };
+    if let Some(subheader) = &row.subheader {
+        if rect.height == 0 {
+            return rect;
+        }
+        put_text(
+            buffer,
+            rect.x.saturating_add(3),
+            rect.y,
+            rect.width.saturating_sub(3),
+            "└",
+            Style::default().fg(palette.overlay0),
+        );
+        put_text(
+            buffer,
+            rect.x.saturating_add(5),
+            rect.y,
+            rect.width.saturating_sub(5),
+            subheader,
+            Style::default()
+                .fg(palette.subtext0)
+                .add_modifier(Modifier::BOLD),
+        );
+        rect = Rect::new(rect.x, rect.y + 1, rect.width, rect.height - 1);
+    }
+    // Worktree agents sit under their sub-header, one level below the
+    // main checkout's own agents.
+    let group_indent = match (row.grouped, row.worktree_label.is_some()) {
+        (false, _) => 0,
+        (true, false) => 2,
+        (true, true) => 6,
+    };
     let row_style = if row.focused {
         Style::default().bg(palette.active_row_bg)
     } else {
