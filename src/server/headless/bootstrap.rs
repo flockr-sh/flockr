@@ -40,6 +40,12 @@ pub fn run_server() -> io::Result<()> {
     let event_hub = api::EventHub::default();
     let server_stop = crate::server::shutdown::ServerStop::default();
 
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .map_err(io::Error::other)?;
+    let server_events = server_events_with_stop_signals(&rt, &server_stop);
+
     // Start the JSON API socket server.
     let _api_server = match api::start_server_with_stop_control(
         api_tx.clone(),
@@ -54,11 +60,6 @@ pub fn run_server() -> io::Result<()> {
         }
         Err(err) => return Err(err),
     };
-
-    let rt = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .map_err(io::Error::other)?;
 
     let result = rt.block_on(async {
         // Create the App (with AppState, event channels, etc.).
@@ -78,6 +79,7 @@ pub fn run_server() -> io::Result<()> {
             Some(api_tx.clone()),
             Some(_api_server),
             server_stop,
+            server_events,
         ) {
             Ok(server) => server,
             Err(err) if err.kind() == io::ErrorKind::AddrInUse => {
@@ -160,6 +162,7 @@ fn run_handoff_import_server(socket_path: &Path, token: &str) -> io::Result<()> 
         .enable_all()
         .build()
         .map_err(io::Error::other)?;
+    let server_events = server_events_with_stop_signals(&rt, &server_stop);
 
     let result = rt.block_on(async {
         let app = app::App::new_from_handoff(
@@ -189,6 +192,7 @@ fn run_handoff_import_server(socket_path: &Path, token: &str) -> io::Result<()> 
             Some(api_tx.clone()),
             Some(api_server),
             server_stop,
+            server_events,
         )?;
         // Carried across before any client attaches, so the first title sent is
         // the override rather than the configured one it replaced.

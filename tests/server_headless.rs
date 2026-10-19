@@ -612,6 +612,35 @@ fn server_survives_hangup_and_logs_why_it_stops() {
 }
 
 #[test]
+fn server_stopped_as_soon_as_it_listens_still_shuts_down_cleanly() {
+    let _lock = test_lock();
+    let base = unique_test_dir();
+    let config_home = base.join("config");
+    let runtime_dir = base.join("runtime");
+    let api_socket = runtime_dir.join("flockr.sock");
+    let client_socket = runtime_dir.join("flockr-client.sock");
+
+    let mut spawned = spawn_server(&config_home, &runtime_dir, &api_socket, &client_socket);
+    wait_for_socket(&api_socket, Duration::from_secs(10));
+    // No grace period: the socket says the server is up, so a stop signal
+    // from then on must go through the clean shutdown.
+    let pid = spawned.child.process_id().expect("server pid") as libc::pid_t;
+    assert_eq!(unsafe { libc::kill(pid, libc::SIGTERM) }, 0);
+    assert!(
+        wait_for_exit(&mut spawned.child, Duration::from_secs(10)),
+        "server must stop on SIGTERM"
+    );
+    let line = wait_for_log_line(
+        &server_log_path(&config_home),
+        "server shutdown initiated",
+        Duration::from_secs(5),
+    );
+    assert!(line.contains("reason=SIGTERM"), "{line}");
+
+    cleanup_spawned_flockr(spawned, base);
+}
+
+#[test]
 fn server_stop_request_logs_its_caller() {
     let _lock = test_lock();
     let base = unique_test_dir();

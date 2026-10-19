@@ -310,6 +310,28 @@ fn spawn_windows_client_accept_thread(
     })
 }
 
+/// Channel for server events from client threads and stop signals.
+pub(crate) type ServerEvents = (mpsc::Sender<ServerEvent>, mpsc::Receiver<ServerEvent>);
+
+/// Creates the server event channel and routes SIGINT and SIGTERM into it.
+/// Call it before the API socket listens: the socket is how callers know the
+/// server is up, and a stop signal that arrived before a handler existed
+/// would kill the server without a clean shutdown.
+pub(crate) fn server_events_with_stop_signals(
+    rt: &tokio::runtime::Runtime,
+    server_stop: &ServerStop,
+) -> ServerEvents {
+    let (server_event_tx, server_event_rx) = mpsc::channel(64);
+    let _runtime = rt.enter();
+    let server_stop = server_stop.clone();
+    let quit_notify = server_event_tx.clone();
+    crate::platform::spawn_server_signal_monitor(move |signal| {
+        server_stop.request(ShutdownReason::Signal(signal));
+        let _ = quit_notify.try_send(ServerEvent::QuitSignal);
+    });
+    (server_event_tx, server_event_rx)
+}
+
 impl HeadlessServer {
     /// Creates and starts the headless server.
     ///
@@ -323,6 +345,7 @@ impl HeadlessServer {
         api_tx: Option<api::ApiRequestSender>,
         api_server: Option<api::ServerHandle>,
         server_stop: ServerStop,
+        server_events: ServerEvents,
     ) -> io::Result<Self> {
         let should_quit = server_stop.flag().clone();
         let client_path = client_socket_path();
@@ -337,8 +360,7 @@ impl HeadlessServer {
         #[cfg(unix)]
         listener.set_nonblocking(ListenerNonblockingMode::Accept)?;
 
-        // Channel for server events from client threads.
-        let (server_event_tx, server_event_rx) = mpsc::channel(64);
+        let (server_event_tx, server_event_rx) = server_events;
         #[cfg(windows)]
         spawn_windows_client_accept_thread(listener, should_quit.clone(), server_event_tx.clone())?;
 
@@ -412,12 +434,6 @@ impl HeadlessServer {
     pub async fn run(&mut self) -> io::Result<()> {
         crate::logging::startup("server");
 
-        let server_stop = self.server_stop.clone();
-        let quit_notify = self.server_event_tx.clone();
-        crate::platform::spawn_server_signal_monitor(move |signal| {
-            server_stop.request(ShutdownReason::Signal(signal));
-            let _ = quit_notify.try_send(ServerEvent::QuitSignal);
-        });
         let quit_notify = self.server_event_tx.clone();
         let _host_shutdown = crate::platform::HostShutdownMonitor::start(
             self.host_shutdown_requested.clone(),
