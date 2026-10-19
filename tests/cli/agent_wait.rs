@@ -116,9 +116,17 @@ fn agent_wait_exits_when_done_status_matches() {
 
     fs::create_dir_all(&bin_dir).unwrap();
     let fake_pi = bin_dir.join("pi");
+    // The test releases each phase once the previous state is observed, so
+    // "Working..." lands after the detector's startup grace without a fixed sleep.
+    let working_gate = base.join("print-working");
+    let done_gate = base.join("print-done");
     fs::write(
         &fake_pi,
-        "#!/bin/sh\nprintf 'starting\\n'\nsleep 4\nprintf 'Working...\\n'\nsleep 1\nprintf '\\033[2J\\033[Hdone\\n'\n",
+        format!(
+            "#!/bin/sh\nprintf 'starting\\n'\nwhile [ ! -e '{}' ]; do sleep 0.05; done\nprintf 'Working...\\n'\nwhile [ ! -e '{}' ]; do sleep 0.05; done\nprintf '\\033[2J\\033[Hdone\\n'\n",
+            working_gate.display(),
+            done_gate.display(),
+        ),
     )
     .unwrap();
     #[cfg(unix)]
@@ -175,18 +183,42 @@ fn agent_wait_exits_when_done_status_matches() {
             .success()
     ));
 
-    let waited = run_cli(
-        &socket_path,
-        &[
-            "agent",
-            "wait",
-            &pane_id,
-            "--until",
-            "done",
-            "--timeout",
-            "10000",
-        ],
-    );
+    let wait_socket = socket_path.clone();
+    let wait_pane = pane_id.clone();
+    let waiter = thread::spawn(move || {
+        run_cli(
+            &wait_socket,
+            &[
+                "agent",
+                "wait",
+                &wait_pane,
+                "--until",
+                "done",
+                "--timeout",
+                "10000",
+            ],
+        )
+    });
+    let agent_status = || {
+        run_cli_json(&socket_path, &["agent", "get", &pane_id])["result"]["agent"]["agent_status"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string()
+    };
+    assert!(wait_until(
+        Duration::from_secs(8),
+        Duration::from_millis(25),
+        || agent_status() == "idle"
+    ));
+    fs::write(&working_gate, "").unwrap();
+    assert!(wait_until(
+        Duration::from_secs(5),
+        Duration::from_millis(25),
+        || agent_status() == "working"
+    ));
+    fs::write(&done_gate, "").unwrap();
+
+    let waited = waiter.join().unwrap();
     assert!(
         waited.status.success(),
         "stderr: {}",

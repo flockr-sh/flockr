@@ -1620,6 +1620,7 @@ fn live_handoff_keeps_agent_started_pane_after_agent_exits() {
     let api_socket = runtime_dir.join("flockr.sock");
     let started_marker = base.join("agent-started");
     let exited_marker = base.join("agent-exited");
+    let release_marker = base.join("agent-release");
     let ready_marker = base.join("shell-ready");
     let shell_marker = base.join("shell-after-agent");
     let bin = base.join("bin");
@@ -1631,8 +1632,9 @@ fn live_handoff_keeps_agent_started_pane_after_agent_exits() {
     fs::write(
         &fake_pi,
         format!(
-            "#!/bin/sh\nexport FLOCKR_AGENT=pi\necho started > {}\n/bin/sleep 1\necho exited > {}\n",
+            "#!/bin/sh\nexport FLOCKR_AGENT=pi\necho started > {}\nwhile [ ! -f {} ]; do /bin/sleep 0.02; done\necho exited > {}\n",
             started_marker.display(),
+            release_marker.display(),
             exited_marker.display()
         ),
     )
@@ -1703,6 +1705,8 @@ fn live_handoff_keeps_agent_started_pane_after_agent_exits() {
     ));
     drop(spawned);
     wait_for_api(&api_socket, Duration::from_secs(10));
+    // The agent stays alive until the replacement server is serving.
+    fs::write(&release_marker, "release").unwrap();
     support::wait_for_file(&exited_marker, Duration::from_secs(5));
     thread::sleep(Duration::from_millis(300));
 
@@ -1732,6 +1736,7 @@ fn live_handoff_keeps_shell_pane_after_foreground_process_exits() {
     let api_socket = runtime_dir.join("flockr.sock");
     let started_marker = base.join("foreground-started");
     let exited_marker = base.join("foreground-exited");
+    let release_marker = base.join("foreground-release");
     let shell_marker = base.join("shell-after-foreground");
 
     let spawned = spawn_server(&config_home, &runtime_dir, &api_socket);
@@ -1751,8 +1756,9 @@ fn live_handoff_keeps_shell_pane_after_foreground_process_exits() {
         .unwrap()
         .to_string();
     let command = format!(
-        "sh -c 'echo started > {}; sleep 1; echo exited > {}'",
+        "sh -c 'echo started > {}; while [ ! -f {} ]; do sleep 0.02; done; echo exited > {}'",
         started_marker.display(),
+        release_marker.display(),
         exited_marker.display()
     );
     assert_ok(request(
@@ -1771,6 +1777,8 @@ fn live_handoff_keeps_shell_pane_after_foreground_process_exits() {
     ));
     drop(spawned);
     wait_for_api(&api_socket, Duration::from_secs(10));
+    // The foreground process stays alive until the replacement server is serving.
+    fs::write(&release_marker, "release").unwrap();
     support::wait_for_file(&exited_marker, Duration::from_secs(5));
 
     assert_ok(request(

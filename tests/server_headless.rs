@@ -254,9 +254,6 @@ fn server_removes_client_socket_on_exit() {
     spawned.close_master();
     let _ = spawned.child.wait();
 
-    // Give it a moment to clean up.
-    thread::sleep(Duration::from_millis(300));
-
     // The client socket should be removed (best-effort by Drop).
     // If it still exists, it should be stale (not connectable).
     if client_socket.exists() {

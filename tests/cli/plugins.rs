@@ -828,9 +828,15 @@ mv "$FLOCKR_PLUGIN_ROOT/result-$kind.tmp" "$FLOCKR_PLUGIN_ROOT/result-$kind"
     assert_eq!(current_root(), new_root);
     assert_eq!(fs::read_to_string(old_root.join("version")).unwrap(), "old");
     assert_eq!(fs::read_to_string(new_root.join("version")).unwrap(), "new");
-    for name in ["alpha", "beta"] {
-        let _ = run_named_cli(&config_home, &runtime_dir, &["session", "stop", name]);
-    }
+    // Each stop waits for its server to exit; stop both at once.
+    thread::scope(|scope| {
+        for name in ["alpha", "beta"] {
+            let (config_home, runtime_dir) = (&config_home, &runtime_dir);
+            scope.spawn(move || {
+                let _ = run_named_cli(config_home, runtime_dir, &["session", "stop", name]);
+            });
+        }
+    });
     drop((alpha, beta));
     cleanup_test_base(&base);
 }

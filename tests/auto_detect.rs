@@ -9,7 +9,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::{Mutex, MutexGuard, OnceLock};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -34,6 +34,8 @@ fn unique_test_dir() -> PathBuf {
 struct SpawnedFlockr {
     _master: Box<dyn MasterPty + Send>,
     child: Box<dyn Child + Send + Sync>,
+    /// Terminal output, collected only for auto-detect launches.
+    output: Arc<Mutex<Vec<u8>>>,
 }
 
 impl Drop for SpawnedFlockr {
@@ -122,6 +124,7 @@ fn spawn_server(
     SpawnedFlockr {
         _master: pair.master,
         child,
+        output: Arc::default(),
     }
 }
 
@@ -163,11 +166,69 @@ fn spawn_flockr_auto(
     let child = pair.slave.spawn_command(cmd).unwrap();
     register_spawned_flockr_pid(child.process_id());
     drop(pair.slave);
+    let output = collect_pty_output(&*pair.master);
 
     SpawnedFlockr {
         _master: pair.master,
         child,
+        output,
     }
+}
+
+/// Collects the client's terminal output. Without a reader the PTY buffer
+/// fills, the client blocks writing its frame, and it cannot exit when the
+/// test stops it.
+fn collect_pty_output(master: &dyn MasterPty) -> Arc<Mutex<Vec<u8>>> {
+    let output = Arc::new(Mutex::new(Vec::new()));
+    let mut reader = master.try_clone_reader().unwrap();
+    let sink = Arc::clone(&output);
+    thread::spawn(move || {
+        let mut buf = [0u8; 4096];
+        while let Ok(n) = std::io::Read::read(&mut reader, &mut buf) {
+            if n == 0 {
+                break;
+            }
+            sink.lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .extend_from_slice(&buf[..n]);
+        }
+    });
+    output
+}
+
+/// Waits until a spawned client has drawn `needle`.
+fn wait_for_output_contains(spawned: &SpawnedFlockr, needle: &str, timeout: Duration) {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let output = spawned
+            .output
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone();
+        if String::from_utf8_lossy(&output).contains(needle) {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "client output did not contain {needle:?}"
+        );
+        thread::sleep(Duration::from_millis(25));
+    }
+}
+
+/// Creates a workspace with `label`; an attached client draws the label.
+fn create_workspace(socket_path: &Path, label: &str) {
+    let mut stream = UnixStream::connect(socket_path).expect("should connect to API socket");
+    writeln!(
+        stream,
+        r#"{{"id":"create","method":"workspace.create","params":{{"label":"{label}"}}}}"#
+    )
+    .unwrap();
+    let response = read_json_line(stream);
+    assert!(
+        response.get("result").is_some(),
+        "workspace.create failed: {response}"
+    );
 }
 
 fn ping_socket(socket_path: &Path) -> String {
@@ -376,11 +437,13 @@ fn auto_detect_server_running_attaches_directly() {
     // Verify server is running.
     assert!(process_exists(server_pid), "server should be running");
 
+    create_workspace(&api_socket, "attach-probe");
+
     // Run `flockr` (no subcommand) — should detect the running server and attach.
     let client = spawn_flockr_auto(&config_home, &runtime_dir, &api_socket, &client_socket);
 
-    // Wait a moment for the client to attach.
-    thread::sleep(Duration::from_millis(500));
+    // The client draws the server's workspace once it has attached.
+    wait_for_output_contains(&client, "attach-probe", Duration::from_secs(10));
 
     // Verify the client is running.
     let client_pid = client.child.process_id().expect("client should have PID");
@@ -541,9 +604,12 @@ fn auto_detect_server_persists_and_reattaches() {
         "client socket should still exist after client exit"
     );
 
+    create_workspace(&api_socket, "reattach-probe");
+
     // Run `flockr` again — should detect the running server and reattach.
     let client2 = spawn_flockr_auto(&config_home, &runtime_dir, &api_socket, &client_socket);
-    thread::sleep(Duration::from_millis(500));
+    // The client draws the server's workspace once it has attached.
+    wait_for_output_contains(&client2, "reattach-probe", Duration::from_secs(10));
 
     // Verify the new client is running.
     let client2_pid = client2.child.process_id().expect("client2 should have PID");
@@ -618,6 +684,7 @@ fn auto_detect_default_socket_path_from_config_dir() {
     let server = SpawnedFlockr {
         _master: pair.master,
         child,
+        output: Arc::default(),
     };
 
     // Wait for sockets to appear at the default config-dir paths.

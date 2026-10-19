@@ -31,7 +31,7 @@ fn agent_explain_missing_file_reports_json_error() {
 
 fn write_delayed_shell_and_fake_pi(
     base: &Path,
-    shell_delay_seconds: &str,
+    shell_startup_wait: &str,
 ) -> (PathBuf, PathBuf, PathBuf) {
     use std::os::unix::fs::PermissionsExt;
 
@@ -42,7 +42,7 @@ fn write_delayed_shell_and_fake_pi(
     fs::create_dir_all(&bin).unwrap();
     fs::write(
         &delayed_shell,
-        format!("#!/bin/sh\n/bin/sleep {shell_delay_seconds}\nexec /bin/sh\n"),
+        format!("#!/bin/sh\n{shell_startup_wait}\nexec /bin/sh\n"),
     )
     .unwrap();
     fs::write(
@@ -65,7 +65,8 @@ fn agent_start_waits_for_a_new_pane_shell_to_finish_initializing() {
     let config_home = base.join("config");
     let runtime_dir = base.join("runtime");
     let socket_path = runtime_dir.join("flockr.sock");
-    let (bin, delayed_shell, invocations) = write_delayed_shell_and_fake_pi(&base, "0.4");
+    let (bin, delayed_shell, invocations) =
+        write_delayed_shell_and_fake_pi(&base, "/bin/sleep 0.4");
     let config = format!(
         "onboarding = false\n[terminal]\ndefault_shell = {:?}\nshell_mode = \"non_login\"\n",
         delayed_shell.to_str().unwrap()
@@ -146,7 +147,16 @@ fn agent_start_stops_retrying_when_the_pane_shell_stays_busy() {
     let config_home = base.join("config");
     let runtime_dir = base.join("runtime");
     let socket_path = runtime_dir.join("flockr.sock");
-    let (bin, delayed_shell, invocations) = write_delayed_shell_and_fake_pi(&base, "2.3");
+    // The shell stays busy until the test opens the gate, so the first start
+    // always outlasts the readiness retry window however slow the machine is.
+    let shell_gate = base.join("shell-ready");
+    let (bin, delayed_shell, invocations) = write_delayed_shell_and_fake_pi(
+        &base,
+        &format!(
+            "while [ ! -e '{}' ]; do /bin/sleep 0.05; done",
+            shell_gate.display()
+        ),
+    );
     let config = format!(
         "onboarding = false\n[terminal]\ndefault_shell = {:?}\nshell_mode = \"non_login\"\n",
         delayed_shell.to_str().unwrap()
@@ -187,6 +197,7 @@ fn agent_start_stops_retrying_when_the_pane_shell_stays_busy() {
     assert!(started_at.elapsed() < Duration::from_secs(4));
     assert!(!invocations.exists());
 
+    fs::write(&shell_gate, "").unwrap();
     let retried = run_cli_json(
         &socket_path,
         &[
@@ -389,8 +400,6 @@ fn agent_start_command_works() {
     assert_eq!(blocked_prompt.status.code(), Some(1));
     let blocked_prompt: serde_json::Value = serde_json::from_slice(&blocked_prompt.stderr).unwrap();
     assert_eq!(blocked_prompt["error"]["code"], "agent_blocked");
-    thread::sleep(Duration::from_millis(400));
-    assert_eq!(fs::read(&captured_prompts).unwrap(), prompts_before_blocked);
 
     let report_agent = |state| {
         run_cli(
@@ -430,6 +439,9 @@ fn agent_start_command_works() {
     assert_eq!(stale_idle.status.code(), Some(1));
     let stale_idle: serde_json::Value = serde_json::from_slice(&stale_idle.stderr).unwrap();
     assert_eq!(stale_idle["error"]["code"], "timeout");
+    // The stale-idle wait above outlasts the prompt submit delay, so a
+    // rejected blocked prompt would have been submitted by now.
+    assert_eq!(fs::read(&captured_prompts).unwrap(), prompts_before_blocked);
 
     let stalled = prompt_wait("do not transition", "6000");
     assert_eq!(stalled.status.code(), Some(1));
@@ -764,6 +776,30 @@ fn agent_start_follows_its_named_terminal_when_the_pane_moves() {
         "move failed: {}",
         String::from_utf8_lossy(&moved.stderr)
     );
+    // Report idle for the moved pane instead of waiting out the detector's
+    // startup grace; the start still has to follow the terminal to see it.
+    let moved_pane = run_cli_json(&socket_path, &["agent", "get", "worker"])["result"]["agent"]
+        ["pane_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_ne!(moved_pane, first);
+    assert!(run_cli(
+        &socket_path,
+        &[
+            "pane",
+            "report-agent",
+            &moved_pane,
+            "--source",
+            "custom:moved",
+            "--agent",
+            "pi",
+            "--state",
+            "idle",
+        ],
+    )
+    .status
+    .success());
 
     let started = starter.join().unwrap();
     assert!(

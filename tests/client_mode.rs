@@ -671,6 +671,8 @@ struct PtyOutput {
     bytes: Vec<u8>,
     // Keep legacy raw-string watermarks stable even across split UTF-8 reads.
     text: String,
+    // Set once the reader hits EOF or an error, e.g. after the child closes its PTY.
+    closed: bool,
 }
 
 type SharedOutput = std::sync::Arc<Mutex<PtyOutput>>;
@@ -691,6 +693,10 @@ fn spawn_pty_drain(mut reader: Box<dyn Read + Send>) -> SharedOutput {
                 Err(_) => break,
             }
         }
+        thread_output
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .closed = true;
     });
     output
 }
@@ -1596,8 +1602,11 @@ fn drain_until_client_exits(
         }
         thread::sleep(Duration::from_millis(20));
     }
-    // Give the reader thread a beat to flush trailing teardown bytes.
-    thread::sleep(Duration::from_millis(100));
+    // Let the reader thread flush trailing teardown bytes: it stops once the
+    // exited client's PTY side reports EOF.
+    wait_until(Duration::from_secs(2), Duration::from_millis(5), || {
+        output.lock().unwrap_or_else(|p| p.into_inner()).closed
+    });
     let full = read_output(output);
     assert!(exited, "thin client should exit; output: {full:?}");
     full.get(since..).unwrap_or_default().to_string()

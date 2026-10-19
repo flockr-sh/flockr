@@ -1,4 +1,6 @@
 use super::harness::*;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 fn run_claude_hook(action: &str, hook_input: &str) -> Option<serde_json::Value> {
     run_shell_hook(
@@ -61,10 +63,16 @@ fn run_shell_hook_with_env(
     let socket_path = base.join("flockr.sock");
     let listener = UnixListener::bind(&socket_path).unwrap();
 
+    // The hooks connect synchronously before exiting, so once the hook has
+    // exited any request it sent is already queued on the listener. Drain
+    // until then instead of waiting a fixed time to prove nothing was sent.
+    let hook_exited = Arc::new(AtomicBool::new(false));
+    let server_hook_exited = Arc::clone(&hook_exited);
     let server = thread::spawn(move || {
         listener.set_nonblocking(true).unwrap();
-        let deadline = Instant::now() + Duration::from_millis(700);
+        let deadline = Instant::now() + Duration::from_secs(30);
         while Instant::now() < deadline {
+            let exited = server_hook_exited.load(Ordering::Acquire);
             match listener.accept() {
                 Ok((mut stream, _)) => {
                     let mut line = String::new();
@@ -76,12 +84,15 @@ fn run_shell_hook_with_env(
                     return Some(line);
                 }
                 Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
-                    thread::sleep(Duration::from_millis(10));
+                    if exited {
+                        return None;
+                    }
+                    thread::sleep(Duration::from_millis(5));
                 }
                 Err(err) => panic!("accept failed: {err}"),
             }
         }
-        None
+        panic!("hook did not exit before the deadline");
     });
 
     let hook_path = Path::new(env!("CARGO_MANIFEST_DIR")).join(asset_path);
@@ -106,6 +117,7 @@ fn run_shell_hook_with_env(
     drop(stdin);
 
     let output = child.wait_with_output().unwrap();
+    hook_exited.store(true, Ordering::Release);
     assert!(
         output.status.success(),
         "hook failed: status={:?} stderr={} stdout={}",
