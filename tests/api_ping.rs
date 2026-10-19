@@ -136,14 +136,11 @@ fn spawn_flockr_with_options(
     shell: &str,
     env: &[(&str, &str)],
 ) -> SpawnedFlockr {
-    fs::create_dir_all(config_home.join("flockr")).unwrap();
+    let app_dir = config_home.join(support::app_dir_name());
+    fs::create_dir_all(&app_dir).unwrap();
     fs::create_dir_all(runtime_dir).unwrap();
     register_runtime_dir(runtime_dir);
-    fs::write(
-        config_home.join("flockr/config.toml"),
-        "onboarding = false\n",
-    )
-    .unwrap();
+    fs::write(app_dir.join("config.toml"), "onboarding = false\n").unwrap();
 
     let pair = native_pty_system()
         .openpty(PtySize {
@@ -427,7 +424,9 @@ fn server_reload_agent_manifests_reports_runtime_override() {
     let child = spawn_flockr(&config_home, &runtime_dir, &socket_path);
     wait_for_socket(&socket_path, Duration::from_secs(5));
 
-    let override_dir = config_home.join("flockr-dev").join("agent-detection");
+    let override_dir = config_home
+        .join(support::app_dir_name())
+        .join("agent-detection");
     fs::create_dir_all(&override_dir).unwrap();
     let override_path = override_dir.join("codex.toml");
     fs::write(
@@ -519,7 +518,12 @@ fn shutdown_preserves_session_after_shell_is_signaled() {
     child.child.wait().expect("server should stop cleanly");
 
     let session: serde_json::Value = serde_json::from_slice(
-        &fs::read(config_home.join("flockr-dev/session.json")).expect("saved session"),
+        &fs::read(
+            config_home
+                .join(support::app_dir_name())
+                .join("session.json"),
+        )
+        .expect("saved session"),
     )
     .expect("valid session json");
     assert_eq!(session["workspaces"].as_array().map(Vec::len), Some(1));

@@ -489,11 +489,13 @@ fn server_unreachable_shows_clear_error() {
     let runtime_dir = base.join("runtime");
     let api_socket = runtime_dir.join("flockr.sock");
 
-    fs::create_dir_all(config_home.join("flockr")).unwrap();
+    fs::create_dir_all(config_home.join(support::app_dir_name())).unwrap();
     fs::create_dir_all(&runtime_dir).unwrap();
     register_runtime_dir(&runtime_dir);
     fs::write(
-        config_home.join("flockr/config.toml"),
+        config_home
+            .join(support::app_dir_name())
+            .join("config.toml"),
         "onboarding = false\n",
     )
     .unwrap();

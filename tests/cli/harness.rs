@@ -7,7 +7,7 @@ pub(super) use std::thread;
 pub(super) use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub(super) use crate::support::{
-    cleanup_test_base, isolate_flockr_test_process, register_runtime_dir,
+    app_dir_name, cleanup_test_base, isolate_flockr_test_process, register_runtime_dir,
     register_spawned_flockr_pid, unregister_spawned_flockr_pid, CURRENT_PROTOCOL,
 };
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
@@ -27,7 +27,7 @@ pub(super) fn unique_test_dir() -> PathBuf {
 
 pub(super) fn managed_github_plugin_dir(config_home: &Path) -> PathBuf {
     config_home
-        .join("flockr-dev")
+        .join(app_dir_name())
         .join("plugins")
         .join("github-installations")
 }
@@ -147,14 +147,6 @@ pub(super) fn spawn_flockr_with_pane_history(
         None,
         "onboarding = false\n[experimental]\npane_history = true\n",
     )
-}
-
-pub(super) fn app_dir_name() -> &'static str {
-    if cfg!(debug_assertions) {
-        "flockr-dev"
-    } else {
-        "flockr"
-    }
 }
 
 pub(super) fn named_session_socket(config_home: &Path, session: &str) -> PathBuf {
