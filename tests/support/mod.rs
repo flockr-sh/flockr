@@ -26,6 +26,16 @@ const CLIENT_MESSAGE_CLIENT_SHELL_PANE_INPUT: u32 = 13;
 const CLIENT_MESSAGE_CLIENT_SHELL_FOCUS: u32 = 18;
 const CLIENT_MESSAGE_ENDPOINT_CONTROL: u32 = 20;
 
+/// The config and state dir name under XDG dirs. Debug builds use
+/// `flockr-dev` so a dev build never touches a real install's files.
+pub fn app_dir_name() -> &'static str {
+    if cfg!(debug_assertions) {
+        "flockr-dev"
+    } else {
+        "flockr"
+    }
+}
+
 pub fn isolate_flockr_test_process(command: &mut CommandBuilder) {
     command.env_remove("FLOCKR_STARTUP_CWD");
     command.env_remove("FLOCKR_SESSION");

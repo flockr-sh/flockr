@@ -61,10 +61,12 @@ fn spawn_server_with_env(
     api_socket: &Path,
     extra_env: &[(&str, &str)],
 ) -> SpawnedFlockr {
-    fs::create_dir_all(config_home.join("flockr")).unwrap();
+    fs::create_dir_all(config_home.join(support::app_dir_name())).unwrap();
     fs::create_dir_all(runtime_dir).unwrap();
     fs::write(
-        config_home.join("flockr/config.toml"),
+        config_home
+            .join(support::app_dir_name())
+            .join("config.toml"),
         "onboarding = false\n",
     )
     .unwrap();
@@ -105,10 +107,12 @@ fn spawn_named_session_server(
     runtime_dir: &Path,
     session_name: &str,
 ) -> SpawnedFlockr {
-    fs::create_dir_all(config_home.join("flockr-dev")).unwrap();
+    fs::create_dir_all(config_home.join(support::app_dir_name())).unwrap();
     fs::create_dir_all(runtime_dir).unwrap();
     fs::write(
-        config_home.join("flockr-dev/config.toml"),
+        config_home
+            .join(support::app_dir_name())
+            .join("config.toml"),
         "onboarding = false\n",
     )
     .unwrap();
@@ -140,10 +144,12 @@ fn spawn_named_session_server(
 }
 
 fn spawn_default_session_server(config_home: &Path, runtime_dir: &Path) -> SpawnedFlockr {
-    fs::create_dir_all(config_home.join("flockr-dev")).unwrap();
+    fs::create_dir_all(config_home.join(support::app_dir_name())).unwrap();
     fs::create_dir_all(runtime_dir).unwrap();
     fs::write(
-        config_home.join("flockr-dev/config.toml"),
+        config_home
+            .join(support::app_dir_name())
+            .join("config.toml"),
         "onboarding = false\n",
     )
     .unwrap();
@@ -182,10 +188,12 @@ fn spawn_server_with_args_and_socket_env(
     api_socket_env: Option<&Path>,
     client_socket_env: Option<&Path>,
 ) -> SpawnedFlockr {
-    fs::create_dir_all(config_home.join("flockr-dev")).unwrap();
+    fs::create_dir_all(config_home.join(support::app_dir_name())).unwrap();
     fs::create_dir_all(runtime_dir).unwrap();
     fs::write(
-        config_home.join("flockr-dev/config.toml"),
+        config_home
+            .join(support::app_dir_name())
+            .join("config.toml"),
         "onboarding = false\n",
     )
     .unwrap();
@@ -736,7 +744,12 @@ fn live_handoff_unknown_pane_exit_preserves_session_on_shutdown() {
     }
 
     let session: serde_json::Value = serde_json::from_slice(
-        &fs::read(config_home.join("flockr-dev/session.json")).expect("saved session"),
+        &fs::read(
+            config_home
+                .join(support::app_dir_name())
+                .join("session.json"),
+        )
+        .expect("saved session"),
     )
     .expect("valid session json");
     assert_eq!(session["workspaces"].as_array().map(Vec::len), Some(1));
@@ -829,7 +842,9 @@ fn live_handoff_preserves_named_session_socket_paths() {
     let base = unique_test_dir();
     let config_home = base.join("config");
     let runtime_dir = base.join("runtime");
-    let session_dir = config_home.join("flockr-dev/sessions/work");
+    let session_dir = config_home
+        .join(support::app_dir_name())
+        .join("sessions/work");
     let api_socket = session_dir.join("flockr.sock");
     let client_socket = session_dir.join("flockr-client.sock");
 
@@ -845,7 +860,10 @@ fn live_handoff_preserves_named_session_socket_paths() {
     wait_for_api(&api_socket, Duration::from_secs(10));
     wait_for_socket(&client_socket, Duration::from_secs(5));
     assert!(
-        !config_home.join("flockr-dev/flockr.sock").exists(),
+        !config_home
+            .join(support::app_dir_name())
+            .join("flockr.sock")
+            .exists(),
         "named handoff unexpectedly bound the default session API socket"
     );
 
@@ -862,10 +880,12 @@ fn live_handoff_ignores_leaked_default_socket_env_for_named_session() {
     let base = unique_test_dir();
     let config_home = base.join("config");
     let runtime_dir = base.join("runtime");
-    let default_session_dir = config_home.join("flockr-dev");
+    let default_session_dir = config_home.join(support::app_dir_name());
     let default_api_socket = default_session_dir.join("flockr.sock");
     let default_client_socket = default_session_dir.join("flockr-client.sock");
-    let work_session_dir = config_home.join("flockr-dev/sessions/work");
+    let work_session_dir = config_home
+        .join(support::app_dir_name())
+        .join("sessions/work");
     let work_api_socket = work_session_dir.join("flockr.sock");
     let work_client_socket = work_session_dir.join("flockr-client.sock");
 
@@ -909,7 +929,9 @@ fn live_handoff_preserves_client_socket_env_without_api_socket_env() {
     let base = unique_test_dir();
     let config_home = base.join("config");
     let runtime_dir = base.join("runtime");
-    let api_socket = config_home.join("flockr-dev/flockr.sock");
+    let api_socket = config_home
+        .join(support::app_dir_name())
+        .join("flockr.sock");
     let client_socket = runtime_dir.join("custom-client.sock");
 
     let spawned = spawn_server_with_args_and_socket_env(
@@ -944,8 +966,12 @@ fn live_handoff_preserves_installed_plugins() {
     let base = unique_test_dir();
     let config_home = base.join("config");
     let runtime_dir = base.join("runtime");
-    let api_socket = config_home.join("flockr-dev/flockr.sock");
-    let registry_path = config_home.join("flockr-dev/plugins.json");
+    let api_socket = config_home
+        .join(support::app_dir_name())
+        .join("flockr.sock");
+    let registry_path = config_home
+        .join(support::app_dir_name())
+        .join("plugins.json");
     let existing_plugin = base.join("plugins/existing");
     let added_plugin = base.join("plugins/added");
     write_plugin_manifest(&existing_plugin, "test.live-handoff-existing");
@@ -1620,6 +1646,7 @@ fn live_handoff_keeps_agent_started_pane_after_agent_exits() {
     let api_socket = runtime_dir.join("flockr.sock");
     let started_marker = base.join("agent-started");
     let exited_marker = base.join("agent-exited");
+    let release_marker = base.join("agent-release");
     let ready_marker = base.join("shell-ready");
     let shell_marker = base.join("shell-after-agent");
     let bin = base.join("bin");
@@ -1631,8 +1658,9 @@ fn live_handoff_keeps_agent_started_pane_after_agent_exits() {
     fs::write(
         &fake_pi,
         format!(
-            "#!/bin/sh\nexport FLOCKR_AGENT=pi\necho started > {}\n/bin/sleep 1\necho exited > {}\n",
+            "#!/bin/sh\nexport FLOCKR_AGENT=pi\necho started > {}\nwhile [ ! -f {} ]; do /bin/sleep 0.02; done\necho exited > {}\n",
             started_marker.display(),
+            release_marker.display(),
             exited_marker.display()
         ),
     )
@@ -1703,6 +1731,8 @@ fn live_handoff_keeps_agent_started_pane_after_agent_exits() {
     ));
     drop(spawned);
     wait_for_api(&api_socket, Duration::from_secs(10));
+    // The agent stays alive until the replacement server is serving.
+    fs::write(&release_marker, "release").unwrap();
     support::wait_for_file(&exited_marker, Duration::from_secs(5));
     thread::sleep(Duration::from_millis(300));
 
@@ -1732,6 +1762,7 @@ fn live_handoff_keeps_shell_pane_after_foreground_process_exits() {
     let api_socket = runtime_dir.join("flockr.sock");
     let started_marker = base.join("foreground-started");
     let exited_marker = base.join("foreground-exited");
+    let release_marker = base.join("foreground-release");
     let shell_marker = base.join("shell-after-foreground");
 
     let spawned = spawn_server(&config_home, &runtime_dir, &api_socket);
@@ -1751,8 +1782,9 @@ fn live_handoff_keeps_shell_pane_after_foreground_process_exits() {
         .unwrap()
         .to_string();
     let command = format!(
-        "sh -c 'echo started > {}; sleep 1; echo exited > {}'",
+        "sh -c 'echo started > {}; while [ ! -f {} ]; do sleep 0.02; done; echo exited > {}'",
         started_marker.display(),
+        release_marker.display(),
         exited_marker.display()
     );
     assert_ok(request(
@@ -1771,6 +1803,8 @@ fn live_handoff_keeps_shell_pane_after_foreground_process_exits() {
     ));
     drop(spawned);
     wait_for_api(&api_socket, Duration::from_secs(10));
+    // The foreground process stays alive until the replacement server is serving.
+    fs::write(&release_marker, "release").unwrap();
     support::wait_for_file(&exited_marker, Duration::from_secs(5));
 
     assert_ok(request(
@@ -1869,10 +1903,17 @@ fn live_handoff_preserves_http_servers_across_multiple_sessions() {
     let config_home = base.join("config");
     let runtime_dir = base.join("runtime");
     let sessions = [
-        (None, config_home.join("flockr-dev/flockr.sock")),
+        (
+            None,
+            config_home
+                .join(support::app_dir_name())
+                .join("flockr.sock"),
+        ),
         (
             Some("work"),
-            config_home.join("flockr-dev/sessions/work/flockr.sock"),
+            config_home
+                .join(support::app_dir_name())
+                .join("sessions/work/flockr.sock"),
         ),
     ];
     let mut spawned = Vec::new();

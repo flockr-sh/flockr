@@ -87,7 +87,7 @@ fn wait_for_path(path: &Path, timeout: Duration) {
 }
 
 fn spawn_flockr(config_home: &Path, runtime_dir: &Path, socket_path: &Path) -> SpawnedFlockr {
-    spawn_flockr_with_options(config_home, runtime_dir, socket_path, None, "/bin/sh")
+    spawn_flockr_with_options(config_home, runtime_dir, socket_path, None, "/bin/sh", &[])
 }
 
 fn spawn_flockr_with_path(
@@ -96,12 +96,25 @@ fn spawn_flockr_with_path(
     socket_path: &Path,
     path_override: Option<&Path>,
 ) -> SpawnedFlockr {
+    spawn_flockr_with_path_and_env(config_home, runtime_dir, socket_path, path_override, &[])
+}
+
+/// Like `spawn_flockr_with_path`, with extra server env such as
+/// `FLOCKR_TEST_*_MS` wait overrides.
+fn spawn_flockr_with_path_and_env(
+    config_home: &Path,
+    runtime_dir: &Path,
+    socket_path: &Path,
+    path_override: Option<&Path>,
+    env: &[(&str, &str)],
+) -> SpawnedFlockr {
     spawn_flockr_with_options(
         config_home,
         runtime_dir,
         socket_path,
         path_override,
         "/bin/sh",
+        env,
     )
 }
 
@@ -112,7 +125,7 @@ fn spawn_flockr_with_shell(
     socket_path: &Path,
     shell: &str,
 ) -> SpawnedFlockr {
-    spawn_flockr_with_options(config_home, runtime_dir, socket_path, None, shell)
+    spawn_flockr_with_options(config_home, runtime_dir, socket_path, None, shell, &[])
 }
 
 fn spawn_flockr_with_options(
@@ -121,15 +134,13 @@ fn spawn_flockr_with_options(
     socket_path: &Path,
     path_override: Option<&Path>,
     shell: &str,
+    env: &[(&str, &str)],
 ) -> SpawnedFlockr {
-    fs::create_dir_all(config_home.join("flockr")).unwrap();
+    let app_dir = config_home.join(support::app_dir_name());
+    fs::create_dir_all(&app_dir).unwrap();
     fs::create_dir_all(runtime_dir).unwrap();
     register_runtime_dir(runtime_dir);
-    fs::write(
-        config_home.join("flockr/config.toml"),
-        "onboarding = false\n",
-    )
-    .unwrap();
+    fs::write(app_dir.join("config.toml"), "onboarding = false\n").unwrap();
 
     let pair = native_pty_system()
         .openpty(PtySize {
@@ -151,6 +162,9 @@ fn spawn_flockr_with_options(
     cmd.env_remove("FLOCKR_ENV");
     if let Some(path) = path_override {
         cmd.env("PATH", path);
+    }
+    for (key, value) in env {
+        cmd.env(key, value);
     }
 
     let child = pair.slave.spawn_command(cmd).unwrap();
@@ -279,6 +293,52 @@ fn wait_for_events(
     events
 }
 
+/// Polls `pane.get` until the pane's `field` equals `expected`.
+fn wait_for_pane_field(socket_path: &Path, pane_id: &str, field: &str, expected: &str) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let pane = send_request(
+            socket_path,
+            &format!(
+                r#"{{"id":"req_wait_pane","method":"pane.get","params":{{"pane_id":"{pane_id}"}}}}"#
+            ),
+        );
+        if pane["result"]["pane"][field] == expected {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "pane {field} never became {expected}: {pane}"
+        );
+        thread::sleep(Duration::from_millis(25));
+    }
+}
+
+/// Polls `pane.read` until the pane's recent text contains any of `needles`.
+#[cfg(not(target_os = "macos"))]
+fn wait_for_recent_text(socket_path: &Path, pane_id: &str, needles: &[&str]) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let recent = send_request(
+            socket_path,
+            &format!(
+                r#"{{"id":"req_wait_recent","method":"pane.read","params":{{"pane_id":"{pane_id}","source":"recent","lines":50}}}}"#
+            ),
+        );
+        let text = recent["result"]["read"]["text"]
+            .as_str()
+            .unwrap_or_default();
+        if needles.iter().any(|needle| text.contains(needle)) {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "pane recent text never contained any of {needles:?}: {recent}"
+        );
+        thread::sleep(Duration::from_millis(25));
+    }
+}
+
 #[cfg(not(target_os = "macos"))]
 fn event_by_kind<'a>(events: &'a [serde_json::Value], kind: &str) -> &'a serde_json::Value {
     events
@@ -364,7 +424,9 @@ fn server_reload_agent_manifests_reports_runtime_override() {
     let child = spawn_flockr(&config_home, &runtime_dir, &socket_path);
     wait_for_socket(&socket_path, Duration::from_secs(5));
 
-    let override_dir = config_home.join("flockr-dev").join("agent-detection");
+    let override_dir = config_home
+        .join(support::app_dir_name())
+        .join("agent-detection");
     fs::create_dir_all(&override_dir).unwrap();
     let override_path = override_dir.join("codex.toml");
     fs::write(
@@ -456,7 +518,12 @@ fn shutdown_preserves_session_after_shell_is_signaled() {
     child.child.wait().expect("server should stop cleanly");
 
     let session: serde_json::Value = serde_json::from_slice(
-        &fs::read(config_home.join("flockr-dev/session.json")).expect("saved session"),
+        &fs::read(
+            config_home
+                .join(support::app_dir_name())
+                .join("session.json"),
+        )
+        .expect("saved session"),
     )
     .expect("valid session json");
     assert_eq!(session["workspaces"].as_array().map(Vec::len), Some(1));
@@ -613,7 +680,7 @@ fn workspace_list_and_create_round_trip() {
     );
     assert_eq!(send_enter["result"]["type"], "ok");
 
-    std::thread::sleep(Duration::from_millis(300));
+    wait_for_recent_text(&socket_path, &pane_id, &["beta", "gamma"]);
 
     let recent = send_request(
         &socket_path,
@@ -2298,9 +2365,15 @@ fn events_subscribe_streams_output_and_agent_status_events() {
 
     fs::create_dir_all(&bin_dir).unwrap();
     let fake_pi = bin_dir.join("pi");
+    let finish_file = base.join("pi-finish");
+    // The fake agent stays running until flockr has identified it, so its
+    // exit is reported for a known pi pane.
     fs::write(
         &fake_pi,
-        "#!/bin/sh\nprintf 'Working...\\n'\nsleep 1\nprintf '\\033[2J\\033[Hdone\\n'\n",
+        format!(
+            "#!/bin/sh\nprintf 'Working...\\n'\nwhile [ ! -f '{}' ]; do sleep 0.02; done\nprintf '\\033[2J\\033[Hdone\\n'\n",
+            finish_file.display()
+        ),
     )
     .unwrap();
     #[cfg(unix)]
@@ -2402,6 +2475,9 @@ fn events_subscribe_streams_output_and_agent_status_events() {
     );
     assert_eq!(send_enter["result"]["type"], "ok");
 
+    wait_for_pane_field(&socket_path, &pane_id, "agent", "pi");
+    fs::write(&finish_file, "finish").unwrap();
+
     let agent_idle = reader.read_json_line(Duration::from_secs(8));
     assert_eq!(agent_idle["event"], "pane.agent_status_changed");
     assert_eq!(agent_idle["data"]["pane_id"], pane_id);
@@ -2422,11 +2498,17 @@ fn pane_info_and_subscriptions_expose_done_agent_status() {
 
     fs::create_dir_all(&bin_dir).unwrap();
     let fake_pi = bin_dir.join("pi");
+    let work_file = base.join("pi-work");
+    let finish_file = base.join("pi-finish");
     let stop_file = base.join("pi-stop");
+    // The test steps the fake agent through each phase only after flockr has
+    // observed the previous one, instead of sleeping for a fixed time.
     fs::write(
         &fake_pi,
         format!(
-            "#!/bin/sh\nprintf 'starting\\n'\nsleep 4\nprintf 'Working...\\n'\nsleep 1\nprintf '\\033[2J\\033[Hdone\\n'\nwhile [ ! -f '{}' ]; do sleep 0.05; done\n",
+            "#!/bin/sh\nprintf 'starting\\n'\nwhile [ ! -f '{}' ]; do sleep 0.02; done\nprintf 'Working...\\n'\nwhile [ ! -f '{}' ]; do sleep 0.02; done\nprintf '\\033[2J\\033[Hdone\\n'\nwhile [ ! -f '{}' ]; do sleep 0.05; done\n",
+            work_file.display(),
+            finish_file.display(),
             stop_file.display()
         ),
     )
@@ -2441,11 +2523,13 @@ fn pane_info_and_subscriptions_expose_done_agent_status() {
 
     let inherited_path = std::env::var("PATH").unwrap_or_default();
     let path_override = format!("{}:{}", bin_dir.display(), inherited_path);
-    let child = spawn_flockr_with_path(
+    // Read the agent's screen soon after it is identified, not after 3s.
+    let child = spawn_flockr_with_path_and_env(
         &config_home,
         &runtime_dir,
         &socket_path,
         Some(Path::new(&path_override)),
+        &[("FLOCKR_TEST_AGENT_STARTUP_GRACE_WINDOW_MS", "300")],
     );
     wait_for_socket(&socket_path, Duration::from_secs(5));
 
@@ -2501,6 +2585,11 @@ fn pane_info_and_subscriptions_expose_done_agent_status() {
         ),
     );
     assert_eq!(send_enter["result"]["type"], "ok");
+
+    wait_for_pane_field(&socket_path, &background_pane_id, "agent", "pi");
+    fs::write(&work_file, "work").unwrap();
+    wait_for_pane_field(&socket_path, &background_pane_id, "agent_status", "working");
+    fs::write(&finish_file, "finish").unwrap();
 
     let status_event = reader.read_json_line(Duration::from_secs(12));
     assert_eq!(status_event["event"], "pane.agent_status_changed");

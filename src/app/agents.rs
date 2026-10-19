@@ -7,7 +7,11 @@ use crate::api::schema::AgentStartParams;
 
 const DEFAULT_AGENT_START_TIMEOUT: Duration = Duration::from_secs(30);
 pub(crate) const MAX_AGENT_START_TIMEOUT: Duration = Duration::from_secs(300);
-pub(crate) const AGENT_START_SETTLE_DELAY: Duration = Duration::from_secs(3);
+pub(crate) static AGENT_START_SETTLE_DELAY: crate::test_timing::TestTiming =
+    crate::test_timing::TestTiming::new(
+        "FLOCKR_TEST_AGENT_START_SETTLE_DELAY_MS",
+        Duration::from_secs(3),
+    );
 const INVALID_AGENT_TIMEOUT_MESSAGE: &str =
     "agent start timeout must be greater than 3000ms and at most 300000ms";
 const INVALID_AGENT_NAME_MESSAGE: &str = "agent name must start with a lowercase letter and contain only lowercase letters, digits, '-' or '_' (1-32 characters)";
@@ -207,7 +211,7 @@ impl App {
                 .timeout_ms
                 .unwrap_or(DEFAULT_AGENT_START_TIMEOUT.as_millis() as u64),
         );
-        if timeout <= AGENT_START_SETTLE_DELAY || timeout > MAX_AGENT_START_TIMEOUT {
+        if timeout <= AGENT_START_SETTLE_DELAY.get() || timeout > MAX_AGENT_START_TIMEOUT {
             return Err(AgentStartError::InvalidTimeout);
         }
 
@@ -221,7 +225,13 @@ impl App {
             .terminals
             .get_mut(&terminal_id)
             .ok_or_else(|| AgentStartError::TargetUnavailable(params.pane_id.clone()))?;
-        terminal.begin_managed_agent(name.clone(), kind, now, AGENT_START_SETTLE_DELAY, timeout);
+        terminal.begin_managed_agent(
+            name.clone(),
+            kind,
+            now,
+            AGENT_START_SETTLE_DELAY.get(),
+            timeout,
+        );
         if let Err(err) = runtime.try_send_bytes(Bytes::from(bytes)) {
             terminal.clear_agent_name();
             return Err(AgentStartError::InputFailed(err.to_string()));

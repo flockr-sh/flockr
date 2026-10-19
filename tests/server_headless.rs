@@ -102,13 +102,33 @@ fn spawn_server(
     config_home: &Path,
     runtime_dir: &Path,
     api_socket_path: &Path,
-    _client_socket_path: &Path,
+    client_socket_path: &Path,
 ) -> SpawnedFlockr {
-    fs::create_dir_all(config_home.join("flockr")).unwrap();
+    spawn_server_with_env(
+        config_home,
+        runtime_dir,
+        api_socket_path,
+        client_socket_path,
+        &[],
+    )
+}
+
+/// Like `spawn_server`, with extra server env such as `FLOCKR_TEST_*_MS`
+/// wait overrides.
+fn spawn_server_with_env(
+    config_home: &Path,
+    runtime_dir: &Path,
+    api_socket_path: &Path,
+    _client_socket_path: &Path,
+    env: &[(&str, &str)],
+) -> SpawnedFlockr {
+    fs::create_dir_all(config_home.join(support::app_dir_name())).unwrap();
     fs::create_dir_all(runtime_dir).unwrap();
     register_runtime_dir(runtime_dir);
     fs::write(
-        config_home.join("flockr/config.toml"),
+        config_home
+            .join(support::app_dir_name())
+            .join("config.toml"),
         "onboarding = false\n",
     )
     .unwrap();
@@ -131,6 +151,9 @@ fn spawn_server(
     cmd.env_remove("FLOCKR_CLIENT_SOCKET_PATH");
     cmd.env("SHELL", "/bin/sh");
     cmd.env_remove("FLOCKR_ENV");
+    for (key, value) in env {
+        cmd.env(key, value);
+    }
 
     let child = pair.slave.spawn_command(cmd).unwrap();
     register_spawned_flockr_pid(child.process_id());
@@ -253,9 +276,6 @@ fn server_removes_client_socket_on_exit() {
     support::stop_spawned_flockr(&mut *spawned.child);
     spawned.close_master();
     let _ = spawned.child.wait();
-
-    // Give it a moment to clean up.
-    thread::sleep(Duration::from_millis(300));
 
     // The client socket should be removed (best-effort by Drop).
     // If it still exists, it should be stale (not connectable).
@@ -474,10 +494,16 @@ fn client_handshake_clamps_small_terminal_size() {
 }
 
 #[test]
-fn no_hello_client_closed_within_five_seconds() {
-    // Client connection that sends no Hello is closed within 5 seconds.
-    // The server sets a handshake timeout of 4 seconds to guarantee the connection
-    // is closed within the 5-second deadline even with OS overhead.
+fn no_hello_client_closed_after_handshake_timeout() {
+    // A client connection that sends no Hello is closed once the handshake
+    // timeout passes. A unit test keeps the real 4s timeout under the 5s
+    // deadline. Debug builds shorten it here; release builds ignore the
+    // override and keep the 4s timeout and 5s deadline.
+    let (handshake_timeout, close_deadline) = if cfg!(debug_assertions) {
+        (Duration::from_secs(1), Duration::from_secs(4))
+    } else {
+        (Duration::from_secs(4), Duration::from_secs(5))
+    };
     let _lock = test_lock();
     let base = unique_test_dir();
     let config_home = base.join("config");
@@ -485,7 +511,16 @@ fn no_hello_client_closed_within_five_seconds() {
     let api_socket = runtime_dir.join("flockr.sock");
     let client_socket = runtime_dir.join("flockr-client.sock");
 
-    let spawned = spawn_server(&config_home, &runtime_dir, &api_socket, &client_socket);
+    let spawned = spawn_server_with_env(
+        &config_home,
+        &runtime_dir,
+        &api_socket,
+        &client_socket,
+        &[(
+            "FLOCKR_TEST_CLIENT_HANDSHAKE_TIMEOUT_MS",
+            &handshake_timeout.as_millis().to_string(),
+        )],
+    );
     wait_for_socket(&api_socket, Duration::from_secs(10));
     wait_for_file(&client_socket, Duration::from_secs(10));
 
@@ -501,7 +536,7 @@ fn no_hello_client_closed_within_five_seconds() {
     let start = Instant::now();
 
     // Try to read from the stream. The server should close the connection
-    // within 5 seconds, causing our read to return with an error (EOF or
+    // after the handshake timeout, causing our read to return with an error (EOF or
     // connection reset).
     let mut buf = [0u8; 1024];
     let result = stream.read(&mut buf);
@@ -513,11 +548,10 @@ fn no_hello_client_closed_within_five_seconds() {
         "server should close the connection when no Hello is sent"
     );
 
-    // The connection should be closed within 5 seconds.
+    // The timeout closed it: not before it passed, and soon after.
     assert!(
-        elapsed < Duration::from_secs(5),
-        "connection should be closed within 5 seconds, took {:?}",
-        elapsed
+        elapsed >= handshake_timeout - Duration::from_millis(100) && elapsed < close_deadline,
+        "connection should be closed after the {handshake_timeout:?} handshake timeout, took {elapsed:?}"
     );
 
     // Verify the server is still healthy — a proper client can still connect.

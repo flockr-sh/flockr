@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, expect, jest, mock, test } from "bun:test";
 
 const requests: unknown[] = [];
 const activeDisposers: Array<() => void> = [];
@@ -45,6 +45,7 @@ mock.module("node:net", () => ({
 }));
 
 beforeEach(() => {
+  jest.useFakeTimers();
   requests.length = 0;
   requestWaiters.length = 0;
   stateWaiters.length = 0;
@@ -60,6 +61,7 @@ afterEach(() => {
   for (const dispose of activeDisposers.splice(0)) {
     dispose();
   }
+  jest.useRealTimers();
 });
 
 async function loadPlugin() {
@@ -144,6 +146,27 @@ function fakeApi() {
   };
 }
 
+// Timers are fake. Step the clock in 10ms slices and let promise chains a
+// timer started settle before the next slice, as they would in real time.
+async function elapse(ms: number) {
+  for (let elapsed = 0; elapsed < ms; elapsed += 10) {
+    jest.advanceTimersByTime(Math.min(10, ms - elapsed));
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+}
+
+// Like elapse, but resumes as soon as the event fires, before later work runs.
+async function elapseUntil(event: Promise<void>, limitMs = 5_000) {
+  let done = false;
+  void event.then(() => { done = true; });
+  for (let elapsed = 0; elapsed < limitMs; elapsed += 10) {
+    jest.advanceTimersByTime(10);
+    await Promise.race([event, new Promise((resolve) => setImmediate(resolve))]);
+    if (done) return;
+  }
+  throw new Error(`no report within ${limitMs}ms`);
+}
+
 function waitForNextRequest(): Promise<void> {
   return new Promise((resolve) => requestWaiters.push(resolve));
 }
@@ -160,7 +183,7 @@ test("reports a root session when only the local route changes", async () => {
 
   const dispatched = waitForNextRequest();
   tui.select("session-a");
-  await dispatched;
+  await elapseUntil(dispatched);
 
   expect(requests).toHaveLength(1);
   expect(requestParam(requests[0], "agent_session_id")).toBe("session-a");
@@ -175,7 +198,7 @@ test("retries an initial selection while Flockr detects the process", async () =
   tui.select("session-a");
 
   await plugin.tui(tui.api);
-  await new Promise((resolve) => setTimeout(resolve, 125));
+  await elapse(125);
 
   const selections = requests.filter((request) => requestParam(request, "state") === undefined);
   expect(selections.length).toBeGreaterThanOrEqual(2);
@@ -190,7 +213,7 @@ test("does not report root sessions not selected by this TUI", async () => {
   tui.select("session-a");
   await plugin.tui(tui.api);
 
-  await new Promise((resolve) => setTimeout(resolve, 125));
+  await elapse(125);
 
   expect(requests.length).toBeGreaterThan(0);
   expect(requests.every((request) => requestParam(request, "agent_session_id") === "session-a")).toBe(
@@ -208,7 +231,7 @@ test("does not replace the root session with a selected child session", async ()
   await flushReports();
 
   tui.select("child-session");
-  await new Promise((resolve) => setTimeout(resolve, 125));
+  await elapse(125);
 
   expect(requests.length).toBeGreaterThan(0);
   expect(requests.every((r) => requestParam(r, "agent_session_id") === "root-session")).toBe(true);
@@ -222,7 +245,7 @@ test("stops route polling when the TUI plugin is disposed", async () => {
   tui.dispose();
   tui.select("session-a");
 
-  await new Promise((resolve) => setTimeout(resolve, 125));
+  await elapse(125);
 
   expect(requests).toHaveLength(0);
 });
@@ -277,7 +300,7 @@ function v2Api() {
   };
 }
 
-const flushReports = () => new Promise((resolve) => setTimeout(resolve, 10));
+const flushReports = () => elapse(10);
 const states = () => requests.filter((r) => requestParam(r, "state") !== undefined)
   .map((r) => requestParam(r, "state"));
 
@@ -389,7 +412,7 @@ test("V1 retains replies received between failed hydration and its retry", async
   await (await loadPlugin()).tui(tui.api);
   await flushReports();
   tui.emit("permission.replied", { sessionID: "child", requestID: "p" });
-  await new Promise((resolve) => setTimeout(resolve, 650));
+  await elapse(650);
   expect(states().at(-1)).toBe("idle");
   expect(states()).not.toContain("blocked");
 });
@@ -469,7 +492,7 @@ test("V1 unknown tool evidence remains blocked and retries failed message reads"
   await flushReports();
   expect(states().at(-1)).toBe("blocked");
   tui.messages.set("m", { parts: [{ type: "tool", callID: "call", state: { status: "error" } }] });
-  await new Promise((resolve) => setTimeout(resolve, 650));
+  await elapse(650);
   expect(states().at(-1)).toBe("idle");
 });
 
@@ -504,7 +527,7 @@ test("V1 reselecting an aborted request does not resurrect it or poll completed 
   await flushReports();
   expect(states()).not.toContain("blocked");
   const reads = tui.calls.length;
-  await new Promise((resolve) => setTimeout(resolve, 650));
+  await elapse(650);
   expect(tui.calls).toHaveLength(reads);
 });
 
@@ -522,7 +545,7 @@ test("V1 home and selected-session deletion settle authority and retry a dropped
     } else tui.emit("session.deleted", { info: { id: "root" } });
     await flushReports();
     failConnections = false;
-    await new Promise((resolve) => setTimeout(resolve, 650));
+    await elapse(650);
     expect(states().at(-1)).toBe("idle");
     tui.dispose();
   }
@@ -621,7 +644,7 @@ test("V2 discards queued reports after selection changes and stops on disposal",
   dispose();
   expect(tui.listeners.size).toBe(0);
   tui.select("a");
-  await new Promise((resolve) => setTimeout(resolve, 250));
+  await elapse(250);
   expect(requests).toHaveLength(0);
 });
 
@@ -632,14 +655,14 @@ test("V2 reconciles late blocker hydration without reviving an already-replied r
   activeDisposers.push(dispose);
   await flushReports();
   tui.permissions.set("child", [{ id: "late" }]);
-  await waitForStateReport();
+  await elapseUntil(waitForStateReport());
   expect(states().at(-1)).toBe("blocked");
   tui.emit("permission.replied", { sessionID: "child", requestID: "late" });
-  await waitForStateReport();
+  await elapseUntil(waitForStateReport());
   expect(states().at(-1)).toBe("idle");
   tui.permissions.set("child", []);
   tui.forms.set("child", [{ id: "second" }]);
-  await waitForStateReport();
+  await elapseUntil(waitForStateReport());
   expect(states().at(-1)).toBe("blocked");
   tui.sessions.delete("child");
   tui.emit("session.deleted", { sessionID: "child" });
@@ -675,7 +698,7 @@ test("V2 settles a connection that never completes", async () => {
   activeDisposers.push(dispose);
   const started = Date.now();
   while (connections.length <= 1 && Date.now() - started < 2_000) {
-    await new Promise((resolve) => setTimeout(resolve, 25));
+    await elapse(25);
   }
   expect(connections.length).toBeGreaterThan(1);
   dispose();
@@ -688,16 +711,16 @@ test("V2 resends the latest state after a failed delivery", async () => {
   activeDisposers.push(dispose);
   await flushReports();
   // Exhaust the selection retry schedule so only the event report remains.
-  await new Promise((resolve) => setTimeout(resolve, 1_600));
+  await elapse(1_600);
   requests.length = 0;
   tui.emit("session.execution.started", { sessionID: "a" });
   await flushReports();
   failConnections = true;
   tui.emit("session.execution.succeeded", { sessionID: "a" });
   const resend = waitForStateReport();
-  await new Promise((resolve) => setTimeout(resolve, 700));
+  await elapse(700);
   failConnections = false;
-  await resend;
+  await elapseUntil(resend);
   expect(states().at(-1)).toBe("idle");
   dispose();
 });
@@ -708,16 +731,16 @@ test("V1 reports each home screen visit once, without a session id", async () =>
   const tui = fakeApi();
   tui.addSession({ id: "session-a" });
   await (await loadPlugin()).tui(tui.api);
-  await new Promise((resolve) => setTimeout(resolve, 250));
+  await elapse(250);
 
   expect(homeReports()).toHaveLength(1);
   expect(requestParam(homeReports()[0], "agent_session_id")).toBeUndefined();
   expect(requestParam(homeReports()[0], "state")).toBeUndefined();
 
   tui.select("session-a");
-  await new Promise((resolve) => setTimeout(resolve, 150));
+  await elapse(150);
   tui.home();
-  await new Promise((resolve) => setTimeout(resolve, 250));
+  await elapse(250);
 
   expect(homeReports()).toHaveLength(2);
 });
@@ -729,7 +752,7 @@ test("V1 retries a home report the socket dropped", async () => {
   await flushReports();
   expect(homeReports()).toHaveLength(0);
   failConnections = false;
-  await new Promise((resolve) => setTimeout(resolve, 650));
+  await elapse(650);
 
   expect(homeReports()).toHaveLength(1);
 });
@@ -739,16 +762,16 @@ test("V2 reports each home screen visit once, without a session id", async () =>
   opencode.home();
   const dispose = (await loadPlugin()).setup(opencode.api);
   activeDisposers.push(dispose);
-  await new Promise((resolve) => setTimeout(resolve, 250));
+  await elapse(250);
 
   expect(homeReports()).toHaveLength(1);
   expect(requestParam(homeReports()[0], "agent_session_id")).toBeUndefined();
 
   opencode.select("a");
-  await new Promise((resolve) => setTimeout(resolve, 150));
+  await elapse(150);
   expect(homeReports()).toHaveLength(1);
   opencode.home();
-  await new Promise((resolve) => setTimeout(resolve, 250));
+  await elapse(250);
 
   expect(homeReports()).toHaveLength(2);
 });

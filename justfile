@@ -3,12 +3,13 @@ set windows-shell := ["cmd.exe", "/d", "/s", "/c"]
 
 python := if os() == "windows" { "python" } else { "python3" }
 
-# Run tests
-test:
+# Run tests. The suites are independent, so they run at the same time.
+[parallel]
+test: rust-test maintenance-test ui-hot-path-architecture-test integration-assets-test
+
+# Run the Rust test suite
+rust-test:
     cargo nextest run --locked --status-level fail --final-status-level fail --failure-output final --success-output never
-    just maintenance-test
-    just ui-hot-path-architecture-test
-    just integration-assets-test
 
 # Run repository maintenance contract tests
 maintenance-test:
@@ -41,10 +42,15 @@ lint:
 
 # Lint and run all tests
 ci filter='all()': lint
+    just ci-test '{{filter}}'
+
+# Run all test suites at the same time, with CI's nextest reporting
+[parallel]
+ci-test filter='all()': (ci-rust-test filter) maintenance-test ui-hot-path-architecture-test integration-assets-test
+
+# Run the Rust test suite with CI reporting
+ci-rust-test filter='all()':
     cargo nextest run --locked -E "{{filter}}" --status-level fail --final-status-level slow --failure-output final --success-output never
-    just maintenance-test
-    just ui-hot-path-architecture-test
-    just integration-assets-test
 
 # Download the Windows SDK once (requires xwin; prompts for Microsoft's SDK license)
 [unix]

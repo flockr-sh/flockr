@@ -76,10 +76,14 @@ fn wait_for_socket(path: &Path, timeout: Duration) {
 }
 
 fn spawn_server(config: &Path, runtime: &Path, api: &Path) -> SpawnedFlockr {
-    fs::create_dir_all(config.join("flockr")).unwrap();
+    fs::create_dir_all(config.join(support::app_dir_name())).unwrap();
     fs::create_dir_all(runtime).unwrap();
     register_runtime_dir(runtime);
-    fs::write(config.join("flockr/config.toml"), "onboarding = false\n").unwrap();
+    fs::write(
+        config.join(support::app_dir_name()).join("config.toml"),
+        "onboarding = false\n",
+    )
+    .unwrap();
     let pair = native_pty_system()
         .openpty(PtySize {
             rows: 24,
@@ -133,6 +137,28 @@ fn spawn_client(config: &Path, runtime: &Path, api: &Path) -> SpawnedFlockr {
         _master: pair.master,
         child,
     }
+}
+
+/// Reads a spawned process's terminal output until it contains `needle`.
+fn wait_for_terminal_output(master: &dyn MasterPty, needle: &str, timeout: Duration) -> bool {
+    let mut reader = master.try_clone_reader().unwrap();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let needle = needle.as_bytes().to_vec();
+    thread::spawn(move || {
+        let mut output = Vec::new();
+        let mut buf = [0u8; 4096];
+        while let Ok(n) = std::io::Read::read(&mut reader, &mut buf) {
+            if n == 0 {
+                break;
+            }
+            output.extend_from_slice(&buf[..n]);
+            if output.windows(needle.len()).any(|window| window == needle) {
+                let _ = tx.send(());
+                break;
+            }
+        }
+    });
+    rx.recv_timeout(timeout).is_ok()
 }
 
 fn cleanup(server: SpawnedFlockr, base: PathBuf) {
@@ -345,10 +371,15 @@ fn crashed_client_shell_does_not_affect_survivor() {
     wait_for_socket(&api, Duration::from_secs(10));
     wait_for_socket(&clients, Duration::from_secs(10));
     let mut survivor = shell(&clients, 100, 30);
+    create_pane(&api, "attach-probe");
     let crashed = spawn_client(&config, &runtime, &api);
-    // Give the supported client process time to complete its ClientShell hello;
-    // the point of this test is a connected peer dying, not a failed launch.
-    thread::sleep(Duration::from_secs(1));
+    // Wait until the client draws server state, which it only has after its
+    // ClientShell hello; the point of this test is a connected peer dying, not
+    // a failed launch.
+    assert!(
+        wait_for_terminal_output(&*crashed._master, "attach-probe", Duration::from_secs(10)),
+        "client never drew the server's workspace"
+    );
     let pid = crashed.child.process_id().unwrap();
     unsafe {
         libc::kill(pid as libc::pid_t, libc::SIGKILL);

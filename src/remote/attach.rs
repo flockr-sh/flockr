@@ -39,7 +39,11 @@ const SSH_CONTROL_TIMEOUT: Duration = Duration::from_secs(3);
 // fixed memory budget. An oversized local configuration is never parsed.
 const SSH_DIAGNOSTIC_OUTPUT_LIMIT: usize = 256 * 1024;
 const NONINTERACTIVE_SSH_STDERR_LIMIT: usize = 16 * 1024;
-const BRIDGE_FAILURE_REPORT_TIMEOUT: Duration = Duration::from_secs(1);
+static BRIDGE_FAILURE_REPORT_TIMEOUT: crate::test_timing::TestTiming =
+    crate::test_timing::TestTiming::new(
+        "FLOCKR_TEST_BRIDGE_FAILURE_REPORT_TIMEOUT_MS",
+        Duration::from_secs(1),
+    );
 const REMOTE_SERVER_SHUTDOWN_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const CURRENT_PROTOCOL: u32 = crate::protocol::PROTOCOL_VERSION;
 const STABLE_UPDATE_MANIFEST_URL: &str =
@@ -3117,7 +3121,7 @@ impl SshStdioBridge {
 
     pub(super) fn reported_failure(&self) -> Option<io::Error> {
         self.failure_rx
-            .recv_timeout(BRIDGE_FAILURE_REPORT_TIMEOUT)
+            .recv_timeout(BRIDGE_FAILURE_REPORT_TIMEOUT.get())
             .ok()
     }
 }

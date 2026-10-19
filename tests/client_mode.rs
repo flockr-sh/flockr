@@ -489,11 +489,13 @@ fn server_unreachable_shows_clear_error() {
     let runtime_dir = base.join("runtime");
     let api_socket = runtime_dir.join("flockr.sock");
 
-    fs::create_dir_all(config_home.join("flockr")).unwrap();
+    fs::create_dir_all(config_home.join(support::app_dir_name())).unwrap();
     fs::create_dir_all(&runtime_dir).unwrap();
     register_runtime_dir(&runtime_dir);
     fs::write(
-        config_home.join("flockr/config.toml"),
+        config_home
+            .join(support::app_dir_name())
+            .join("config.toml"),
         "onboarding = false\n",
     )
     .unwrap();
@@ -671,6 +673,8 @@ struct PtyOutput {
     bytes: Vec<u8>,
     // Keep legacy raw-string watermarks stable even across split UTF-8 reads.
     text: String,
+    // Set once the reader hits EOF or an error, e.g. after the child closes its PTY.
+    closed: bool,
 }
 
 type SharedOutput = std::sync::Arc<Mutex<PtyOutput>>;
@@ -691,6 +695,10 @@ fn spawn_pty_drain(mut reader: Box<dyn Read + Send>) -> SharedOutput {
                 Err(_) => break,
             }
         }
+        thread_output
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .closed = true;
     });
     output
 }
@@ -1062,7 +1070,11 @@ fn federated_client_starts_without_local_and_survives_its_restart() {
         &runtime_dir,
         &api_socket,
         &["client"],
-        &[("PATH", &path)],
+        &[
+            ("PATH", &path),
+            // Keep the doubling reconnect ladder, from a shorter first step.
+            ("FLOCKR_TEST_ENDPOINT_INITIAL_RETRY_DELAY_MS", "50"),
+        ],
     );
     let output = spawn_pty_drain(client._master.as_ref().unwrap().try_clone_reader().unwrap());
     let screen_text = || {
@@ -1596,8 +1608,11 @@ fn drain_until_client_exits(
         }
         thread::sleep(Duration::from_millis(20));
     }
-    // Give the reader thread a beat to flush trailing teardown bytes.
-    thread::sleep(Duration::from_millis(100));
+    // Let the reader thread flush trailing teardown bytes: it stops once the
+    // exited client's PTY side reports EOF.
+    wait_until(Duration::from_secs(2), Duration::from_millis(5), || {
+        output.lock().unwrap_or_else(|p| p.into_inner()).closed
+    });
     let full = read_output(output);
     assert!(exited, "thin client should exit; output: {full:?}");
     full.get(since..).unwrap_or_default().to_string()
