@@ -966,7 +966,7 @@ fn federated_launch_opens_local_directly_while_saved_ssh_is_unavailable() {
                     return true;
                 }
                 input
-                    .write_all(b"printf 'LOCAL_%s\\n' DIRECT_READY\r")
+                    .write_all(b"echo LOCAL_\\DIRECT_READY\r")
                     .unwrap();
                 false
             }), "Local must accept input without waiting for SSH (remote selected: {select_remote}): {}", read_output(&output));
@@ -1109,14 +1109,18 @@ fn federated_client_starts_without_local_and_survives_its_restart() {
                 if screen_text().contains(&format!("REMOTE_ALIVE_INPUT_{cycle}")) {
                     return true;
                 }
-                write!(
-                    input,
-                    "printf 'REMOTE_%s_INPUT_{cycle}\\n' \"$reconnect_survivor\"\r"
-                )
-                .unwrap();
+                // One write, no quotes: input reopens mid-stream after a
+                // reconnect, and a line missing its head must not leave the
+                // shell inside an open quote that swallows every retry.
+                input
+                    .write_all(
+                        format!("echo REMOTE_${{reconnect_survivor}}_INPUT_{cycle}\r").as_bytes(),
+                    )
+                    .unwrap();
                 false
             }),
-            "remote reconnect {cycle} must restore visible input and preserve the shell"
+            "remote reconnect {cycle} must restore visible input and preserve the shell: {}",
+            screen_text()
         );
     }
 
@@ -1145,9 +1149,7 @@ fn federated_client_starts_without_local_and_survives_its_restart() {
             if screen_text().contains("REMOTE_SURVIVED") {
                 return true;
             }
-            input
-                .write_all(b"printf 'REMOTE_%s\\n' SURVIVED\r")
-                .unwrap();
+            input.write_all(b"echo REMOTE_\\SURVIVED\r").unwrap();
             false
         }),
         "Local loss must not interrupt remote input or output: {}",
@@ -1172,9 +1174,7 @@ fn federated_client_starts_without_local_and_survives_its_restart() {
         }),
         "Local must reconnect with fresh metadata"
     );
-    input
-        .write_all(b"printf 'REMOTE_%s\\n' STILL_SELECTED\r")
-        .unwrap();
+    input.write_all(b"echo REMOTE_\\STILL_SELECTED\r").unwrap();
     assert!(
         wait_until(Duration::from_secs(8), Duration::from_millis(20), || {
             screen_text().contains("REMOTE_STILL_SELECTED")
@@ -1218,11 +1218,12 @@ fn federated_client_starts_without_local_and_survives_its_restart() {
                     return true;
                 }
                 input
-                    .write_all(b"printf 'LOCAL_%s\\n' INPUT_WHILE_REMOTE_STALLED\r")
+                    .write_all(b"echo LOCAL_\\INPUT_WHILE_REMOTE_STALLED\r")
                     .unwrap();
                 false
             }),
-            "Local input must become usable while the remote bridge remains stopped"
+            "Local input must become usable while the remote bridge remains stopped: {}",
+            screen_text()
         );
     }
     input
@@ -1271,9 +1272,7 @@ fn federated_client_starts_without_local_and_survives_its_restart() {
             if screen_text().contains("LOCAL_INPUT_RECOVERED") {
                 return true;
             }
-            input
-                .write_all(b"printf 'LOCAL_%s\\n' INPUT_RECOVERED\r")
-                .unwrap();
+            input.write_all(b"echo LOCAL_\\INPUT_RECOVERED\r").unwrap();
             false
         }),
         "recovered Local must accept input: {}",
