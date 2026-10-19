@@ -115,6 +115,11 @@ flockr is developed on Linux. Release binaries are built for macOS and
 Windows too, but those come from herdr's code and have not been tested in
 flockr yet.
 
+## Contributing
+
+Pull requests are welcome, AI-written ones included. See
+[CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## License
 
 Apache-2.0, same as herdr. See [LICENSE](LICENSE). Most of the code is
