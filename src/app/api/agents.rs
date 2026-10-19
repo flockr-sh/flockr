@@ -10,7 +10,11 @@ use crate::app::App;
 
 use super::responses::{encode_error, encode_error_body, encode_success};
 
-const AGENT_PROMPT_SUBMIT_DELAY: Duration = Duration::from_millis(300);
+static AGENT_PROMPT_SUBMIT_DELAY: crate::test_timing::TestTiming =
+    crate::test_timing::TestTiming::new(
+        "FLOCKR_TEST_AGENT_PROMPT_SUBMIT_DELAY_MS",
+        Duration::from_millis(300),
+    );
 
 // Codex's Windows input reader does not surface bracketed paste. It detects the prompt as a
 // "paste burst" and, while that burst is buffered, rewrites a following Enter into a newline
@@ -261,7 +265,7 @@ impl App {
             .queue_user_input_submission(
                 Bytes::from(text),
                 Bytes::from(enter),
-                AGENT_PROMPT_SUBMIT_DELAY,
+                AGENT_PROMPT_SUBMIT_DELAY.get(),
                 submit_deadline,
             )
             .map_err(|err| encode_error(id.clone(), "agent_prompt_failed", err.to_string()))?;
@@ -637,7 +641,7 @@ mod tests {
             Bytes::from_static(b"\x1b[200~A != B\x1b[201~")
         );
         assert_eq!(rx.try_recv().unwrap(), Bytes::from_static(b"\r"));
-        assert!(bracketed_started.elapsed() >= AGENT_PROMPT_SUBMIT_DELAY);
+        assert!(bracketed_started.elapsed() >= AGENT_PROMPT_SUBMIT_DELAY.get());
 
         app.lookup_runtime_sender(0, pane_id)
             .unwrap()
@@ -656,7 +660,7 @@ mod tests {
         assert!(matches!(raw.result, ResponseResult::AgentPrompted { .. }));
         assert_eq!(rx.try_recv().unwrap(), Bytes::from_static(b"A != B"));
         assert_eq!(rx.try_recv().unwrap(), Bytes::from_static(b"\r"));
-        assert!(raw_started.elapsed() >= AGENT_PROMPT_SUBMIT_DELAY);
+        assert!(raw_started.elapsed() >= AGENT_PROMPT_SUBMIT_DELAY.get());
 
         let rejected = run_deferred_agent_prompt(
             &mut app,
@@ -698,7 +702,7 @@ mod tests {
 
         let error: crate::api::schema::ErrorResponse = serde_json::from_str(&response).unwrap();
         assert_eq!(error.error.code, "agent_prompt_failed");
-        std::thread::sleep(AGENT_PROMPT_SUBMIT_DELAY * 2);
+        std::thread::sleep(AGENT_PROMPT_SUBMIT_DELAY.get() * 2);
         assert!(rx.try_recv().is_err(), "a failed prompt must not be sent");
     }
 
@@ -767,7 +771,7 @@ mod tests {
         assert_eq!(error.error.code, "agent_blocked");
         assert!(
             tokio::time::timeout(
-                AGENT_PROMPT_SUBMIT_DELAY + Duration::from_millis(100),
+                AGENT_PROMPT_SUBMIT_DELAY.get() + Duration::from_millis(100),
                 rx.recv()
             )
             .await

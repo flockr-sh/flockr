@@ -14,7 +14,7 @@ impl App {
     pub(super) fn schedule_session_save(&mut self) {
         if self.policy.persist_session {
             self.pane_exit_checkpoint_pending = false;
-            self.session_save_deadline = Some(Instant::now() + SESSION_SAVE_DEBOUNCE);
+            self.session_save_deadline = Some(Instant::now() + SESSION_SAVE_DEBOUNCE.get());
         }
     }
 
@@ -116,7 +116,7 @@ impl App {
     pub(crate) fn finish_checkpointed_pane_exit(&mut self) {
         if self.pane_exit_checkpoint_pending {
             self.state.session_dirty = false;
-            self.session_save_deadline = Some(Instant::now() + SESSION_SAVE_DEBOUNCE);
+            self.session_save_deadline = Some(Instant::now() + SESSION_SAVE_DEBOUNCE.get());
         }
     }
 

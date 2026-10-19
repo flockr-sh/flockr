@@ -1203,7 +1203,8 @@ fn spawn_basic_detection_task(
                         // the evidence its own process already emitted.
                         clear_osc_evidence_for_agent_transition(&terminal, previous_agent);
                         if let Some(agent) = agent {
-                            agent_startup_grace_until = Some(now + AGENT_STARTUP_GRACE_WINDOW);
+                            agent_startup_grace_until =
+                                Some(now + AGENT_STARTUP_GRACE_WINDOW.get());
                             state = AgentState::Unknown;
                             last_visible_idle = false;
                             last_visible_blocker = false;
@@ -3192,7 +3193,7 @@ impl PaneRuntime {
                                     );
                                     if let Some(agent) = agent {
                                         agent_startup_grace_until =
-                                            Some(now + AGENT_STARTUP_GRACE_WINDOW);
+                                            Some(now + AGENT_STARTUP_GRACE_WINDOW.get());
                                         state = AgentState::Unknown;
                                         last_visible_idle = false;
                                         last_visible_blocker = false;

@@ -39,7 +39,10 @@ const MIN_CLIENT_ROWS: u16 = 1;
 /// Set to 4 seconds (rather than 5) to guarantee the connection is closed
 /// within the 5-second deadline, even with OS timer slack, thread scheduling,
 /// and cleanup overhead.
-const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(4);
+static HANDSHAKE_TIMEOUT: crate::test_timing::TestTiming = crate::test_timing::TestTiming::new(
+    "FLOCKR_TEST_CLIENT_HANDSHAKE_TIMEOUT_MS",
+    Duration::from_secs(4),
+);
 
 #[cfg(unix)]
 const OBSERVER_WRITE_TIMEOUT: Duration = Duration::from_secs(30);
@@ -683,7 +686,7 @@ pub(crate) fn handle_client_handshake(
 
     set_client_recv_timeout(
         &stream,
-        Some(HANDSHAKE_TIMEOUT),
+        Some(HANDSHAKE_TIMEOUT.get()),
         "client handshake read timeout unavailable",
         client_id,
     )?;
@@ -2533,10 +2536,10 @@ mod tests {
         // the connection is guaranteed to close within 5 seconds even with
         // OS overhead (thread scheduling, timer slack, cleanup).
         assert!(
-            HANDSHAKE_TIMEOUT < Duration::from_secs(5),
+            HANDSHAKE_TIMEOUT.get() < Duration::from_secs(5),
             "HANDSHAKE_TIMEOUT ({:?}) must be less than 5 seconds to guarantee \
              connection close within the 5-second deadline",
-            HANDSHAKE_TIMEOUT
+            HANDSHAKE_TIMEOUT.get()
         );
     }
 }

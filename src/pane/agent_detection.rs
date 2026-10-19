@@ -9,8 +9,11 @@ pub(super) const AGENT_PENDING_IDLE_CAP: std::time::Duration =
     std::time::Duration::from_millis(700);
 pub(super) const STABLE_VISIBLE_SIGNAL_REFRESH: std::time::Duration =
     std::time::Duration::from_millis(800);
-pub(super) const AGENT_STARTUP_GRACE_WINDOW: std::time::Duration =
-    std::time::Duration::from_secs(3);
+pub(super) static AGENT_STARTUP_GRACE_WINDOW: crate::test_timing::TestTiming =
+    crate::test_timing::TestTiming::new(
+        "FLOCKR_TEST_AGENT_STARTUP_GRACE_WINDOW_MS",
+        std::time::Duration::from_secs(3),
+    );
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct DetectionPublishState {

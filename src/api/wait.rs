@@ -17,7 +17,11 @@ use crate::api::subscriptions::{match_output, output_match_read_source};
 use crate::api::{ApiRequestSender, EventHub};
 use crate::ipc::LocalStream;
 
-const AGENT_PROMPT_EFFECT_TIMEOUT_MS: u64 = 5_000;
+static AGENT_PROMPT_EFFECT_TIMEOUT: crate::test_timing::TestTiming =
+    crate::test_timing::TestTiming::new(
+        "FLOCKR_TEST_AGENT_PROMPT_EFFECT_TIMEOUT_MS",
+        std::time::Duration::from_secs(5),
+    );
 
 pub(super) fn wait_for_output(
     request_id: String,
@@ -252,14 +256,15 @@ pub(super) fn prompt_agent(
 
     if !prompt_activity_observed {
         let remaining_timeout_ms = remaining_timeout_ms(wait.timeout_ms, wait_started);
+        let prompt_effect_timeout_ms = AGENT_PROMPT_EFFECT_TIMEOUT.get().as_millis() as u64;
         let (effect_timeout_ms, timeout_kind) = match remaining_timeout_ms {
-            Some(timeout_ms) if timeout_ms <= AGENT_PROMPT_EFFECT_TIMEOUT_MS => {
+            Some(timeout_ms) if timeout_ms <= prompt_effect_timeout_ms => {
                 (timeout_ms, AgentWaitTimeoutKind::Status)
             }
             _ => (
-                AGENT_PROMPT_EFFECT_TIMEOUT_MS,
+                prompt_effect_timeout_ms,
                 AgentWaitTimeoutKind::PromptStalled {
-                    timeout_ms: AGENT_PROMPT_EFFECT_TIMEOUT_MS,
+                    timeout_ms: prompt_effect_timeout_ms,
                 },
             ),
         };

@@ -3,6 +3,13 @@ use std::io;
 
 use crate::api::client::{ApiClient, ConnectionTarget};
 use crate::client::endpoint::{EndpointCatalog, SavedSshEndpoint};
+use crate::test_timing::TestTiming;
+
+/// How long the read-only status probe waits on a remote server.
+static REMOTE_STATUS_PROBE_TIMEOUT: TestTiming = TestTiming::new(
+    "FLOCKR_TEST_REMOTE_STATUS_PROBE_TIMEOUT_MS",
+    std::time::Duration::from_secs(15),
+);
 
 thread_local! {
     // CLI dispatch is synchronous. Scope routing to this command, never the runtime or TUI.
@@ -105,7 +112,7 @@ pub(super) fn server_status(
 ) -> Result<crate::api::RuntimeStatus, crate::api::client::ApiClientError> {
     let probe = || {
         if is_remote() {
-            client.status_with_timeout(std::time::Duration::from_secs(15))
+            client.status_with_timeout(REMOTE_STATUS_PROBE_TIMEOUT.get())
         } else {
             client.status()
         }

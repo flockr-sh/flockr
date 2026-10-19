@@ -47,7 +47,10 @@ const GIT_DIFF_STAT_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
 const GIT_REPO_DISCOVERY_REFRESH_INTERVAL: Duration = Duration::from_secs(5 * 60);
 const AUTO_UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(30 * 60);
 const PENDING_AGENT_RESUME_THEME_WAIT: Duration = Duration::from_millis(750);
-const SESSION_SAVE_DEBOUNCE: Duration = Duration::from_secs(5);
+static SESSION_SAVE_DEBOUNCE: crate::test_timing::TestTiming = crate::test_timing::TestTiming::new(
+    "FLOCKR_TEST_SESSION_SAVE_DEBOUNCE_MS",
+    Duration::from_secs(5),
+);
 
 use ratatui::layout::Rect;
 use tokio::sync::{mpsc, Notify};

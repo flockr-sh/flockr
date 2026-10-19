@@ -8,7 +8,10 @@ use super::{ClientEndpointId, ClientEndpointStatus, EndpointNegotiation, NativeE
 use crate::protocol::{ClientSurfaceSize, RenderEncoding};
 use interprocess::TryClone as _;
 
-const INITIAL_RETRY_DELAY: Duration = Duration::from_millis(500);
+static INITIAL_RETRY_DELAY: crate::test_timing::TestTiming = crate::test_timing::TestTiming::new(
+    "FLOCKR_TEST_ENDPOINT_INITIAL_RETRY_DELAY_MS",
+    Duration::from_millis(500),
+);
 const MAX_RETRY_DELAY: Duration = Duration::from_secs(120);
 const MAX_LOCAL_RETRY_DELAY: Duration = Duration::from_secs(30);
 const STABLE_CONNECTION_PERIOD: Duration = Duration::from_secs(60);
@@ -562,6 +565,7 @@ fn handshake_error(error: crate::client::ClientError) -> std::io::Error {
 
 fn retry_delay(attempt: u32) -> Duration {
     INITIAL_RETRY_DELAY
+        .get()
         .saturating_mul(
             1_u32
                 .checked_shl(attempt.saturating_sub(1).min(8))
@@ -909,7 +913,7 @@ mod tests {
             assert!(supervisors.disconnected(&id, 2, failed));
             assert_eq!(
                 supervisors.endpoints[&id].next_attempt,
-                Some(failed + INITIAL_RETRY_DELAY * (1 << (attempt - 1)))
+                Some(failed + INITIAL_RETRY_DELAY.get() * (1 << (attempt - 1)))
             );
         }
         let connected = now + Duration::from_secs(200);
@@ -933,7 +937,7 @@ mod tests {
         assert!(supervisors.disconnected(&id, 2, failed));
         assert_eq!(
             supervisors.endpoints[&id].next_attempt,
-            Some(failed + INITIAL_RETRY_DELAY)
+            Some(failed + INITIAL_RETRY_DELAY.get())
         );
     }
 
@@ -977,7 +981,7 @@ mod tests {
         assert!(supervisors.disconnected(&id, 2, clicked));
         assert_eq!(
             supervisors.endpoints[&id].next_attempt,
-            Some(clicked + INITIAL_RETRY_DELAY)
+            Some(clicked + INITIAL_RETRY_DELAY.get())
         );
 
         supervisors.endpoints.get_mut(&id).unwrap().in_flight = true;
@@ -1124,7 +1128,7 @@ mod tests {
 
     #[test]
     fn retry_backoff_is_bounded() {
-        assert_eq!(retry_delay(1), INITIAL_RETRY_DELAY);
+        assert_eq!(retry_delay(1), INITIAL_RETRY_DELAY.get());
         assert_eq!(retry_delay(100), MAX_RETRY_DELAY);
     }
 
@@ -1157,7 +1161,7 @@ mod tests {
         assert!(supervisors.disconnected(&ClientEndpointId::Local, 1, now));
         assert_eq!(
             supervisors.endpoints[&ClientEndpointId::Local].next_attempt,
-            Some(now + INITIAL_RETRY_DELAY)
+            Some(now + INITIAL_RETRY_DELAY.get())
         );
         assert_eq!(
             supervisors.endpoints[&ClientEndpointId::Ssh(profile().id)].next_attempt,
@@ -1181,7 +1185,7 @@ mod tests {
         assert!(supervisors.disconnected(&endpoint_id, 4, now));
         assert_eq!(
             supervisors.endpoints[&endpoint_id].next_attempt,
-            Some(now + INITIAL_RETRY_DELAY)
+            Some(now + INITIAL_RETRY_DELAY.get())
         );
         assert!(supervisors.record_status(&endpoint_id, 4, ClientEndpointStatus::Attention, now));
         assert_eq!(

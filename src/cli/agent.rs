@@ -7,7 +7,11 @@ use crate::api::schema::{
 };
 
 const AGENT_START_POLL_INTERVAL: Duration = Duration::from_millis(100);
-const PANE_SHELL_READINESS_RETRY_TIMEOUT: Duration = Duration::from_secs(2);
+static PANE_SHELL_READINESS_RETRY_TIMEOUT: crate::test_timing::TestTiming =
+    crate::test_timing::TestTiming::new(
+        "FLOCKR_TEST_PANE_SHELL_READINESS_RETRY_TIMEOUT_MS",
+        Duration::from_secs(2),
+    );
 
 pub(crate) mod bindings;
 #[cfg(test)]
@@ -264,7 +268,7 @@ fn agent_start(params: AgentStartParams) -> std::io::Result<i32> {
     };
     let expected_kind = crate::detect::agent_label(expected_kind).to_string();
     let timeout = Duration::from_millis(timeout_ms.unwrap_or(30_000));
-    let retryable_timeout = timeout > crate::app::AGENT_START_SETTLE_DELAY
+    let retryable_timeout = timeout > crate::app::AGENT_START_SETTLE_DELAY.get()
         && timeout <= crate::app::MAX_AGENT_START_TIMEOUT;
     let pinned_terminal_id = pane_terminal_id(&pane_id)?;
     let mut retry_deadline = None;
@@ -303,7 +307,7 @@ fn agent_start(params: AgentStartParams) -> std::io::Result<i32> {
         }
 
         let deadline = *retry_deadline
-            .get_or_insert_with(|| Instant::now() + PANE_SHELL_READINESS_RETRY_TIMEOUT);
+            .get_or_insert_with(|| Instant::now() + PANE_SHELL_READINESS_RETRY_TIMEOUT.get());
         previous_busy_response = Some(response);
         let remaining = deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
