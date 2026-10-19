@@ -495,7 +495,13 @@ fn client_handshake_clamps_small_terminal_size() {
 fn no_hello_client_closed_after_handshake_timeout() {
     // A client connection that sends no Hello is closed once the handshake
     // timeout passes. A unit test keeps the real 4s timeout under the 5s
-    // deadline; this test shortens it to check the close itself.
+    // deadline. Debug builds shorten it here; release builds ignore the
+    // override and keep the 4s timeout and 5s deadline.
+    let (handshake_timeout, close_deadline) = if cfg!(debug_assertions) {
+        (Duration::from_secs(1), Duration::from_secs(4))
+    } else {
+        (Duration::from_secs(4), Duration::from_secs(5))
+    };
     let _lock = test_lock();
     let base = unique_test_dir();
     let config_home = base.join("config");
@@ -508,7 +514,10 @@ fn no_hello_client_closed_after_handshake_timeout() {
         &runtime_dir,
         &api_socket,
         &client_socket,
-        &[("FLOCKR_TEST_CLIENT_HANDSHAKE_TIMEOUT_MS", "1000")],
+        &[(
+            "FLOCKR_TEST_CLIENT_HANDSHAKE_TIMEOUT_MS",
+            &handshake_timeout.as_millis().to_string(),
+        )],
     );
     wait_for_socket(&api_socket, Duration::from_secs(10));
     wait_for_file(&client_socket, Duration::from_secs(10));
@@ -525,7 +534,7 @@ fn no_hello_client_closed_after_handshake_timeout() {
     let start = Instant::now();
 
     // Try to read from the stream. The server should close the connection
-    // after the 1s timeout, causing our read to return with an error (EOF or
+    // after the handshake timeout, causing our read to return with an error (EOF or
     // connection reset).
     let mut buf = [0u8; 1024];
     let result = stream.read(&mut buf);
@@ -539,9 +548,8 @@ fn no_hello_client_closed_after_handshake_timeout() {
 
     // The timeout closed it: not before it passed, and soon after.
     assert!(
-        elapsed >= Duration::from_millis(900) && elapsed < Duration::from_secs(4),
-        "connection should be closed after the 1s handshake timeout, took {:?}",
-        elapsed
+        elapsed >= handshake_timeout - Duration::from_millis(100) && elapsed < close_deadline,
+        "connection should be closed after the {handshake_timeout:?} handshake timeout, took {elapsed:?}"
     );
 
     // Verify the server is still healthy — a proper client can still connect.

@@ -12,6 +12,11 @@ pub(super) use crate::support::{
 };
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 
+/// Debug builds honor `FLOCKR_TEST_*_MS` wait overrides; release builds keep
+/// the production waits. Tests and the binary share a build profile, so tests
+/// pick values and bounds that hold for the build they run against.
+pub(super) const WAIT_OVERRIDES_APPLY: bool = cfg!(debug_assertions);
+
 pub(super) fn unique_test_dir() -> PathBuf {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)

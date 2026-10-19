@@ -193,12 +193,17 @@ fn agent_start_stops_retrying_when_the_pane_shell_stays_busy() {
         ],
         &[("FLOCKR_TEST_PANE_SHELL_READINESS_RETRY_TIMEOUT_MS", "500")],
     );
+    let retry_window = if WAIT_OVERRIDES_APPLY {
+        Duration::from_millis(500)
+    } else {
+        Duration::from_secs(2)
+    };
     assert_eq!(unavailable.status.code(), Some(1));
     let error: serde_json::Value = serde_json::from_slice(&unavailable.stderr).unwrap();
     assert_eq!(error["error"]["code"], "agent_pane_busy");
-    // Retrying stops at the 500ms window, well before the 8s start timeout.
-    assert!(started_at.elapsed() >= Duration::from_millis(500));
-    assert!(started_at.elapsed() < Duration::from_millis(2500));
+    // Retrying stops at the retry window, well before the 8s start timeout.
+    assert!(started_at.elapsed() >= retry_window);
+    assert!(started_at.elapsed() < retry_window + Duration::from_secs(2));
     assert!(!invocations.exists());
 
     fs::write(&shell_gate, "").unwrap();
@@ -222,15 +227,15 @@ fn agent_start_stops_retrying_when_the_pane_shell_stays_busy() {
     cleanup_spawned_flockr(flockr, base);
 }
 
-const FAST_SETTLE_DELAY_MS: &str = "500";
+/// The settle delay the server uses. Release builds ignore the override.
+const SETTLE_DELAY_MS: &str = if WAIT_OVERRIDES_APPLY { "500" } else { "3000" };
+/// The shortest start timeout past the settle delay.
+const SHORTEST_START_TIMEOUT_MS: &str = if WAIT_OVERRIDES_APPLY { "600" } else { "3100" };
 
 /// Shorter agent-start and prompt waits that keep the order tests rely on:
 /// submit delay < 500ms prompt waits < prompt-effect timeout < 6000ms waits.
 const FAST_AGENT_WAITS: &[(&str, &str)] = &[
-    (
-        "FLOCKR_TEST_AGENT_START_SETTLE_DELAY_MS",
-        FAST_SETTLE_DELAY_MS,
-    ),
+    ("FLOCKR_TEST_AGENT_START_SETTLE_DELAY_MS", SETTLE_DELAY_MS),
     ("FLOCKR_TEST_AGENT_PROMPT_EFFECT_TIMEOUT_MS", "1500"),
     ("FLOCKR_TEST_AGENT_PROMPT_SUBMIT_DELAY_MS", "100"),
 ];
@@ -316,7 +321,7 @@ fn agent_start_command_works() {
     }
 
     // The settle delay itself is not a valid timeout.
-    for invalid_timeout in [FAST_SETTLE_DELAY_MS, "300001", "18446744073709551615"] {
+    for invalid_timeout in [SETTLE_DELAY_MS, "300001", "18446744073709551615"] {
         let rejected = run_cli(
             &socket_path,
             &[
@@ -636,7 +641,6 @@ fn agent_start_timeout_releases_the_name_for_reuse() {
     .status
     .success());
 
-    // The shortest timeout past the settle delay.
     let started = run_cli_with_env(
         &socket_path,
         &[
@@ -648,7 +652,7 @@ fn agent_start_timeout_releases_the_name_for_reuse() {
             "--pane",
             &pane_id,
             "--timeout",
-            "600",
+            SHORTEST_START_TIMEOUT_MS,
         ],
         FAST_AGENT_WAITS,
     );
