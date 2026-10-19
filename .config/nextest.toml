@@ -1,0 +1,8 @@
+# Start the longest tests first so they don't extend the run's tail.
+[[profile.default.overrides]]
+filter = 'test(=machine_api_recovers_a_ping_timeout_without_child_exit_before_one_mutation) | test(=cases::agents::agent_start_command_works) | test(=federated_client_starts_without_local_and_survives_its_restart)'
+priority = 100
+
+[[profile.default.overrides]]
+filter = 'test(=cases::agents::agent_start_stops_retrying_when_the_pane_shell_stays_busy) | test(/^cases::sessions::(unloaded_session_survives_autosave|session_appearing_after_startup)/) | test(=pane_info_and_subscriptions_expose_done_agent_status) | test(=cases::agent_wait::agent_wait_exits_when_done_status_matches) | test(=no_hello_client_closed_within_five_seconds)'
+priority = 50
