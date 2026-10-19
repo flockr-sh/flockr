@@ -503,6 +503,11 @@ fn machine_api_recovers_a_ping_timeout_without_child_exit_before_one_mutation() 
             .command(&["--machine", "mac", "pane", "close", "w4:p1"])
             .env("TEST_MODE", "frozen")
             .env("TEST_CONTROL", &control)
+            // The frozen bridge never answers or reports a failure, so the
+            // test waits out both. The recovered probe still needs time to
+            // answer on a loaded machine.
+            .env("FLOCKR_TEST_REMOTE_STATUS_PROBE_TIMEOUT_MS", "2000")
+            .env("FLOCKR_TEST_BRIDGE_FAILURE_REPORT_TIMEOUT_MS", "100")
             .output()
             .unwrap(),
     );

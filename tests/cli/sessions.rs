@@ -660,6 +660,9 @@ fn server_stop_then_restart_restores_pane_history() {
     cleanup_spawned_flockr(restarted, base);
 }
 
+/// Autosave soon after a change instead of after the 5s debounce.
+const FAST_AUTOSAVE: &[(&str, &str)] = &[("FLOCKR_TEST_SESSION_SAVE_DEBOUNCE_MS", "200")];
+
 #[test]
 fn unloaded_session_survives_autosave_and_shutdown_when_recovery_is_blocked() {
     let base = unique_test_dir();
@@ -673,7 +676,14 @@ fn unloaded_session_survives_autosave_and_shutdown_when_recovery_is_blocked() {
     fs::write(&session_path, original).unwrap();
     fs::write(data_dir.join("session-backups"), b"blocks recovery").unwrap();
 
-    let mut flockr = spawn_flockr(&config_home, &runtime_dir, &socket_path);
+    let mut flockr = spawn_flockr_with_config_and_env(
+        &config_home,
+        &runtime_dir,
+        &socket_path,
+        None,
+        "onboarding = false\n",
+        FAST_AUTOSAVE,
+    );
     wait_for_socket(&socket_path, Duration::from_secs(5));
     run_cli_json(
         &socket_path,
@@ -704,7 +714,14 @@ fn session_appearing_after_startup_is_preserved_before_autosave() {
     let runtime_dir = base.join("runtime");
     let socket_path = runtime_dir.join("flockr.sock");
     let data_dir = config_home.join(app_dir_name());
-    let flockr = spawn_flockr(&config_home, &runtime_dir, &socket_path);
+    let flockr = spawn_flockr_with_config_and_env(
+        &config_home,
+        &runtime_dir,
+        &socket_path,
+        None,
+        "onboarding = false\n",
+        FAST_AUTOSAVE,
+    );
     wait_for_socket(&socket_path, Duration::from_secs(5));
     // The API socket binds before restore; a read-only App request waits for it.
     let ready = run_cli_json(&socket_path, &["workspace", "list"]);

@@ -283,6 +283,26 @@ pub(super) fn spawn_flockr_with_config(
     path_override: Option<&Path>,
     config_toml: &str,
 ) -> SpawnedFlockr {
+    spawn_flockr_with_config_and_env(
+        config_home,
+        runtime_dir,
+        socket_path,
+        path_override,
+        config_toml,
+        &[],
+    )
+}
+
+/// Like `spawn_flockr_with_config`, with extra server env such as
+/// `FLOCKR_TEST_*_MS` wait overrides.
+pub(super) fn spawn_flockr_with_config_and_env(
+    config_home: &Path,
+    runtime_dir: &Path,
+    socket_path: &Path,
+    path_override: Option<&Path>,
+    config_toml: &str,
+    env: &[(&str, &str)],
+) -> SpawnedFlockr {
     fs::create_dir_all(config_home.join(app_dir_name())).unwrap();
     fs::create_dir_all(runtime_dir).unwrap();
     register_runtime_dir(runtime_dir);
@@ -313,6 +333,9 @@ pub(super) fn spawn_flockr_with_config(
     if let Some(path) = path_override {
         cmd.env("PATH", path);
     }
+    for (key, value) in env {
+        cmd.env(key, value);
+    }
 
     let child = pair.slave.spawn_command(cmd).unwrap();
     register_spawned_flockr_pid(child.process_id());
@@ -323,9 +346,18 @@ pub(super) fn spawn_flockr_with_config(
 }
 
 pub(super) fn run_cli(socket_path: &Path, args: &[&str]) -> std::process::Output {
+    run_cli_with_env(socket_path, args, &[])
+}
+
+pub(super) fn run_cli_with_env(
+    socket_path: &Path,
+    args: &[&str],
+    env: &[(&str, &str)],
+) -> std::process::Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_flockr"));
     command.args(args);
     command.env("FLOCKR_SOCKET_PATH", socket_path);
+    command.envs(env.iter().copied());
     command.output().unwrap()
 }
 

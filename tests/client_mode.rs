@@ -1068,7 +1068,11 @@ fn federated_client_starts_without_local_and_survives_its_restart() {
         &runtime_dir,
         &api_socket,
         &["client"],
-        &[("PATH", &path)],
+        &[
+            ("PATH", &path),
+            // Keep the doubling reconnect ladder, from a shorter first step.
+            ("FLOCKR_TEST_ENDPOINT_INITIAL_RETRY_DELAY_MS", "50"),
+        ],
     );
     let output = spawn_pty_drain(client._master.as_ref().unwrap().try_clone_reader().unwrap());
     let screen_text = || {

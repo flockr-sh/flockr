@@ -71,12 +71,13 @@ fn agent_start_waits_for_a_new_pane_shell_to_finish_initializing() {
         "onboarding = false\n[terminal]\ndefault_shell = {:?}\nshell_mode = \"non_login\"\n",
         delayed_shell.to_str().unwrap()
     );
-    let flockr = spawn_flockr_with_config(
+    let flockr = spawn_flockr_with_config_and_env(
         &config_home,
         &runtime_dir,
         &socket_path,
         Some(&bin),
         &config,
+        FAST_AGENT_WAITS,
     );
     wait_for_socket(&socket_path, Duration::from_secs(5));
     let seed = run_cli_json(
@@ -161,12 +162,13 @@ fn agent_start_stops_retrying_when_the_pane_shell_stays_busy() {
         "onboarding = false\n[terminal]\ndefault_shell = {:?}\nshell_mode = \"non_login\"\n",
         delayed_shell.to_str().unwrap()
     );
-    let flockr = spawn_flockr_with_config(
+    let flockr = spawn_flockr_with_config_and_env(
         &config_home,
         &runtime_dir,
         &socket_path,
         Some(&bin),
         &config,
+        FAST_AGENT_WAITS,
     );
     wait_for_socket(&socket_path, Duration::from_secs(5));
     let created = run_cli_json(
@@ -176,7 +178,7 @@ fn agent_start_stops_retrying_when_the_pane_shell_stays_busy() {
     let pane_id = created["result"]["root_pane"]["pane_id"].as_str().unwrap();
 
     let started_at = Instant::now();
-    let unavailable = run_cli(
+    let unavailable = run_cli_with_env(
         &socket_path,
         &[
             "agent",
@@ -189,12 +191,14 @@ fn agent_start_stops_retrying_when_the_pane_shell_stays_busy() {
             "--timeout",
             "8000",
         ],
+        &[("FLOCKR_TEST_PANE_SHELL_READINESS_RETRY_TIMEOUT_MS", "500")],
     );
     assert_eq!(unavailable.status.code(), Some(1));
     let error: serde_json::Value = serde_json::from_slice(&unavailable.stderr).unwrap();
     assert_eq!(error["error"]["code"], "agent_pane_busy");
-    assert!(started_at.elapsed() >= Duration::from_secs(2));
-    assert!(started_at.elapsed() < Duration::from_secs(4));
+    // Retrying stops at the 500ms window, well before the 8s start timeout.
+    assert!(started_at.elapsed() >= Duration::from_millis(500));
+    assert!(started_at.elapsed() < Duration::from_millis(2500));
     assert!(!invocations.exists());
 
     fs::write(&shell_gate, "").unwrap();
@@ -217,6 +221,19 @@ fn agent_start_stops_retrying_when_the_pane_shell_stays_busy() {
 
     cleanup_spawned_flockr(flockr, base);
 }
+
+const FAST_SETTLE_DELAY_MS: &str = "500";
+
+/// Shorter agent-start and prompt waits that keep the order tests rely on:
+/// submit delay < 500ms prompt waits < prompt-effect timeout < 6000ms waits.
+const FAST_AGENT_WAITS: &[(&str, &str)] = &[
+    (
+        "FLOCKR_TEST_AGENT_START_SETTLE_DELAY_MS",
+        FAST_SETTLE_DELAY_MS,
+    ),
+    ("FLOCKR_TEST_AGENT_PROMPT_EFFECT_TIMEOUT_MS", "1500"),
+    ("FLOCKR_TEST_AGENT_PROMPT_SUBMIT_DELAY_MS", "100"),
+];
 
 #[test]
 fn agent_start_command_works() {
@@ -243,7 +260,14 @@ fn agent_start_command_works() {
     .unwrap();
     fs::set_permissions(&fake_pi, fs::Permissions::from_mode(0o755)).unwrap();
 
-    let flockr = spawn_flockr_with_path(&config_home, &runtime_dir, &socket_path, Some(&bin));
+    let flockr = spawn_flockr_with_config_and_env(
+        &config_home,
+        &runtime_dir,
+        &socket_path,
+        Some(&bin),
+        "onboarding = false\n",
+        FAST_AGENT_WAITS,
+    );
     wait_for_socket(&socket_path, Duration::from_secs(5));
     let created = run_cli_json(
         &socket_path,
@@ -291,7 +315,8 @@ fn agent_start_command_works() {
         assert_eq!(error["error"]["code"], "invalid_agent_argument");
     }
 
-    for invalid_timeout in ["3000", "300001", "18446744073709551615"] {
+    // The settle delay itself is not a valid timeout.
+    for invalid_timeout in [FAST_SETTLE_DELAY_MS, "300001", "18446744073709551615"] {
         let rejected = run_cli(
             &socket_path,
             &[
@@ -568,7 +593,14 @@ fn agent_start_timeout_releases_the_name_for_reuse() {
     .unwrap();
     fs::set_permissions(&fake_pi, fs::Permissions::from_mode(0o755)).unwrap();
 
-    let flockr = spawn_flockr_with_path(&config_home, &runtime_dir, &socket_path, Some(&bin));
+    let flockr = spawn_flockr_with_config_and_env(
+        &config_home,
+        &runtime_dir,
+        &socket_path,
+        Some(&bin),
+        "onboarding = false\n",
+        FAST_AGENT_WAITS,
+    );
     wait_for_socket(&socket_path, Duration::from_secs(5));
     let created = run_cli_json(
         &socket_path,
@@ -604,7 +636,8 @@ fn agent_start_timeout_releases_the_name_for_reuse() {
     .status
     .success());
 
-    let started = run_cli(
+    // The shortest timeout past the settle delay.
+    let started = run_cli_with_env(
         &socket_path,
         &[
             "agent",
@@ -615,8 +648,9 @@ fn agent_start_timeout_releases_the_name_for_reuse() {
             "--pane",
             &pane_id,
             "--timeout",
-            "3100",
+            "600",
         ],
+        FAST_AGENT_WAITS,
     );
     assert_eq!(started.status.code(), Some(1));
     let error: serde_json::Value = serde_json::from_slice(&started.stderr).unwrap();
@@ -723,7 +757,14 @@ fn agent_start_follows_its_named_terminal_when_the_pane_moves() {
     fs::write(&fake_pi, "#!/bin/sh\nFLOCKR_AGENT=pi exec /bin/sleep 10\n").unwrap();
     fs::set_permissions(&fake_pi, fs::Permissions::from_mode(0o755)).unwrap();
 
-    let flockr = spawn_flockr_with_path(&config_home, &runtime_dir, &socket_path, Some(&bin));
+    let flockr = spawn_flockr_with_config_and_env(
+        &config_home,
+        &runtime_dir,
+        &socket_path,
+        Some(&bin),
+        "onboarding = false\n",
+        FAST_AGENT_WAITS,
+    );
     wait_for_socket(&socket_path, Duration::from_secs(5));
     let created = run_cli_json(
         &socket_path,

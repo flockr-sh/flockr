@@ -87,7 +87,7 @@ fn wait_for_path(path: &Path, timeout: Duration) {
 }
 
 fn spawn_flockr(config_home: &Path, runtime_dir: &Path, socket_path: &Path) -> SpawnedFlockr {
-    spawn_flockr_with_options(config_home, runtime_dir, socket_path, None, "/bin/sh")
+    spawn_flockr_with_options(config_home, runtime_dir, socket_path, None, "/bin/sh", &[])
 }
 
 fn spawn_flockr_with_path(
@@ -96,12 +96,25 @@ fn spawn_flockr_with_path(
     socket_path: &Path,
     path_override: Option<&Path>,
 ) -> SpawnedFlockr {
+    spawn_flockr_with_path_and_env(config_home, runtime_dir, socket_path, path_override, &[])
+}
+
+/// Like `spawn_flockr_with_path`, with extra server env such as
+/// `FLOCKR_TEST_*_MS` wait overrides.
+fn spawn_flockr_with_path_and_env(
+    config_home: &Path,
+    runtime_dir: &Path,
+    socket_path: &Path,
+    path_override: Option<&Path>,
+    env: &[(&str, &str)],
+) -> SpawnedFlockr {
     spawn_flockr_with_options(
         config_home,
         runtime_dir,
         socket_path,
         path_override,
         "/bin/sh",
+        env,
     )
 }
 
@@ -112,7 +125,7 @@ fn spawn_flockr_with_shell(
     socket_path: &Path,
     shell: &str,
 ) -> SpawnedFlockr {
-    spawn_flockr_with_options(config_home, runtime_dir, socket_path, None, shell)
+    spawn_flockr_with_options(config_home, runtime_dir, socket_path, None, shell, &[])
 }
 
 fn spawn_flockr_with_options(
@@ -121,6 +134,7 @@ fn spawn_flockr_with_options(
     socket_path: &Path,
     path_override: Option<&Path>,
     shell: &str,
+    env: &[(&str, &str)],
 ) -> SpawnedFlockr {
     fs::create_dir_all(config_home.join("flockr")).unwrap();
     fs::create_dir_all(runtime_dir).unwrap();
@@ -151,6 +165,9 @@ fn spawn_flockr_with_options(
     cmd.env_remove("FLOCKR_ENV");
     if let Some(path) = path_override {
         cmd.env("PATH", path);
+    }
+    for (key, value) in env {
+        cmd.env(key, value);
     }
 
     let child = pair.slave.spawn_command(cmd).unwrap();
@@ -2502,11 +2519,13 @@ fn pane_info_and_subscriptions_expose_done_agent_status() {
 
     let inherited_path = std::env::var("PATH").unwrap_or_default();
     let path_override = format!("{}:{}", bin_dir.display(), inherited_path);
-    let child = spawn_flockr_with_path(
+    // Read the agent's screen soon after it is identified, not after 3s.
+    let child = spawn_flockr_with_path_and_env(
         &config_home,
         &runtime_dir,
         &socket_path,
         Some(Path::new(&path_override)),
+        &[("FLOCKR_TEST_AGENT_STARTUP_GRACE_WINDOW_MS", "300")],
     );
     wait_for_socket(&socket_path, Duration::from_secs(5));
 

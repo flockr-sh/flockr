@@ -139,11 +139,14 @@ fn agent_wait_exits_when_done_status_matches() {
 
     let inherited_path = std::env::var("PATH").unwrap_or_default();
     let path_override = format!("{}:{}", bin_dir.display(), inherited_path);
-    let flockr = spawn_flockr_with_path(
+    // Read the agent's screen soon after it is identified, not after 3s.
+    let flockr = spawn_flockr_with_config_and_env(
         &config_home,
         &runtime_dir,
         &socket_path,
         Some(Path::new(&path_override)),
+        "onboarding = false\n",
+        &[("FLOCKR_TEST_AGENT_STARTUP_GRACE_WINDOW_MS", "300")],
     );
 
     wait_for_socket(&socket_path, Duration::from_secs(5));

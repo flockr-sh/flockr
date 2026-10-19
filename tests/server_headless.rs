@@ -102,7 +102,25 @@ fn spawn_server(
     config_home: &Path,
     runtime_dir: &Path,
     api_socket_path: &Path,
+    client_socket_path: &Path,
+) -> SpawnedFlockr {
+    spawn_server_with_env(
+        config_home,
+        runtime_dir,
+        api_socket_path,
+        client_socket_path,
+        &[],
+    )
+}
+
+/// Like `spawn_server`, with extra server env such as `FLOCKR_TEST_*_MS`
+/// wait overrides.
+fn spawn_server_with_env(
+    config_home: &Path,
+    runtime_dir: &Path,
+    api_socket_path: &Path,
     _client_socket_path: &Path,
+    env: &[(&str, &str)],
 ) -> SpawnedFlockr {
     fs::create_dir_all(config_home.join("flockr")).unwrap();
     fs::create_dir_all(runtime_dir).unwrap();
@@ -131,6 +149,9 @@ fn spawn_server(
     cmd.env_remove("FLOCKR_CLIENT_SOCKET_PATH");
     cmd.env("SHELL", "/bin/sh");
     cmd.env_remove("FLOCKR_ENV");
+    for (key, value) in env {
+        cmd.env(key, value);
+    }
 
     let child = pair.slave.spawn_command(cmd).unwrap();
     register_spawned_flockr_pid(child.process_id());
@@ -471,10 +492,10 @@ fn client_handshake_clamps_small_terminal_size() {
 }
 
 #[test]
-fn no_hello_client_closed_within_five_seconds() {
-    // Client connection that sends no Hello is closed within 5 seconds.
-    // The server sets a handshake timeout of 4 seconds to guarantee the connection
-    // is closed within the 5-second deadline even with OS overhead.
+fn no_hello_client_closed_after_handshake_timeout() {
+    // A client connection that sends no Hello is closed once the handshake
+    // timeout passes. A unit test keeps the real 4s timeout under the 5s
+    // deadline; this test shortens it to check the close itself.
     let _lock = test_lock();
     let base = unique_test_dir();
     let config_home = base.join("config");
@@ -482,7 +503,13 @@ fn no_hello_client_closed_within_five_seconds() {
     let api_socket = runtime_dir.join("flockr.sock");
     let client_socket = runtime_dir.join("flockr-client.sock");
 
-    let spawned = spawn_server(&config_home, &runtime_dir, &api_socket, &client_socket);
+    let spawned = spawn_server_with_env(
+        &config_home,
+        &runtime_dir,
+        &api_socket,
+        &client_socket,
+        &[("FLOCKR_TEST_CLIENT_HANDSHAKE_TIMEOUT_MS", "1000")],
+    );
     wait_for_socket(&api_socket, Duration::from_secs(10));
     wait_for_file(&client_socket, Duration::from_secs(10));
 
@@ -498,7 +525,7 @@ fn no_hello_client_closed_within_five_seconds() {
     let start = Instant::now();
 
     // Try to read from the stream. The server should close the connection
-    // within 5 seconds, causing our read to return with an error (EOF or
+    // after the 1s timeout, causing our read to return with an error (EOF or
     // connection reset).
     let mut buf = [0u8; 1024];
     let result = stream.read(&mut buf);
@@ -510,10 +537,10 @@ fn no_hello_client_closed_within_five_seconds() {
         "server should close the connection when no Hello is sent"
     );
 
-    // The connection should be closed within 5 seconds.
+    // The timeout closed it: not before it passed, and soon after.
     assert!(
-        elapsed < Duration::from_secs(5),
-        "connection should be closed within 5 seconds, took {:?}",
+        elapsed >= Duration::from_millis(900) && elapsed < Duration::from_secs(4),
+        "connection should be closed after the 1s handshake timeout, took {:?}",
         elapsed
     );
 
