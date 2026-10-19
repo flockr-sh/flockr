@@ -85,6 +85,8 @@ Sidebar:
 
 Agents:
 
+- `prefix+a` steps through agents that are blocked or finished unseen,
+  oldest alert first.
 - `ui.seen_delay_ms` and `ui.seen_scope`: a done agent keeps its done badge
   until its pane has been on screen long enough, so stepping through agents
   doesn't clear the ones you pass. `prefix+u` marks one done again.
