@@ -1067,6 +1067,10 @@ pub struct ClientShellPane {
     pub foreground_cwd: Option<String>,
     pub focused: bool,
     pub right_click_passthrough: bool,
+    /// Process name of the pane's foreground job leader, e.g. "nvim". Absent
+    /// from older servers.
+    #[serde(default)]
+    pub foreground_process: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -2861,6 +2865,7 @@ mod tests {
                 foreground_cwd: Some("/repo".into()),
                 focused: true,
                 right_click_passthrough: false,
+                foreground_process: None,
             }],
             agents: Vec::new(),
             commands: vec![ClientShellCommand {

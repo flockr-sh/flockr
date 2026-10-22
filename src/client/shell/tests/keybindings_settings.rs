@@ -1088,3 +1088,53 @@ fn help_overlay_scrolls_with_vim_half_page_and_top_bottom_keys() {
     state.handle_input_bytes(b"g");
     assert_eq!(scroll(&state), 0);
 }
+
+#[test]
+fn direct_pane_focus_key_reaches_a_listed_foreground_program() {
+    let ctrl_l = || RawInputEvent::Key(TerminalKey::new(KeyCode::Char('l'), KeyModifiers::CONTROL));
+    let mut config: Config =
+        toml::from_str("[keys]\nfocus_pane_right = [\"prefix+l\", \"ctrl+l\"]\n").unwrap();
+    assert!(config.collect_diagnostics().is_empty());
+    config.ui.pane_focus_passthrough = vec!["nvim".into()];
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&config));
+    let mut projection = snapshot();
+    projection.panes[0].foreground_process = Some("bash".into());
+    state.set_snapshot(Box::new(projection.clone()));
+    state.set_pane_surface(surface());
+
+    let is_focus_move = |outcome: &ClientShellInput| {
+        matches!(
+            &outcome.actions[..],
+            [ClientShellAction::Endpoint { request, .. }]
+                if matches!(
+                    &request.method,
+                    crate::api::schema::Method::PaneFocusDirection(params)
+                        if params.direction == crate::api::schema::PaneDirection::Right
+                )
+        )
+    };
+
+    // An unlisted program: flockr moves focus.
+    let outcome = state.handle_raw_events(vec![ctrl_l()]);
+    assert!(is_focus_move(&outcome), "{:?}", outcome.actions);
+    assert!(outcome.requests.is_empty());
+
+    // A listed program gets the key itself.
+    projection.revision += 1;
+    projection.panes[0].foreground_process = Some("nvim".into());
+    state.set_snapshot(Box::new(projection));
+    let outcome = state.handle_raw_events(vec![ctrl_l()]);
+    assert!(outcome.actions.is_empty(), "{:?}", outcome.actions);
+    assert!(matches!(
+        &outcome.requests[..],
+        [ClientMessage::ClientShellPaneInput { pane_id, events }]
+            if pane_id == "pane_1" && !events.is_empty()
+    ));
+
+    // The prefix binding always moves focus.
+    let outcome = state.handle_raw_events(vec![
+        RawInputEvent::Key(TerminalKey::new(KeyCode::Char('b'), KeyModifiers::CONTROL)),
+        RawInputEvent::Key(TerminalKey::new(KeyCode::Char('l'), KeyModifiers::empty())),
+    ]);
+    assert!(is_focus_move(&outcome), "{:?}", outcome.actions);
+}

@@ -101,6 +101,11 @@ pub enum AppEvent {
         process_exited: bool,
         observed_at: Instant,
     },
+    /// The pane's foreground job changed. `name` is its leader's process name.
+    ForegroundProcessChanged {
+        pane_id: PaneId,
+        name: Option<String>,
+    },
     /// The options a detected agent process was started with.
     /// Flockr replays them when it resumes that agent's session.
     AgentLaunchArgsDetected {

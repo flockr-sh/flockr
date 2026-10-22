@@ -678,6 +678,7 @@ impl ClientShellState {
             ClientShellMode::Terminal => {
                 if let Some(binding) =
                     crate::input::resolve_direct_binding(&self.config.keybinds.keybinds, key)
+                        .filter(|binding| !self.focused_program_takes_focus_key(binding))
                 {
                     self.record_binding(binding, outcome);
                     return None;
@@ -1144,6 +1145,39 @@ impl ClientShellState {
         self.snapshot
             .as_deref()
             .and_then(|snapshot| snapshot.focused_pane_id.clone())
+    }
+
+    /// A direct pane-focus key such as ctrl+h goes to the focused pane when
+    /// its foreground program is listed in `ui.pane_focus_passthrough`, so an
+    /// editor can move between its own splits first.
+    fn focused_program_takes_focus_key(&self, binding: &crate::input::KeybindMatch) -> bool {
+        use crate::input::{KeybindAction, KeybindMatch};
+
+        if !matches!(
+            binding,
+            KeybindMatch::Action(
+                KeybindAction::FocusPaneLeft
+                    | KeybindAction::FocusPaneDown
+                    | KeybindAction::FocusPaneUp
+                    | KeybindAction::FocusPaneRight
+            )
+        ) {
+            return false;
+        }
+        let Some(snapshot) = self.snapshot.as_deref() else {
+            return false;
+        };
+        snapshot
+            .panes
+            .iter()
+            .find(|pane| snapshot.focused_pane_id.as_ref() == Some(&pane.pane_id))
+            .and_then(|pane| pane.foreground_process.as_deref())
+            .is_some_and(|program| {
+                self.config
+                    .pane_focus_passthrough
+                    .iter()
+                    .any(|listed| listed == program)
+            })
     }
 
     pub(crate) fn clipboard_image_target(

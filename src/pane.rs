@@ -277,6 +277,71 @@ fn active_pending_release(
 
 /// Report the options a probed agent process was started with, once per change.
 /// `last_reported` keeps the detector from resending the same options on every probe.
+/// Reports the name of a pane's foreground job leader when the foreground
+/// group changes, so clients can route keys by program without probing
+/// processes on every key. Reads one process when the group changes and once
+/// more on the next tick: a shell hands the terminal to its child before the
+/// child execs, so the first read can still see the shell's name.
+#[derive(Default)]
+struct ForegroundProcessReporter {
+    process_group_id: Option<u32>,
+    name: Option<String>,
+    recheck: bool,
+}
+
+impl ForegroundProcessReporter {
+    async fn observe(
+        &mut self,
+        foreground_pgid: Option<u32>,
+        state_events: &mpsc::Sender<AppEvent>,
+        pane_id: PaneId,
+    ) {
+        if foreground_pgid == self.process_group_id {
+            if !self.recheck {
+                return;
+            }
+            self.recheck = false;
+        } else {
+            self.process_group_id = foreground_pgid;
+            self.recheck = foreground_pgid.is_some();
+        }
+        let name = foreground_pgid.and_then(foreground_leader_name);
+        if name == self.name {
+            return;
+        }
+        self.name = name.clone();
+        if let Err(e) = state_events
+            .send(AppEvent::ForegroundProcessChanged { pane_id, name })
+            .await
+        {
+            warn!(
+                pane = pane_id.raw(),
+                err = %e,
+                "failed to deliver ForegroundProcessChanged event"
+            );
+        }
+    }
+}
+
+/// Process name of a foreground group's leader, without a Windows ".exe".
+fn foreground_leader_name(process_group_id: u32) -> Option<String> {
+    let job = crate::detect::foreground_group_leader_job(process_group_id)?;
+    let leader = job
+        .processes
+        .iter()
+        .find(|process| process.pid == process_group_id)
+        .or(job.processes.first())?;
+    Some(without_exe_suffix(&leader.name).to_string())
+}
+
+fn without_exe_suffix(name: &str) -> &str {
+    let stem = name.len().saturating_sub(4);
+    match name.get(stem..) {
+        Some(extension) if extension.eq_ignore_ascii_case(".exe") => &name[..stem],
+        _ => name,
+    }
+}
+
 async fn publish_changed_agent_launch_args(
     last_reported: &mut Option<(Option<u32>, Agent, Vec<String>)>,
     state_events: &mpsc::Sender<AppEvent>,
@@ -1053,6 +1118,7 @@ fn spawn_basic_detection_task(
         let mut last_self_reported_shell_check = None;
         let mut agent_job = AgentJobTracker::default();
         let mut last_agent_launch_args: Option<(Option<u32>, Agent, Vec<String>)> = None;
+        let mut foreground_process = ForegroundProcessReporter::default();
 
         loop {
             let sleep_duration = if pending_idle.active() {
@@ -1115,6 +1181,9 @@ fn spawn_basic_detection_task(
             let foreground_pgid = (pid > 0)
                 .then(|| crate::detect::foreground_process_group_id(pid))
                 .flatten();
+            foreground_process
+                .observe(foreground_pgid, &state_events, pane_id)
+                .await;
             let process_group_changed =
                 foreground_group_changed(foreground_pgid, last_foreground_pgid);
             let should_check_process = pid > 0 && {
@@ -2991,6 +3060,7 @@ impl PaneRuntime {
                 let mut agent_job = AgentJobTracker::default();
                 let mut last_agent_launch_args: Option<(Option<u32>, detect::Agent, Vec<String>)> =
                     None;
+                let mut foreground_process = ForegroundProcessReporter::default();
 
                 tokio::time::sleep(Duration::from_millis(50)).await;
 
@@ -3091,6 +3161,9 @@ impl PaneRuntime {
                         (_, true) => detect::foreground_process_group_id(pid),
                         _ => last_foreground_pgid,
                     };
+                    foreground_process
+                        .observe(foreground_pgid, &state_events, pane_id)
+                        .await;
                     #[cfg(windows)]
                     if pid > 0 && foreground_observation_due {
                         let retry =
@@ -4213,6 +4286,89 @@ impl PaneRuntime {
 mod tests {
     use super::*;
     use std::ffi::OsStr;
+
+    #[test]
+    fn foreground_names_drop_a_windows_exe_suffix() {
+        assert_eq!(without_exe_suffix("nvim.exe"), "nvim");
+        assert_eq!(without_exe_suffix("NVIM.EXE"), "NVIM");
+        assert_eq!(without_exe_suffix("nvim"), "nvim");
+        assert_eq!(without_exe_suffix(".exe"), "");
+        assert_eq!(without_exe_suffix("é"), "é");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn foreground_leader_name_reads_the_group_leader() {
+        use std::os::unix::process::CommandExt;
+
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .process_group(0)
+            .spawn()
+            .expect("spawn sleep");
+        // The child is named after the test thread until it execs.
+        let mut name = None;
+        for _ in 0..200 {
+            name = foreground_leader_name(child.id());
+            if name.as_deref() == Some("sleep") {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let _ = child.kill();
+        let _ = child.wait();
+        assert_eq!(name.as_deref(), Some("sleep"));
+    }
+
+    #[tokio::test]
+    async fn foreground_process_reporter_reports_only_name_changes() {
+        let (events, mut received) = mpsc::channel(8);
+        let pane_id = PaneId::from_raw(1);
+        let mut reporter = ForegroundProcessReporter::default();
+
+        reporter.observe(None, &events, pane_id).await;
+        assert!(received.try_recv().is_err(), "no group, no name, no change");
+
+        // A group whose leader cannot be read reports no name, which is not a
+        // change from no name.
+        reporter.observe(Some(u32::MAX), &events, pane_id).await;
+        assert!(received.try_recv().is_err());
+
+        reporter.name = Some("nvim".into());
+        reporter.observe(None, &events, pane_id).await;
+        assert!(matches!(
+            received.try_recv(),
+            Ok(AppEvent::ForegroundProcessChanged { name: None, .. })
+        ));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn foreground_process_reporter_rechecks_once_after_a_group_change() {
+        let (events, mut received) = mpsc::channel(8);
+        let pane_id = PaneId::from_raw(1);
+        let mut reporter = ForegroundProcessReporter::default();
+        let own_group = std::process::id();
+
+        reporter.observe(Some(own_group), &events, pane_id).await;
+        let _ = received.try_recv();
+        assert!(reporter.recheck);
+
+        // Pretend the first read saw the pre-exec name; the recheck fixes it.
+        let actual = reporter.name.take();
+        reporter.name = Some("pre-exec".into());
+        reporter.observe(Some(own_group), &events, pane_id).await;
+        assert!(!reporter.recheck);
+        match received.try_recv() {
+            Ok(AppEvent::ForegroundProcessChanged { name, .. }) => assert_eq!(name, actual),
+            other => panic!("expected a corrected name, got {other:?}"),
+        }
+
+        // Later ticks in the same group read nothing.
+        reporter.name = Some("stale".into());
+        reporter.observe(Some(own_group), &events, pane_id).await;
+        assert!(received.try_recv().is_err());
+    }
 
     #[tokio::test]
     async fn unidentified_text_cache_tracks_runtime_mutations_not_viewport_scroll() {
