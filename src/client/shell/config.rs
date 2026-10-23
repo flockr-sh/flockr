@@ -150,6 +150,7 @@ impl ClientShellConfig {
             mouse_capture: config.ui.mouse_capture,
             mouse_scroll_lines: config.ui.mouse_scroll_lines(),
             right_click_passthrough_modifiers: config.ui.right_click_passthrough_modifiers(),
+            pane_focus_passthrough: config.ui.pane_focus_passthrough.clone(),
             redraw_on_focus_gained: config.ui.redraw_on_focus_gained,
             seen_delay_ms: config.ui.seen_delay_ms,
             seen_scope: config.ui.seen_scope,
@@ -369,6 +370,7 @@ impl ClientShellConfig {
                 self.mouse_capture = ui.mouse_capture;
                 self.mouse_scroll_lines = ui.mouse_scroll_lines();
                 self.right_click_passthrough_modifiers = ui.right_click_passthrough_modifiers();
+                self.pane_focus_passthrough = ui.pane_focus_passthrough.clone();
                 self.redraw_on_focus_gained = ui.redraw_on_focus_gained;
                 self.seen_delay_ms = ui.seen_delay_ms;
                 self.seen_scope = ui.seen_scope;

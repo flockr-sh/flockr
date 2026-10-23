@@ -293,6 +293,13 @@ const DEFAULT_CONFIG: &str = r##"# flockr configuration
 # Empty/off disables this. Shift is intentionally unsupported because terminals commonly reserve Shift+mouse.
 # right_click_passthrough_modifier = ""
 
+# Foreground programs that get direct pane-focus keys (focus_pane_* bound
+# without the prefix, e.g. "ctrl+h") instead of Flockr moving focus. Lets an
+# editor move between its own splits first, like vim-tmux-navigator; the
+# editor calls `flockr pane focus --direction left` at its edge. Names match
+# the process name of the pane's foreground job leader.
+# pane_focus_passthrough = ["nvim"]
+
 # Force a full redraw when the outer terminal regains focus.
 # Set false to reduce visible flashing when switching back to Flockr.
 # Trade-off: rare host terminal surface corruption may persist until the next full redraw.

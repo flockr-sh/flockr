@@ -101,6 +101,9 @@ Keys, layout, and settings:
   at once.
 - The command palette, and vim jump keys in lists.
 - Link hints, tmux layout presets, and tmux's split and resize keys.
+- `ui.pane_focus_passthrough`: `ctrl+h/j/k/l` move between nvim windows and
+  flockr panes, like vim-tmux-navigator. See
+  [nvim and pane focus](#nvim-and-pane-focus).
 - Custom command popups are titled with their description.
 
 Runs beside herdr:
@@ -110,6 +113,44 @@ Runs beside herdr:
 - Plugins and configs written for herdr work unchanged.
 
 See [CHANGELOG.md](CHANGELOG.md) for each release.
+
+## nvim and pane focus
+
+To move between nvim windows and flockr panes with the same keys, bind the
+focus keys without the prefix and let nvim have them first:
+
+```toml
+[keys]
+focus_pane_left = ["prefix+h", "ctrl+h"]
+focus_pane_down = ["prefix+j", "ctrl+j"]
+focus_pane_up = ["prefix+k", "ctrl+k"]
+focus_pane_right = ["prefix+l", "ctrl+l"]
+
+[ui]
+pane_focus_passthrough = ["nvim"]
+```
+
+In nvim, move between windows and hand off to flockr at the edge:
+
+```lua
+if vim.env.FLOCKR_PANE_ID and not vim.env.TMUX then
+  for key, dir in pairs({ h = "left", j = "down", k = "up", l = "right" }) do
+    vim.keymap.set("n", "<c-" .. key .. ">", function()
+      local win = vim.api.nvim_get_current_win()
+      vim.cmd("wincmd " .. key)
+      if vim.api.nvim_get_current_win() == win then
+        vim.fn.jobstart({
+          vim.env.FLOCKR_BIN_PATH or "flockr", "pane", "focus",
+          "--pane", vim.env.FLOCKR_PANE_ID, "--direction", dir,
+        }, { detach = true })
+      end
+    end)
+  end
+end
+```
+
+With vim-tmux-navigator, set `vim.g.tmux_navigator_no_mappings = 1` so its
+own mappings don't replace these.
 
 ## Platforms
 

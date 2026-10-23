@@ -55,6 +55,7 @@ pub(crate) struct ClientShellConfig {
     pub(super) mouse_capture: bool,
     pub(super) mouse_scroll_lines: usize,
     pub(super) right_click_passthrough_modifiers: Option<crossterm::event::KeyModifiers>,
+    pub(super) pane_focus_passthrough: Vec<String>,
     pub(super) redraw_on_focus_gained: bool,
     pub(super) seen_delay_ms: u64,
     pub(super) seen_scope: crate::config::SeenScopeConfig,

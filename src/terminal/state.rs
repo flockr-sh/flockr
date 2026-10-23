@@ -163,6 +163,8 @@ pub struct TerminalState {
     pub pending_agent_resume_plan: Option<crate::agent_resume::AgentResumePlan>,
     pub restore_error: Option<String>,
     pub agent_launch_args: Option<AgentLaunchArgs>,
+    /// Process name of the foreground job's leader, e.g. "nvim".
+    pub foreground_process: Option<String>,
 }
 
 /// The options an agent process was started with, kept per agent so a resume
@@ -212,6 +214,7 @@ impl TerminalState {
             pending_agent_resume_plan: None,
             restore_error: None,
             agent_launch_args: None,
+            foreground_process: None,
         }
     }
 

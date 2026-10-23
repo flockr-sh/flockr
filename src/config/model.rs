@@ -1160,6 +1160,9 @@ pub struct UiConfig {
     pub host_cursor: HostCursorModeConfig,
     /// Modifier that lets right-click gestures pass through to pane apps. Empty disables it.
     pub right_click_passthrough_modifier: RightClickPassthroughModifierConfig,
+    /// Foreground programs (e.g. "nvim") that receive direct pane-focus keys
+    /// such as ctrl+h instead of Flockr moving focus. Default: empty.
+    pub pane_focus_passthrough: Vec<String>,
     /// Force a full host-terminal redraw when the outer terminal regains focus. Default: true.
     pub redraw_on_focus_gained: bool,
     /// Milliseconds a finished agent must stay on screen before it counts as
@@ -1460,6 +1463,7 @@ impl Default for UiConfig {
             copy_on_select: true,
             host_cursor: HostCursorModeConfig::Auto,
             right_click_passthrough_modifier: RightClickPassthroughModifierConfig::default(),
+            pane_focus_passthrough: Vec::new(),
             redraw_on_focus_gained: true,
             seen_delay_ms: 0,
             seen_scope: SeenScopeConfig::Pane,
@@ -1839,6 +1843,19 @@ directory = "~/Projects/flockr-worktrees"
 "#;
         let config: Config = toml::from_str(toml).unwrap();
         assert_eq!(config.worktrees.directory, "~/Projects/flockr-worktrees");
+    }
+
+    #[test]
+    fn pane_focus_passthrough_defaults_empty_and_parses() {
+        let default_config = Config::default();
+        assert!(default_config.ui.pane_focus_passthrough.is_empty());
+
+        let toml = r#"
+[ui]
+pane_focus_passthrough = ["nvim", "vim"]
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        assert_eq!(config.ui.pane_focus_passthrough, ["nvim", "vim"]);
     }
 
     #[test]

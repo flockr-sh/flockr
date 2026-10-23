@@ -1616,6 +1616,10 @@ impl AppState {
                 self.record_agent_launch_args(pane_id, agent, args);
                 Vec::new()
             }
+            AppEvent::ForegroundProcessChanged { pane_id, name } => {
+                self.record_foreground_process(pane_id, name);
+                Vec::new()
+            }
             AppEvent::HookStateReported {
                 pane_id,
                 source,
@@ -1816,6 +1820,18 @@ impl AppState {
         };
         if terminal.set_agent_launch_args(crate::detect::agent_label(agent), args) {
             self.mark_session_dirty();
+        }
+    }
+
+    fn record_foreground_process(&mut self, pane_id: PaneId, name: Option<String>) {
+        let Some(terminal_id) = self.workspaces.iter().find_map(|ws| {
+            ws.pane_state(pane_id)
+                .map(|pane| pane.attached_terminal_id.clone())
+        }) else {
+            return;
+        };
+        if let Some(terminal) = self.terminals.get_mut(&terminal_id) {
+            terminal.foreground_process = name;
         }
     }
 
@@ -3429,6 +3445,33 @@ mod tests {
             .expect("launch options should be recorded");
         assert_eq!(launch.agent, "claude");
         assert_eq!(launch.args, vec!["--permission-mode", "bypassPermissions"]);
+    }
+
+    #[test]
+    fn foreground_process_changes_are_recorded_for_the_pane() {
+        let mut state = app_with_workspaces(&["test"]);
+        let pane_id = *state.workspaces[0].panes.keys().next().unwrap();
+        let terminal_id = state.workspaces[0]
+            .panes
+            .get(&pane_id)
+            .unwrap()
+            .attached_terminal_id
+            .clone();
+
+        state.handle_app_event(AppEvent::ForegroundProcessChanged {
+            pane_id,
+            name: Some("nvim".into()),
+        });
+        assert_eq!(
+            state.terminals[&terminal_id].foreground_process.as_deref(),
+            Some("nvim")
+        );
+
+        state.handle_app_event(AppEvent::ForegroundProcessChanged {
+            pane_id,
+            name: None,
+        });
+        assert_eq!(state.terminals[&terminal_id].foreground_process, None);
     }
 
     #[test]
