@@ -17,8 +17,6 @@ mod catalog_reload;
 mod clipboard_forwarding;
 mod clipboard_images;
 mod config_reload;
-#[cfg(all(unix, feature = "dev-reload"))]
-mod dev_reload;
 #[cfg(unix)]
 mod direct_graphics;
 pub(crate) mod endpoint;
@@ -28,6 +26,8 @@ mod events;
 mod frame_output;
 #[cfg(test)]
 mod frame_output_tests;
+#[cfg(unix)]
+mod handoff_resume;
 mod handshake;
 mod image_files;
 mod input;
@@ -180,8 +180,8 @@ fn run_client_with_mode(
     log_message: &'static str,
 ) -> io::Result<()> {
     init_logging();
-    #[cfg(all(unix, feature = "dev-reload"))]
-    let dev_reload_resume = attach_request.is_none() && dev_reload::take_resume_request();
+    #[cfg(unix)]
+    let resume_after_handoff = attach_request.is_none() && handoff_resume::take_resume_request();
 
     let loaded_config = crate::config::Config::load();
     // Windows may not have virtual terminal processing enabled until the rendered
@@ -252,8 +252,8 @@ fn run_client_with_mode(
             warn!(%error, "Local is unavailable; keeping saved machines available");
             None
         }
-        #[cfg(all(unix, feature = "dev-reload"))]
-        Err(_) if dev_reload_resume => None,
+        #[cfg(unix)]
+        Err(_) if resume_after_handoff => None,
         Err(error) => {
             return Err(io::Error::other(
                 ClientError::ConnectionFailed(error).to_string(),
@@ -328,9 +328,9 @@ fn run_client_with_mode(
         Ok((stream, handshake))
     };
     let initial = initial_stream.map(&attach_local).transpose();
-    #[cfg(all(unix, feature = "dev-reload"))]
-    let initial = if dev_reload_resume {
-        dev_reload::retry_until_attached(initial, &socket_path, &attach_local)
+    #[cfg(unix)]
+    let initial = if resume_after_handoff {
+        handoff_resume::retry_until_attached(initial, &socket_path, &attach_local)
     } else {
         initial
     };
@@ -385,15 +385,14 @@ fn run_client_with_mode(
         .await
     });
 
-    #[cfg(all(unix, feature = "dev-reload"))]
+    // A live handoff replaces the server. Exec the installed client so it
+    // matches the new server and reattaches instead of exiting.
+    #[cfg(unix)]
     if let Err(err) = &result {
-        if dev_reload::is_handoff_shutdown(err)
-            && !direct_attach
-            && !federated
-            && !is_remote_client_process()
+        if handoff_resume::should_resume(err, direct_attach, federated, is_remote_client_process())
         {
-            let error = dev_reload::exec_rebuilt_client(&mut terminal_guard);
-            warn!(%error, "dev reload: exec failed; exiting");
+            let error = handoff_resume::exec_client(&mut terminal_guard);
+            warn!(%error, "live handoff: client exec failed; exiting");
         }
     }
 

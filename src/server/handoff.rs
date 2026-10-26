@@ -16,6 +16,12 @@ use serde::{Deserialize, Serialize};
 #[cfg(unix)]
 use tracing::{info, warn};
 
+/// Sent to clients when a live handoff starts. Clients that see it reattach to
+/// the replacement server instead of exiting. Part of the wire behavior; keep
+/// the text stable.
+pub(crate) const LIVE_HANDOFF_SHUTDOWN_REASON: &str =
+    "live update in progress; reconnect after handoff completes";
+
 #[cfg(unix)]
 const HANDOFF_VERSION: u32 = 1;
 #[cfg(unix)]
@@ -75,7 +81,8 @@ pub(crate) fn spawn_handoff_import(
     let exe = if let Some(import_exe) = import_exe {
         import_exe
     } else {
-        fallback_exe = std::env::current_exe().map_err(|err| {
+        // Resolves to the installed binary when a rebuild replaced the running one.
+        fallback_exe = crate::platform::launch_executable().map_err(|err| {
             io::Error::new(
                 err.kind(),
                 format!("failed to determine flockr executable path: {err}"),

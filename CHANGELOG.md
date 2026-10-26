@@ -15,6 +15,13 @@
 - `agent.list` and `agent.get` report the agent's `branch` and whether its
   session is still empty (`session_empty`).
 
+### Fixed
+- The TUI client stays attached across `flockr server live-handoff`. It
+  used to exit unless the build had the dev-only `dev-reload` feature.
+- `flockr server live-handoff` with no `--import-exe` works after a rebuild
+  replaced the running binary. It used to fail with
+  "failed to spawn handoff import server at .../flockr (deleted)".
+
 ## [1.1.0] - 2026-10-26
 
 ### Added

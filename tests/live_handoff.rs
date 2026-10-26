@@ -61,6 +61,22 @@ fn spawn_server_with_env(
     api_socket: &Path,
     extra_env: &[(&str, &str)],
 ) -> SpawnedFlockr {
+    spawn_server_exe_with_env(
+        Path::new(env!("CARGO_BIN_EXE_flockr")),
+        config_home,
+        runtime_dir,
+        api_socket,
+        extra_env,
+    )
+}
+
+fn spawn_server_exe_with_env(
+    exe: &Path,
+    config_home: &Path,
+    runtime_dir: &Path,
+    api_socket: &Path,
+    extra_env: &[(&str, &str)],
+) -> SpawnedFlockr {
     fs::create_dir_all(config_home.join(support::app_dir_name())).unwrap();
     fs::create_dir_all(runtime_dir).unwrap();
     fs::write(
@@ -79,7 +95,7 @@ fn spawn_server_with_env(
             pixel_height: 0,
         })
         .unwrap();
-    let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_flockr"));
+    let mut cmd = CommandBuilder::new(exe);
     support::isolate_flockr_test_process(&mut cmd);
     cmd.arg("server");
     cmd.env("XDG_CONFIG_HOME", config_home);
@@ -2158,4 +2174,170 @@ fn live_handoff_import_failure_rolls_back_old_server_at(failure_point: &str) {
 #[test]
 fn live_handoff_after_restored_failure_rolls_back_old_server() {
     live_handoff_import_failure_rolls_back_old_server_at("after_restored");
+}
+
+fn count_client_shell_connections(log: &str) -> usize {
+    log.lines()
+        .filter(|line| line.contains("flockr::server::headless: client connected client_id="))
+        .count()
+}
+
+/// The TUI client must reattach to the replacement server after a live handoff
+/// started outside the client (for example `flockr server live-handoff`).
+#[test]
+fn live_handoff_keeps_tui_client_attached() {
+    let _lock = test_lock();
+    let base = unique_test_dir();
+    let config_home = base.join("config");
+    let runtime_dir = base.join("runtime");
+    let api_socket = runtime_dir.join("flockr.sock");
+    let client_socket = runtime_dir.join("flockr-client.sock");
+    let server_log = config_home
+        .join(support::app_dir_name())
+        .join("flockr-server.log");
+
+    let spawned = spawn_server(&config_home, &runtime_dir, &api_socket);
+    wait_for_socket(&api_socket, Duration::from_secs(10));
+    wait_for_socket(&client_socket, Duration::from_secs(10));
+    register_runtime_dir(&runtime_dir);
+
+    let pair = native_pty_system()
+        .openpty(PtySize {
+            rows: 24,
+            cols: 80,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .unwrap();
+    let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_flockr"));
+    support::isolate_flockr_test_process(&mut cmd);
+    cmd.arg("client");
+    cmd.env("FLOCKR_DISABLE_SOUND", "1");
+    cmd.env("XDG_CONFIG_HOME", &config_home);
+    cmd.env("XDG_RUNTIME_DIR", &runtime_dir);
+    cmd.env("XDG_STATE_HOME", runtime_dir.join("state"));
+    cmd.env("FLOCKR_SOCKET_PATH", &api_socket);
+    cmd.env("FLOCKR_CLIENT_SOCKET_PATH", &client_socket);
+    cmd.env("SHELL", "/bin/sh");
+    cmd.env_remove("FLOCKR_ENV");
+    let client_child = pair.slave.spawn_command(cmd).unwrap();
+    register_spawned_flockr_pid(client_child.process_id());
+    drop(pair.slave);
+    // Drain the client's output so its terminal writes never block.
+    let mut reader = pair.master.try_clone_reader().unwrap();
+    thread::spawn(move || {
+        let mut buf = [0u8; 4096];
+        while matches!(reader.read(&mut buf), Ok(n) if n > 0) {}
+    });
+    let mut client = SpawnedFlockr {
+        _master: pair.master,
+        child: client_child,
+    };
+
+    assert!(
+        support::wait_until(Duration::from_secs(10), Duration::from_millis(25), || {
+            fs::read_to_string(&server_log)
+                .is_ok_and(|log| count_client_shell_connections(&log) == 1)
+        }),
+        "TUI client did not attach to the first server"
+    );
+
+    assert_ok(request(
+        &api_socket,
+        serde_json::json!({"id":"test:handoff","method":"server.live_handoff","params":{}}),
+    ));
+    drop(spawned);
+    wait_for_api(&api_socket, Duration::from_secs(10));
+
+    assert!(
+        support::wait_until(Duration::from_secs(20), Duration::from_millis(25), || {
+            fs::read_to_string(&server_log)
+                .is_ok_and(|log| count_client_shell_connections(&log) == 2)
+                || client.child.try_wait().ok().flatten().is_some()
+        }),
+        "TUI client neither reattached nor exited after the handoff"
+    );
+    let exit = client.child.try_wait().unwrap();
+    assert!(
+        exit.is_none(),
+        "TUI client exited during the live handoff: {exit:?}"
+    );
+
+    let _ = request(
+        &api_socket,
+        serde_json::json!({"id":"test:stop","method":"server.stop","params":{}}),
+    );
+    drop(client);
+    cleanup_test_base(&base);
+}
+
+/// Places the test binary at `path` without copying it when the filesystem
+/// allows a hard link.
+#[cfg(target_os = "linux")]
+fn install_test_binary(path: &Path) {
+    let source = Path::new(env!("CARGO_BIN_EXE_flockr"));
+    if fs::hard_link(source, path).is_err() {
+        fs::copy(source, path).unwrap();
+    }
+}
+
+/// A rebuild replaces the running binary on disk, so the server's own
+/// executable path reads "<path> (deleted)". A no-argument live handoff must
+/// import with the binary now installed at that path.
+#[cfg(target_os = "linux")]
+#[test]
+fn live_handoff_without_import_exe_uses_replaced_binary() {
+    let _lock = test_lock();
+    let base = unique_test_dir();
+    let config_home = base.join("config");
+    let runtime_dir = base.join("runtime");
+    let api_socket = runtime_dir.join("flockr.sock");
+    let bin_dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!(
+        "live-handoff-replaced-{}-{}",
+        std::process::id(),
+        base.file_name().unwrap().to_string_lossy()
+    ));
+    let _ = fs::remove_dir_all(&bin_dir);
+    fs::create_dir_all(&bin_dir).unwrap();
+    let exe = bin_dir.join("flockr");
+    install_test_binary(&exe);
+
+    let spawned = spawn_server_exe_with_env(&exe, &config_home, &runtime_dir, &api_socket, &[]);
+    wait_for_socket(&api_socket, Duration::from_secs(10));
+    register_runtime_dir(&runtime_dir);
+    let old_pid = spawned.child.process_id().expect("old server pid");
+
+    fs::remove_file(&exe).unwrap();
+    install_test_binary(&exe);
+
+    assert_ok(request(
+        &api_socket,
+        serde_json::json!({"id":"test:handoff","method":"server.live_handoff","params":{}}),
+    ));
+    drop(spawned);
+    wait_for_api(&api_socket, Duration::from_secs(10));
+    // The old server's executable now reads "<exe> (deleted)", so only the
+    // replacement server resolves to the installed path.
+    assert!(
+        support::wait_until(Duration::from_secs(10), Duration::from_millis(25), || {
+            fs::read_dir("/proc").is_ok_and(|entries| {
+                entries.flatten().any(|entry| {
+                    entry
+                        .file_name()
+                        .to_str()
+                        .and_then(|name| name.parse::<u32>().ok())
+                        != Some(old_pid)
+                        && fs::read_link(entry.path().join("exe")).is_ok_and(|path| path == exe)
+                })
+            })
+        }),
+        "replacement server should run the binary installed at the original path"
+    );
+
+    let _ = request(
+        &api_socket,
+        serde_json::json!({"id":"test:stop","method":"server.stop","params":{}}),
+    );
+    cleanup_test_base(&base);
+    let _ = fs::remove_dir_all(&bin_dir);
 }

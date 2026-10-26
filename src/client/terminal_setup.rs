@@ -877,7 +877,7 @@ impl TerminalGuard {
     /// screen. Undoes only what the new process would stack or record twice:
     /// the keyboard flags push and raw mode, whose saved termios crossterm
     /// would otherwise restore on exit.
-    #[cfg(all(unix, feature = "dev-reload"))]
+    #[cfg(unix)]
     pub(super) fn release_for_exec(&mut self) {
         let _ = clear_received_kitty_graphics(&mut io::stdout());
         if self.reset_keyboard_enhancements {
