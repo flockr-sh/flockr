@@ -757,6 +757,20 @@ pub fn show_desktop_notification(title: &str, body: Option<&str>) -> std::io::Re
     show_desktop_notification_with_command(title, body, |program| Command::new(program))
 }
 
+/// Show a desktop notification. `terminal-notifier` raises the terminal on click,
+/// but macOS reports no click back, so `callback` never runs.
+pub(crate) fn show_actionable_desktop_notification(
+    title: &str,
+    body: Option<&str>,
+    _key: String,
+    _callback: std::sync::Arc<dyn Fn() + Send + Sync>,
+) -> std::io::Result<bool> {
+    show_desktop_notification(title, body)
+}
+
+/// `terminal-notifier` already raises the terminal on click.
+pub(crate) fn foreground_desktop_notification_host() {}
+
 fn show_desktop_notification_with_command(
     title: &str,
     body: Option<&str>,

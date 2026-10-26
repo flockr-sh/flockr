@@ -282,3 +282,17 @@ pub fn read_clipboard_image() -> Option<ClipboardImage> {
 pub fn show_desktop_notification(_title: &str, _body: Option<&str>) -> std::io::Result<bool> {
     Ok(false)
 }
+
+/// Show a desktop notification. Clicks are not reported on this platform, so
+/// `callback` never runs.
+pub(crate) fn show_actionable_desktop_notification(
+    title: &str,
+    body: Option<&str>,
+    _key: String,
+    _callback: std::sync::Arc<dyn Fn() + Send + Sync>,
+) -> std::io::Result<bool> {
+    show_desktop_notification(title, body)
+}
+
+/// Raising the hosting terminal is not supported on this platform.
+pub(crate) fn foreground_desktop_notification_host() {}

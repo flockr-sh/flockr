@@ -30,6 +30,10 @@ mod shutdown;
 pub(crate) use shutdown::monitor_host_shutdown;
 mod power;
 pub(crate) use power::monitor_host_power;
+mod notifications;
+pub(crate) use notifications::{
+    foreground_desktop_notification_host, show_actionable_desktop_notification,
+};
 
 const WSL_MARKER_ENV_VARS: &[&str] = &["WSL_DISTRO_NAME", "WSL_INTEROP"];
 const PROCESS_DETECTION_ENV_VAR: &str = "FLOCKR_PROCESS_DETECTION";

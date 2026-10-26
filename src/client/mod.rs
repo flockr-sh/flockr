@@ -1271,7 +1271,6 @@ async fn run_client_loop(
                 }
                 // Direct terminal attach is Unix-only; every Windows client uses ClientShell.
             }
-            #[cfg(windows)]
             ClientLoopEvent::NotificationActivated(target) => {
                 if let Some(shell) = state.shell.as_mut() {
                     let outcome = shell.activate_system_notification(target);
@@ -1863,7 +1862,6 @@ async fn run_client_loop(
                             handle_shell_notification_effects(
                                 effects,
                                 &state.sound_config,
-                                #[cfg(windows)]
                                 &event_tx,
                             );
                             if let Some(frame) = frame {
@@ -2381,12 +2379,7 @@ async fn run_client_loop(
                             .flatten();
                         (effects, outcome, frame)
                     };
-                    handle_shell_notification_effects(
-                        effects,
-                        &state.sound_config,
-                        #[cfg(windows)]
-                        &event_tx,
-                    );
+                    handle_shell_notification_effects(effects, &state.sound_config, &event_tx);
                     if finish_client_shell_input(
                         &mut state,
                         outcome,

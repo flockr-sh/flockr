@@ -496,7 +496,6 @@ impl ClientShellState {
             ClientEndpointFocusTarget::Pane(pane_id) => {
                 crate::api::schema::Method::PaneFocus(crate::api::schema::PaneTarget { pane_id })
             }
-            #[cfg(windows)]
             ClientEndpointFocusTarget::Notification { pane_id, .. } => {
                 crate::api::schema::Method::PaneFocus(crate::api::schema::PaneTarget { pane_id })
             }

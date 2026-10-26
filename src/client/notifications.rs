@@ -9,6 +9,12 @@ use super::shell;
 #[cfg(not(windows))]
 use crate::platform::show_desktop_notification as show_untargeted_system_notification;
 
+// Non-Windows notifiers return without waiting for the notification to close.
+#[cfg(not(windows))]
+fn queue_system_notification(task: impl FnOnce() -> io::Result<bool>) -> io::Result<bool> {
+    task()
+}
+
 #[cfg(windows)]
 fn queue_system_notification(
     task: impl FnOnce() -> io::Result<bool> + Send + 'static,
@@ -52,7 +58,7 @@ fn show_untargeted_system_notification(title: &str, body: Option<&str>) -> io::R
 pub(super) fn handle_shell_notification_effects(
     effects: Vec<shell::ClientShellNotificationEffect>,
     sound_config: &crate::config::SoundConfig,
-    #[cfg(windows)] event_tx: &tokio::sync::mpsc::Sender<super::events::ClientLoopEvent>,
+    event_tx: &tokio::sync::mpsc::Sender<super::events::ClientLoopEvent>,
 ) {
     for effect in effects {
         match effect {
@@ -71,13 +77,9 @@ pub(super) fn handle_shell_notification_effects(
             shell::ClientShellNotificationEffect::System {
                 title,
                 body,
-                #[cfg(windows)]
                 target,
             } => {
-                #[cfg(windows)]
                 let result = show_system_notification(&title, body.as_deref(), target, event_tx);
-                #[cfg(not(windows))]
-                let result = crate::platform::show_desktop_notification(&title, body.as_deref());
                 if let Err(err) = result {
                     warn!(err = %err, "failed to emit system notification");
                 }
@@ -86,7 +88,6 @@ pub(super) fn handle_shell_notification_effects(
     }
 }
 
-#[cfg(windows)]
 fn show_system_notification(
     title: &str,
     body: Option<&str>,

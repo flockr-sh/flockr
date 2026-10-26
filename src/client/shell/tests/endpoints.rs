@@ -176,7 +176,6 @@ fn workspace_navigation_waits_for_the_target_presentation_fence() {
     }
 }
 
-#[cfg(windows)]
 #[test]
 fn system_notification_clicks_keep_endpoint_and_boot_identity() {
     let (mut state, remote) = state_with_remote();

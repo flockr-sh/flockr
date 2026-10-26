@@ -229,7 +229,6 @@ impl ClientShellState {
                     });
                 }
                 crate::config::ToastDelivery::System if !suppress_external => {
-                    #[cfg(windows)]
                     let target = pending.event.pane_id.as_ref().and_then(|pane_id| {
                         self.endpoint_boot_id(&pending.endpoint_id).map(|boot_id| {
                             ClientSystemNotificationTarget {
@@ -242,7 +241,6 @@ impl ClientShellState {
                     effects.push(ClientShellNotificationEffect::System {
                         title: pending.event.title,
                         body: pending.event.body,
-                        #[cfg(windows)]
                         target,
                     });
                 }
@@ -252,7 +250,6 @@ impl ClientShellState {
         (effects, repaint)
     }
 
-    #[cfg(windows)]
     pub(crate) fn notification_target_is_current(
         &self,
         endpoint_id: &ClientEndpointId,
@@ -273,7 +270,6 @@ impl ClientShellState {
                 })
     }
 
-    #[cfg(windows)]
     pub(crate) fn activate_system_notification(
         &mut self,
         target: ClientSystemNotificationTarget,
