@@ -824,6 +824,26 @@ impl App {
         self.event_hub.push(event);
     }
 
+    /// Announces a pane's current agent status, for changes that do not come
+    /// from the agent itself, like marking it read or unread.
+    pub(crate) fn emit_pane_agent_status(&mut self, ws_idx: usize, pane_id: crate::layout::PaneId) {
+        let Some(pane) = self.pane_info(ws_idx, pane_id) else {
+            return;
+        };
+        self.emit_event(crate::api::schema::EventEnvelope {
+            event: crate::api::schema::EventKind::PaneAgentStatusChanged,
+            data: crate::api::schema::EventData::PaneAgentStatusChanged {
+                pane_id: pane.pane_id,
+                workspace_id: pane.workspace_id,
+                agent_status: pane.agent_status,
+                agent: pane.agent,
+                title: pane.title,
+                display_agent: pane.display_agent,
+                state_labels: pane.state_labels,
+            },
+        });
+    }
+
     pub(crate) fn emit_pane_updated(&mut self, ws_idx: usize, pane_id: crate::layout::PaneId) {
         if let Some(pane) = self.pane_info(ws_idx, pane_id) {
             self.emit_event(crate::api::schema::EventEnvelope {
@@ -1200,6 +1220,7 @@ impl App {
             Method::PaneMarkUnread(target) => {
                 return self.handle_pane_mark_unread(request.id, target)
             }
+            Method::PaneMarkRead(params) => return self.handle_pane_mark_read(request.id, params),
             Method::PaneEditScrollback(target) => {
                 return self.handle_pane_edit_scrollback(request.id, target);
             }

@@ -311,6 +311,16 @@ crate::cli::projection::cli_params! {
     }
 }
 
+/// Marks a pane's finished agent read for every client, without moving focus.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PaneMarkReadParams {
+    pub pane_id: String,
+    /// Only mark read when the agent's latest completion is at or before this
+    /// sequence, so a newer completion is not cleared by a stale read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completion_seq: Option<u64>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PaneScrollParams {
     pub pane_id: String,

@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 use crate::api::schema::AgentStatus;
@@ -9,6 +9,11 @@ use crate::protocol::{ClientShellAgent, ClientShellSnapshot, PaneSurfaceFrame};
 pub(super) struct EndpointAgentPresentation {
     boot_id: Option<String>,
     acknowledged: HashMap<String, u64>,
+    /// Completions the server reports read, from any client or device.
+    server_reads: HashMap<String, u64>,
+    /// Completions this client acknowledged that the server has not been told
+    /// about yet.
+    unsent_reads: BTreeMap<String, u64>,
     completed: HashMap<String, u64>,
     working: HashSet<String>,
     /// When each agent pane on screen started being shown, for `seen_delay_ms`.
@@ -56,6 +61,8 @@ impl EndpointAgentPresentation {
         if self.boot_id.as_deref() != Some(snapshot.boot_id.as_str()) {
             self.boot_id = Some(snapshot.boot_id.clone());
             self.acknowledged.clear();
+            self.server_reads.clear();
+            self.unsent_reads.clear();
             self.completed.clear();
             self.working.clear();
             self.acknowledged.extend(
@@ -72,6 +79,10 @@ impl EndpointAgentPresentation {
             .collect();
         self.acknowledged
             .retain(|pane_id, _| pane_ids.contains(pane_id.as_str()));
+        self.server_reads
+            .retain(|pane_id, _| pane_ids.contains(pane_id.as_str()));
+        self.unsent_reads
+            .retain(|pane_id, _| pane_ids.contains(pane_id.as_str()));
         self.completed
             .retain(|pane_id, _| pane_ids.contains(pane_id.as_str()));
         self.working
@@ -84,7 +95,17 @@ impl EndpointAgentPresentation {
                     && projection.boot_id == snapshot.boot_id
                     && projection.revision == snapshot.revision
             })
-            .map(|(_, projection)| projection.completions);
+            .map(|(_, projection)| {
+                self.server_reads = projection.unread.map_or_else(HashMap::new, |unread| {
+                    projection
+                        .completions
+                        .iter()
+                        .filter(|(pane_id, _)| !unread.contains(*pane_id))
+                        .map(|(pane_id, seq)| (pane_id.clone(), *seq))
+                        .collect()
+                });
+                projection.completions
+            });
         for agent in &mut snapshot.agents {
             match agent.agent_status {
                 AgentStatus::Working => {
@@ -194,6 +215,16 @@ impl EndpointAgentPresentation {
             }
             *acknowledged = agent.state_change_seq;
             changed = true;
+            if let Some(&completion) = self.completed.get(&agent.pane_id) {
+                if completion <= agent.state_change_seq
+                    && self
+                        .server_reads
+                        .get(&agent.pane_id)
+                        .is_none_or(|read| *read < completion)
+                {
+                    self.unsent_reads.insert(agent.pane_id.clone(), completion);
+                }
+            }
         }
         if changed {
             for agent in &mut snapshot.agents {
@@ -214,11 +245,19 @@ impl EndpointAgentPresentation {
         self.seen_deadline
     }
 
+    /// Completions this client acknowledged since the last call, as
+    /// `(pane_id, completion_seq)`, for the server to mark read.
+    pub(super) fn take_unsent_reads(&mut self) -> Vec<(String, u64)> {
+        std::mem::take(&mut self.unsent_reads).into_iter().collect()
+    }
+
+    /// A completion is seen once this client acknowledged it or the server
+    /// reports it read; a read from anywhere wins over a local hold.
     pub(super) fn seen(&self, agent: &ClientShellAgent) -> bool {
         self.completed.get(&agent.pane_id).is_none_or(|completion| {
-            self.acknowledged
-                .get(&agent.pane_id)
-                .is_some_and(|sequence| sequence >= completion)
+            [&self.acknowledged, &self.server_reads]
+                .iter()
+                .any(|reads| reads.get(&agent.pane_id) >= Some(completion))
         })
     }
 
@@ -359,6 +398,7 @@ mod tests {
 
     fn completions(boot: &str, revision: u64, seq: Option<u64>) -> EndpointAgentCompletions {
         EndpointAgentCompletions {
+            unread: None,
             boot_id: boot.into(),
             revision,
             completions: seq
@@ -545,6 +585,170 @@ mod tests {
         ack(&mut presentation, &mut completed, &elsewhere);
         assert!(ack(&mut presentation, &mut completed, &surface(2)));
         assert_eq!(completed.agents[0].agent_status, AgentStatus::Idle);
+    }
+
+    /// The server's completion for the agent, and whether someone read it.
+    fn reads(revision: u64, completion: u64, read: bool) -> EndpointAgentCompletions {
+        EndpointAgentCompletions {
+            unread: Some(if read {
+                Default::default()
+            } else {
+                ["agent-pane".to_owned()].into()
+            }),
+            ..completions("endpoint-boot", revision, Some(completion))
+        }
+    }
+
+    /// A completed agent at revision 2 with sequence 5, projected done.
+    fn done_presentation() -> EndpointAgentPresentation {
+        let mut presentation = EndpointAgentPresentation::default();
+        let mut initial = snapshot(AgentStatus::Working, 4, 1);
+        presentation.project_snapshot(&mut initial);
+        presentation.receive_completions(None, reads(2, 5, false));
+        let mut completed = snapshot(AgentStatus::Idle, 5, 2);
+        presentation.project_snapshot(&mut completed);
+        assert_eq!(completed.agents[0].agent_status, AgentStatus::Done);
+        presentation
+    }
+
+    #[test]
+    fn server_read_clears_done_without_viewing() {
+        let mut presentation = done_presentation();
+        presentation.receive_completions(None, reads(3, 5, true));
+        let mut read = snapshot(AgentStatus::Idle, 5, 3);
+
+        presentation.project_snapshot(&mut read);
+
+        assert_eq!(read.agents[0].agent_status, AgentStatus::Idle);
+        assert!(presentation.take_unsent_reads().is_empty());
+    }
+
+    #[test]
+    fn older_server_read_leaves_a_newer_completion_done() {
+        let mut presentation = done_presentation();
+        presentation.receive_completions(None, reads(3, 5, true));
+        let mut read = snapshot(AgentStatus::Idle, 5, 3);
+        presentation.project_snapshot(&mut read);
+        assert_eq!(read.agents[0].agent_status, AgentStatus::Idle);
+
+        // The agent finished again; the read of completion 5 does not cover 6.
+        presentation.receive_completions(None, reads(4, 6, false));
+        let mut newer = snapshot(AgentStatus::Idle, 6, 4);
+        presentation.project_snapshot(&mut newer);
+
+        assert_eq!(newer.agents[0].agent_status, AgentStatus::Done);
+    }
+
+    #[test]
+    fn server_read_never_lowers_the_local_acknowledgement() {
+        let mut presentation = done_presentation();
+        let mut completed = snapshot(AgentStatus::Idle, 5, 3);
+        presentation.receive_completions(None, reads(3, 5, false));
+        presentation.project_snapshot(&mut completed);
+        assert!(presentation.acknowledge_surface(
+            &mut completed,
+            &surface(3),
+            Some(true),
+            Instant::now(),
+            Duration::ZERO,
+            SeenScopeConfig::Pane,
+        ));
+        // The server has not heard of the read yet and reports none.
+        presentation.receive_completions(None, reads(4, 5, false));
+        let mut next = snapshot(AgentStatus::Idle, 5, 4);
+
+        presentation.project_snapshot(&mut next);
+
+        assert_eq!(next.agents[0].agent_status, AgentStatus::Idle);
+    }
+
+    #[test]
+    fn a_new_boot_drops_server_reads() {
+        let mut presentation = done_presentation();
+        presentation.receive_completions(None, reads(3, 5, true));
+        let mut read = snapshot(AgentStatus::Idle, 5, 3);
+        presentation.project_snapshot(&mut read);
+        let mut restarted = snapshot(AgentStatus::Working, 1, 1);
+        restarted.boot_id = "new-boot".into();
+        presentation.project_snapshot(&mut restarted);
+        assert!(presentation.server_reads.is_empty());
+
+        // Completions after the restart are done until read on the new boot.
+        let mut completed = snapshot(AgentStatus::Idle, 5, 2);
+        completed.boot_id = "new-boot".into();
+        presentation.project_snapshot(&mut completed);
+        assert_eq!(completed.agents[0].agent_status, AgentStatus::Done);
+    }
+
+    #[test]
+    fn a_read_from_elsewhere_wins_over_a_local_hold() {
+        let mut presentation = done_presentation();
+        presentation.hold_unread("agent-pane".into());
+        let mut held = snapshot(AgentStatus::Idle, 5, 3);
+        presentation.receive_completions(None, reads(3, 5, false));
+        presentation.project_snapshot(&mut held);
+        assert!(!presentation.acknowledge_surface(
+            &mut held,
+            &surface(3),
+            Some(true),
+            Instant::now(),
+            Duration::ZERO,
+            SeenScopeConfig::Pane,
+        ));
+        assert_eq!(held.agents[0].agent_status, AgentStatus::Done);
+
+        presentation.receive_completions(None, reads(4, 5, true));
+        let mut read = snapshot(AgentStatus::Idle, 5, 4);
+        presentation.project_snapshot(&mut read);
+
+        assert_eq!(read.agents[0].agent_status, AgentStatus::Idle);
+    }
+
+    #[test]
+    fn acknowledging_a_completion_reports_one_read() {
+        let mut presentation = done_presentation();
+        let mut completed = snapshot(AgentStatus::Idle, 5, 3);
+        presentation.receive_completions(None, reads(3, 5, false));
+        presentation.project_snapshot(&mut completed);
+        assert!(presentation.take_unsent_reads().is_empty());
+        let ack = |presentation: &mut EndpointAgentPresentation,
+                   completed: &mut ClientShellSnapshot| {
+            presentation.acknowledge_surface(
+                completed,
+                &surface(3),
+                Some(true),
+                Instant::now(),
+                Duration::ZERO,
+                SeenScopeConfig::Pane,
+            )
+        };
+
+        assert!(ack(&mut presentation, &mut completed));
+        assert_eq!(
+            presentation.take_unsent_reads(),
+            vec![("agent-pane".to_owned(), 5)]
+        );
+        assert!(!ack(&mut presentation, &mut completed));
+        assert!(presentation.take_unsent_reads().is_empty());
+    }
+
+    #[test]
+    fn acknowledging_a_completion_the_server_already_read_reports_nothing() {
+        let mut presentation = done_presentation();
+        let mut read = snapshot(AgentStatus::Idle, 5, 3);
+        presentation.receive_completions(None, reads(3, 5, true));
+        presentation.project_snapshot(&mut read);
+
+        presentation.acknowledge_surface(
+            &mut read,
+            &surface(3),
+            Some(true),
+            Instant::now(),
+            Duration::ZERO,
+            SeenScopeConfig::Pane,
+        );
+
+        assert!(presentation.take_unsent_reads().is_empty());
     }
 
     #[test]

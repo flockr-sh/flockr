@@ -559,6 +559,40 @@ impl AppState {
         true
     }
 
+    /// Marks a finished agent read for every client, as if it had been viewed,
+    /// without moving focus. With `completion_seq`, a completion newer than it
+    /// stays unread. Returns `None` for an unknown pane, otherwise whether the
+    /// pane changed from done to read.
+    pub(crate) fn mark_pane_read(
+        &mut self,
+        pane_id: PaneId,
+        completion_seq: Option<u64>,
+    ) -> Option<bool> {
+        let ws_idx = self
+            .workspaces
+            .iter()
+            .position(|ws| ws.pane_state(pane_id).is_some())?;
+        let pane = self.workspaces[ws_idx].pane_state(pane_id)?;
+        let terminal = self.terminals.get(&pane.attached_terminal_id)?;
+        if pane.seen || terminal.state != AgentState::Idle {
+            return Some(false);
+        }
+        if let (Some(latest), Some(read)) = (terminal.last_agent_completion_seq, completion_seq) {
+            if latest > read {
+                return Some(false);
+            }
+        }
+        if let Some(view) = self
+            .seen_view
+            .as_mut()
+            .filter(|view| view.held == Some(pane_id))
+        {
+            view.held = None;
+        }
+        self.workspaces[ws_idx].pane_state_mut(pane_id)?.seen = true;
+        Some(true)
+    }
+
     /// Whether `pane_id` in the active tab has been shown for `seen_delay`
     /// already. With `seen_scope = "pane"` only the focused pane counts.
     fn active_tab_pane_viewed(&self, pane_id: PaneId, now: Instant) -> bool {
@@ -3611,6 +3645,94 @@ mod tests {
 
         state.terminals.get_mut(&terminal_id).unwrap().state = AgentState::Working;
         assert!(!state.mark_pane_unread(pane_id));
+    }
+
+    #[test]
+    fn mark_read_clears_a_finished_agent_until_its_next_completion() {
+        let mut state = app_with_workspaces(&["active", "agent"]);
+        state.switch_workspace(0);
+        state.outer_terminal_focus = Some(true);
+        let pane_id = *state.workspaces[1].panes.keys().next().unwrap();
+        let terminal_id = state.workspaces[1].panes[&pane_id]
+            .attached_terminal_id
+            .clone();
+        let seen = |state: &AppState| state.workspaces[1].panes[&pane_id].seen;
+        let finish = |state: &mut AppState| {
+            state.terminals.get_mut(&terminal_id).unwrap().state = AgentState::Working;
+            state.handle_app_event(AppEvent::StateChanged {
+                pane_id,
+                agent: Some(Agent::Pi),
+                state: AgentState::Idle,
+                visible_blocker: false,
+                visible_working: false,
+                process_exited: false,
+                observed_at: std::time::Instant::now(),
+            });
+            state.terminals[&terminal_id]
+                .last_agent_completion_seq
+                .unwrap()
+        };
+
+        let completion = finish(&mut state);
+        assert!(!seen(&state));
+        // A read of an older completion leaves the newer one done.
+        assert_eq!(
+            state.mark_pane_read(pane_id, Some(completion - 1)),
+            Some(false)
+        );
+        assert!(!seen(&state));
+        assert_eq!(state.mark_pane_read(pane_id, Some(completion)), Some(true));
+        assert!(seen(&state));
+        assert_eq!(state.mark_pane_read(pane_id, Some(completion)), Some(false));
+        // Reading does not move focus.
+        assert_eq!(state.active, Some(0));
+
+        assert!(state.mark_pane_unread(pane_id));
+        assert!(!seen(&state));
+        assert_eq!(state.mark_pane_read(pane_id, None), Some(true));
+        assert!(seen(&state));
+
+        // A new completion is done again until it is read.
+        finish(&mut state);
+        assert!(!seen(&state));
+
+        // Viewing it on the server marks the same read.
+        state.switch_workspace(1);
+        assert!(seen(&state));
+
+        state.terminals.get_mut(&terminal_id).unwrap().state = AgentState::Working;
+        assert_eq!(state.mark_pane_read(pane_id, None), Some(false));
+        assert_eq!(state.mark_pane_read(PaneId::from_raw(9_999), None), None);
+    }
+
+    #[test]
+    fn mark_read_wins_over_a_shown_pane_held_unread() {
+        let mut state = app_with_workspaces(&["agent"]);
+        state.switch_workspace(0);
+        state.outer_terminal_focus = Some(true);
+        let pane_id = *state.workspaces[0].panes.keys().next().unwrap();
+        let terminal_id = state.workspaces[0].panes[&pane_id]
+            .attached_terminal_id
+            .clone();
+        state.terminals.get_mut(&terminal_id).unwrap().state = AgentState::Working;
+        state.handle_app_event(AppEvent::StateChanged {
+            pane_id,
+            agent: Some(Agent::Pi),
+            state: AgentState::Idle,
+            visible_blocker: false,
+            visible_working: false,
+            process_exited: false,
+            observed_at: std::time::Instant::now(),
+        });
+        assert!(state.mark_pane_unread(pane_id));
+        assert!(!state.workspaces[0].panes[&pane_id].seen);
+
+        assert_eq!(state.mark_pane_read(pane_id, None), Some(true));
+        assert!(state.workspaces[0].panes[&pane_id].seen);
+        assert!(state
+            .seen_view
+            .as_ref()
+            .is_none_or(|view| view.held.is_none()));
     }
 
     #[test]

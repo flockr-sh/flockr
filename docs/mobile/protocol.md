@@ -610,7 +610,7 @@ agent.list agent.get agent.read agent.explain agent.send_keys agent.rename agent
 agent.start agent.prompt agent.wait
 pane.list pane.get pane.current pane.layout pane.read pane.focus pane.split pane.close pane.zoom
 pane.send_text pane.send_keys pane.send_input pane.scroll pane.resize pane.rename
-pane.mark_unread pane.link.list pane.process_info
+pane.mark_unread pane.mark_read pane.link.list pane.process_info
 worktree.list worktree.create worktree.open
 events.subscribe events.wait pane.wait_for_output
 notification.show
@@ -628,6 +628,14 @@ any command as Dylan.
 
 Note: `pane.scroll`, `pane.resize`, `pane.focus`, `pane.zoom` change shared
 state; the desktop sees the change. That matches the local CLI.
+
+`pane.mark_read` (`{"pane_id": ..., "completion_seq": n}`) marks a finished
+agent read on every client without moving anyone's focus: `agent.list` and
+`agents.watch` report it `idle` instead of `done`, and desktop done badges
+clear. Pass the agent's `state_change_seq` from when the app showed it done
+as `completion_seq`, so a newer completion stays done. A pane that is not done
+answers `ok` and does nothing. `pane.mark_unread` makes it done again
+everywhere.
 
 ### 9.3 Agent list stream
 

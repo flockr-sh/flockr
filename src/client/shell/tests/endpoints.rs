@@ -2988,3 +2988,55 @@ fn idle_agent_on_an_empty_session_shows_a_dotted_ring() {
     assert!(text.contains("○ used agent"), "frame: {text}");
     assert!(text.contains("● busy agent"), "frame: {text}");
 }
+
+#[test]
+fn acknowledged_completion_is_reported_to_the_server_once() {
+    use crate::api::schema::AgentStatus;
+
+    let mut config = ClientShellConfig::from_config(&Config::default());
+    config.seen_delay_ms = 0;
+    let mut state = ClientShellState::new(config);
+    let mut working = snapshot();
+    working.agents = vec![agent("agent", AgentStatus::Working, 2)];
+    state.set_snapshot(Box::new(working));
+    let mut done = snapshot();
+    done.revision = 2;
+    done.agents = vec![agent("agent", AgentStatus::Idle, 3)];
+    state.set_snapshot(Box::new(done));
+    assert_eq!(
+        state.snapshot.as_deref().unwrap().agents[0].agent_status,
+        AgentStatus::Done
+    );
+
+    let mut shown = surface();
+    shown.projection_revision = 2;
+    state.set_pane_surface(shown);
+    assert_eq!(
+        state.snapshot.as_deref().unwrap().agents[0].agent_status,
+        AgentStatus::Idle
+    );
+
+    let mut outcome = ClientShellInput::default();
+    state.send_agent_reads(&mut outcome);
+    let reads = outcome
+        .actions
+        .iter()
+        .filter_map(|action| match action {
+            ClientShellAction::Endpoint { request, .. } => Some(&request.method),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        reads,
+        [&crate::api::schema::Method::PaneMarkRead(
+            crate::api::schema::PaneMarkReadParams {
+                pane_id: "pane_1".into(),
+                completion_seq: Some(3),
+            }
+        )]
+    );
+
+    let mut again = ClientShellInput::default();
+    state.send_agent_reads(&mut again);
+    assert!(again.actions.is_empty());
+}

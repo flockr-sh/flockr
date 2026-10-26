@@ -191,10 +191,11 @@ impl App {
     }
 
     pub(super) fn handle_pane_mark_unread(&mut self, id: String, target: PaneTarget) -> String {
-        let Some((_, pane_id)) = self.parse_pane_id(&target.pane_id) else {
+        let Some((ws_idx, pane_id)) = self.parse_pane_id(&target.pane_id) else {
             return pane_not_found(id, &target.pane_id);
         };
         if self.state.mark_pane_unread(pane_id) {
+            self.emit_pane_agent_status(ws_idx, pane_id);
             encode_success(id, ResponseResult::Ok {})
         } else {
             encode_error(
@@ -205,6 +206,25 @@ impl App {
                     target.pane_id
                 ),
             )
+        }
+    }
+
+    pub(super) fn handle_pane_mark_read(
+        &mut self,
+        id: String,
+        params: crate::api::schema::PaneMarkReadParams,
+    ) -> String {
+        let Some((ws_idx, pane_id)) = self.parse_pane_id(&params.pane_id) else {
+            return pane_not_found(id, &params.pane_id);
+        };
+        match self.state.mark_pane_read(pane_id, params.completion_seq) {
+            None => pane_not_found(id, &params.pane_id),
+            Some(changed) => {
+                if changed {
+                    self.emit_pane_agent_status(ws_idx, pane_id);
+                }
+                encode_success(id, ResponseResult::Ok {})
+            }
         }
     }
 

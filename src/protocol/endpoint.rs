@@ -37,6 +37,11 @@ pub struct EndpointAgentCompletions {
     pub boot_id: String,
     pub revision: u64,
     pub completions: std::collections::BTreeMap<String, u64>,
+    /// Panes whose completion in `completions` nobody has read yet. Every
+    /// other completion is read, for every client. `None` from servers that do
+    /// not share reads.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unread: Option<std::collections::BTreeSet<String>>,
 }
 
 fn default_true() -> bool {

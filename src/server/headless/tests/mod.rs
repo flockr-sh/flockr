@@ -8566,3 +8566,165 @@ fn mobile_wheel_leaves_host_scrollback_to_the_gateway() {
             .is_err());
     });
 }
+
+fn latest_agent_completions(
+    receiver: &std::sync::mpsc::Receiver<Vec<u8>>,
+) -> Option<protocol::endpoint::EndpointAgentCompletions> {
+    let mut latest = None;
+    while let Ok(bytes) = receiver.try_recv() {
+        if let ServerMessage::EndpointControl { kind, data } = read_server_message(bytes) {
+            if kind == protocol::endpoint::AGENT_COMPLETIONS_KIND {
+                latest = Some(serde_json::from_str(&data).expect("decode completions"));
+            }
+        }
+    }
+    latest
+}
+
+fn api_agent_status(server: &mut HeadlessServer, pane_id: &str) -> api::schema::AgentStatus {
+    let (respond_to, response_rx) = std::sync::mpsc::channel();
+    server.handle_api_request_with_shutdown_check(api::ApiRequestMessage {
+        request: api::schema::Request {
+            id: "agents".into(),
+            method: api::schema::Method::AgentList(api::schema::EmptyParams::default()),
+        },
+        respond_to,
+        response_write_complete: None,
+    });
+    let response: api::schema::SuccessResponse =
+        serde_json::from_str(&response_rx.recv().expect("agent list response")).unwrap();
+    let api::schema::ResponseResult::AgentList { agents } = response.result else {
+        panic!("expected agent list");
+    };
+    agents
+        .into_iter()
+        .find(|agent| agent.pane_id == pane_id)
+        .expect("listed agent")
+        .agent_status
+}
+
+#[tokio::test]
+async fn mark_read_clears_done_for_every_client_without_moving_focus() {
+    let mut server = test_headless_server();
+    let first = crate::workspace::Workspace::test_new("first");
+    let second = crate::workspace::Workspace::test_new("second");
+    let agent_pane = second.tabs[0].root_pane;
+    server.app.state.workspaces = vec![first, second];
+    server.app.state.ensure_test_terminals();
+    server.app.state.active = Some(0);
+    server.app.state.selected = 0;
+    server.app.state.mode = crate::app::Mode::Terminal;
+    let first_tab_id = server.app.public_tab_id(0, 0).unwrap();
+    let second_tab_id = server.app.public_tab_id(1, 0).unwrap();
+    let pane_id = server.app.public_pane_id(1, agent_pane).unwrap();
+    let terminal_id = server.app.state.workspaces[1].tabs[0].panes[&agent_pane]
+        .attached_terminal_id
+        .clone();
+    let finish = |server: &mut HeadlessServer, seq: u64| {
+        let terminal = server.app.state.terminals.get_mut(&terminal_id).unwrap();
+        terminal.set_detected_state(
+            Some(crate::detect::Agent::Pi),
+            crate::detect::AgentState::Idle,
+        );
+        terminal.last_agent_state_change_seq = Some(seq);
+        terminal.last_agent_completion_seq = Some(seq);
+        server.app.state.workspaces[1].tabs[0]
+            .panes
+            .get_mut(&agent_pane)
+            .unwrap()
+            .seen = false;
+    };
+    finish(&mut server, 7);
+
+    let (first_control, _first_render) = connect_test_shell(&mut server, 41, 80, 24);
+    let (second_control, _second_render) = connect_test_shell(&mut server, 42, 80, 24);
+    assert!(server.focus_shell_client_on_tab(42, &second_tab_id));
+    server.render_and_stream();
+    for control in [&first_control, &second_control] {
+        let completions = latest_agent_completions(control).expect("completions");
+        assert_eq!(completions.completions.get(&pane_id), Some(&7));
+        assert!(completions.unread.unwrap().contains(&pane_id));
+    }
+    assert_eq!(
+        api_agent_status(&mut server, &pane_id),
+        api::schema::AgentStatus::Done
+    );
+    let foreground = server.foreground_client_id;
+    assert_ne!(foreground, Some(41));
+    let locations = |server: &HeadlessServer| {
+        (
+            server.shell_tab_id_for_client(41),
+            server.shell_tab_id_for_client(42),
+        )
+    };
+    assert_eq!(
+        locations(&server),
+        (Some(first_tab_id.clone()), Some(second_tab_id.clone()))
+    );
+
+    // A phone reads it through the public API.
+    let (respond_to, response_rx) = std::sync::mpsc::channel();
+    server.handle_api_request_with_shutdown_check(api::ApiRequestMessage {
+        request: api::schema::Request {
+            id: "read".into(),
+            method: api::schema::Method::PaneMarkRead(api::schema::PaneMarkReadParams {
+                pane_id: pane_id.clone(),
+                completion_seq: Some(7),
+            }),
+        },
+        respond_to,
+        response_write_complete: None,
+    });
+    assert!(response_rx.recv().unwrap().contains("\"result\""));
+    assert_eq!(
+        api_agent_status(&mut server, &pane_id),
+        api::schema::AgentStatus::Idle
+    );
+    server.render_and_stream();
+    for control in [&first_control, &second_control] {
+        let completions = latest_agent_completions(control).expect("completions");
+        assert_eq!(completions.completions.get(&pane_id), Some(&7));
+        assert!(completions.unread.unwrap().is_empty());
+    }
+    assert_eq!(server.app.state.active, Some(0));
+    assert_eq!(server.foreground_client_id, foreground);
+    assert_eq!(
+        locations(&server),
+        (Some(first_tab_id.clone()), Some(second_tab_id.clone()))
+    );
+
+    // A desktop that acknowledged a new completion reports it over its endpoint.
+    finish(&mut server, 9);
+    assert_eq!(
+        api_agent_status(&mut server, &pane_id),
+        api::schema::AgentStatus::Done
+    );
+    server.handle_server_event(ServerEvent::ClientShellEndpointRequest {
+        client_id: 41,
+        boot_id: server.client_shell_boot_id.clone(),
+        request: Box::new(api::schema::Request {
+            id: "client-read".into(),
+            method: api::schema::Method::PaneMarkRead(api::schema::PaneMarkReadParams {
+                pane_id: pane_id.clone(),
+                completion_seq: Some(9),
+            }),
+        }),
+    });
+    assert_eq!(
+        api_agent_status(&mut server, &pane_id),
+        api::schema::AgentStatus::Idle
+    );
+    server.render_and_stream();
+    for control in [&first_control, &second_control] {
+        let completions = latest_agent_completions(control).expect("completions");
+        assert_eq!(completions.completions.get(&pane_id), Some(&9));
+        assert!(completions.unread.unwrap().is_empty());
+    }
+    assert_eq!(server.app.state.active, Some(0));
+    assert_eq!(server.foreground_client_id, foreground);
+    assert_eq!(
+        locations(&server),
+        (Some(first_tab_id), Some(second_tab_id))
+    );
+    shutdown_test_runtimes(&mut server);
+}

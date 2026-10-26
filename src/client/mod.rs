@@ -2373,6 +2373,7 @@ async fn run_client_loop(
                             | shell.tick_endpoint_error(now)
                             | shell.tick_seen_delay(now)
                             | shell.tick_working_pulse(now);
+                        shell.send_agent_reads(&mut outcome);
                         let frame = outcome
                             .repaint
                             .then(|| shell.compose(state.reported_size.0, state.reported_size.1))

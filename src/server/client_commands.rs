@@ -263,6 +263,10 @@ mod tests {
             Some("a315674137bc4cfa8228c8a90798f02fff88823e282de328ef6578f32dc29751")
         );
         assert_eq!(
+            actual.remove("pane.mark_read").as_deref(),
+            Some("8ceeac0d8ba7187b0e3a43e9209ab196f23ba7a3d3b5840be36f39208cf85f7d")
+        );
+        assert_eq!(
             actual.remove("layout.select").as_deref(),
             Some("28a477b7d1e86b714206406b2702489aacf3a2e75d25a6a764608402358e8942")
         );

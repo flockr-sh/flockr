@@ -89,6 +89,7 @@ mod tests {
             boot_id: "boot".into(),
             revision: 3,
             completions: [("pane".into(), 7)].into_iter().collect(),
+            unread: None,
         };
         let crate::protocol::ServerMessage::EndpointControl { kind, data } =
             crate::protocol::endpoint::agent_completions_message(&projection).unwrap()
@@ -105,6 +106,40 @@ mod tests {
             decode_endpoint_control(&kind, "invalid").unwrap(),
             EndpointControlMessage::Ignored
         ));
+    }
+
+    #[test]
+    fn completion_unread_set_round_trips_and_stays_optional() {
+        let projection = crate::protocol::endpoint::EndpointAgentCompletions {
+            boot_id: "boot".into(),
+            revision: 3,
+            completions: [("pane".into(), 7), ("read".into(), 5)]
+                .into_iter()
+                .collect(),
+            unread: Some(["pane".to_owned()].into()),
+        };
+        let crate::protocol::ServerMessage::EndpointControl { kind, data } =
+            crate::protocol::endpoint::agent_completions_message(&projection).unwrap()
+        else {
+            panic!("expected optional control");
+        };
+        assert!(data.contains(r#""unread":["pane"]"#));
+        let EndpointControlMessage::AgentCompletions(decoded) =
+            decode_endpoint_control(&kind, &data).unwrap()
+        else {
+            panic!("expected completion projection");
+        };
+        assert_eq!(decoded, projection);
+
+        // Servers without shared reads send no field, and none is sent back.
+        let without_reads = r#"{"boot_id":"boot","revision":3,"completions":{"pane":7}}"#;
+        let EndpointControlMessage::AgentCompletions(decoded) =
+            decode_endpoint_control(&kind, without_reads).unwrap()
+        else {
+            panic!("expected completion projection");
+        };
+        assert_eq!(decoded.unread, None);
+        assert_eq!(serde_json::to_string(&decoded).unwrap(), without_reads);
     }
 
     #[test]

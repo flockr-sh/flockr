@@ -33,6 +33,18 @@ pub(super) fn snapshot_with_completions(
             .iter()
             .filter_map(|agent| agent.completion_seq.map(|seq| (agent.pane_id.clone(), seq)))
             .collect(),
+        // The server reports a finished agent done until someone reads it.
+        unread: Some(
+            snapshot
+                .agents
+                .iter()
+                .filter(|agent| {
+                    agent.completion_seq.is_some()
+                        && agent.agent_status == crate::api::schema::AgentStatus::Done
+                })
+                .map(|agent| agent.pane_id.clone())
+                .collect(),
+        ),
     };
     let focused_workspace_id = location
         .and_then(|location| location.focused_workspace_id.clone())

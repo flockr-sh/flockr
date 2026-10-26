@@ -119,15 +119,17 @@ impl HeadlessServer {
                 deferred_worktree.then(|| api_request_id.clone());
             client.shell_deferred_navigation_response = deferred_navigation.then(Vec::new);
         }
+        let msg = api::ApiRequestMessage {
+            request: *request,
+            respond_to,
+            response_write_complete: None,
+        };
+        // A client reports a read on its own, not because someone used it, so
+        // it must not take the foreground or move any client's focus.
+        if matches!(msg.request.method, api::schema::Method::PaneMarkRead(_)) {
+            return self.handle_api_request_with_shutdown_check(msg);
+        }
         let foreground_changed = self.promote_client_to_foreground(client_id);
-        foreground_changed
-            | self.handle_client_shell_api_request(
-                client_id,
-                api::ApiRequestMessage {
-                    request: *request,
-                    respond_to,
-                    response_write_complete: None,
-                },
-            )
+        foreground_changed | self.handle_client_shell_api_request(client_id, msg)
     }
 }

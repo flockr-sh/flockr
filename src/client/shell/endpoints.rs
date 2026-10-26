@@ -686,6 +686,35 @@ impl ClientShellState {
         changed
     }
 
+    /// Tells the server about completions this client acknowledged, so the
+    /// read shows on every client and device. Servers without
+    /// `pane.mark_read` keep the read local to this client.
+    pub(crate) fn send_agent_reads(&mut self, outcome: &mut ClientShellInput) {
+        let active_endpoint_id = self.active_endpoint_id.clone();
+        let Some(endpoint) = self
+            .endpoints
+            .iter_mut()
+            .find(|endpoint| endpoint.endpoint_id == active_endpoint_id)
+        else {
+            return;
+        };
+        let reads = endpoint.agent_presentation.take_unsent_reads();
+        if reads.is_empty() || !self.endpoint_is_online(&active_endpoint_id) {
+            return;
+        }
+        for (pane_id, completion_seq) in reads {
+            let method =
+                crate::api::schema::Method::PaneMarkRead(crate::api::schema::PaneMarkReadParams {
+                    pane_id,
+                    completion_seq: Some(completion_seq),
+                });
+            if !self.supports_endpoint_method(&method) {
+                return;
+            }
+            self.push_endpoint_method_with_kind(method, PendingEndpointKind::AgentRead, outcome);
+        }
+    }
+
     fn seen_delay(&self) -> std::time::Duration {
         std::time::Duration::from_millis(self.config.seen_delay_ms)
     }

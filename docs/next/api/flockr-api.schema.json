@@ -2770,6 +2770,27 @@
           },
           "type": "object"
         },
+        "PaneMarkReadParams": {
+          "description": "Marks a pane's finished agent read for every client, without moving focus.",
+          "properties": {
+            "completion_seq": {
+              "description": "Only mark read when the agent's latest completion is at or before this\nsequence, so a newer completion is not cleared by a stale read.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "pane_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "pane_id"
+          ],
+          "type": "object"
+        },
         "PaneMoveDestination": {
           "oneOf": [
             {
@@ -6447,6 +6468,22 @@
             },
             "params": {
               "$ref": "#/schemas/request/$defs/PaneTarget"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "pane.mark_read",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/PaneMarkReadParams"
             }
           },
           "required": [

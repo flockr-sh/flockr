@@ -191,6 +191,7 @@ mod tests {
             "pane.scroll",
             "pane.clear",
             "pane.mark_unread",
+            "pane.mark_read",
             "pane.edit_scrollback",
             "pane.focus",
             "pane.input.set",

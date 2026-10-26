@@ -58,6 +58,7 @@ pub(crate) const ALLOWED_METHODS: &[&str] = &[
     "pane.resize",
     "pane.rename",
     "pane.mark_unread",
+    "pane.mark_read",
     "pane.link.list",
     "pane.process_info",
     "worktree.list",
@@ -311,7 +312,13 @@ mod tests {
 
     #[test]
     fn allowlist_blocks_lifecycle_and_install_methods() {
-        for allowed in ["agent.list", "pane.send_keys", "events.subscribe", "ping"] {
+        for allowed in [
+            "agent.list",
+            "pane.send_keys",
+            "pane.mark_read",
+            "events.subscribe",
+            "ping",
+        ] {
             assert!(method_allowed(allowed), "{allowed}");
         }
         for blocked in [

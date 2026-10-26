@@ -669,6 +669,8 @@ impl ClientShellOverlay {
 #[derive(Debug)]
 pub(super) enum PendingEndpointKind {
     Generic,
+    /// A read this client reports on its own; failures stay silent.
+    AgentRead,
     ProductAnnouncementDismiss {
         version: String,
         id: String,
