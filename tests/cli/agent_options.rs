@@ -1,6 +1,6 @@
 use super::harness::*;
 
-fn wait_for_blocked_or_idle(
+fn wait_for_blocked_or_done(
     socket_path: &Path,
     pane_id: &str,
     timeout: &str,
@@ -14,7 +14,7 @@ fn wait_for_blocked_or_idle(
             "--until",
             "blocked",
             "--until",
-            "idle",
+            "done",
             "--timeout",
             timeout,
         ],
@@ -63,7 +63,7 @@ fn agent_wait_accepts_repeated_until_and_exits_when_one_status_matches() {
     };
     // Neither listed status matches while the agent is working.
     assert!(report_agent("working"));
-    let still_working = wait_for_blocked_or_idle(&socket_path, &pane_id, "100");
+    let still_working = wait_for_blocked_or_done(&socket_path, &pane_id, "100");
     assert!(!still_working.status.success());
     assert!(
         String::from_utf8_lossy(&still_working.stderr)
@@ -74,7 +74,7 @@ fn agent_wait_accepts_repeated_until_and_exits_when_one_status_matches() {
 
     let wait_socket = socket_path.clone();
     let wait_pane = pane_id.clone();
-    let waiter = thread::spawn(move || wait_for_blocked_or_idle(&wait_socket, &wait_pane, "10000"));
+    let waiter = thread::spawn(move || wait_for_blocked_or_done(&wait_socket, &wait_pane, "10000"));
     assert!(report_agent("idle"));
 
     let waited = waiter.join().unwrap();
@@ -84,7 +84,8 @@ fn agent_wait_accepts_repeated_until_and_exits_when_one_status_matches() {
         String::from_utf8_lossy(&waited.stderr)
     );
     let waited_json: serde_json::Value = serde_json::from_slice(&waited.stdout).unwrap();
-    assert_eq!(waited_json["result"]["agent"]["agent_status"], "idle");
+    // Nobody is looking at the pane, so the finished agent stays done.
+    assert_eq!(waited_json["result"]["agent"]["agent_status"], "done");
     assert_eq!(waited_json["result"]["agent"]["agent"], "pi");
 
     cleanup_spawned_flockr(flockr, base);

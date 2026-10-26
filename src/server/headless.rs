@@ -827,6 +827,7 @@ impl HeadlessServer {
         let Some(client_id) = self.foreground_client_id else {
             self.effective_size = self.headless_size;
             self.app.state.outer_terminal_focus = None;
+            self.app.state.seen_view = None;
             self.app.state.host_cell_size = crate::kitty_graphics::HostCellSize::default();
             self.sync_runtime_view_geometry();
             let server_keybindings = self.server_keybindings.clone();
@@ -838,6 +839,7 @@ impl HeadlessServer {
             self.foreground_client_id = None;
             self.effective_size = self.headless_size;
             self.app.state.outer_terminal_focus = None;
+            self.app.state.seen_view = None;
             self.app.state.host_cell_size = crate::kitty_graphics::HostCellSize::default();
             self.sync_runtime_view_geometry();
             let server_keybindings = self.server_keybindings.clone();
@@ -865,12 +867,10 @@ impl HeadlessServer {
         let server_keybindings = self.server_keybindings.clone();
         apply_keybindings(&mut self.app, &server_keybindings);
         self.sync_visible_server_config_diagnostic(false);
-        if outer_terminal_focus == Some(true) {
-            self.app.state.mark_active_tab_seen();
-        } else if outer_terminal_focus == Some(false) {
-            // Time away from the terminal does not count toward seen_delay_ms.
-            self.app.state.seen_view = None;
-        }
+        // Marks the shown tab seen only when the terminal reports focus; time
+        // away from it, or with focus unknown, does not count toward
+        // seen_delay_ms.
+        self.app.state.mark_active_tab_seen();
         self.app.set_host_terminal_appearance_state(
             host_terminal_appearance,
             host_terminal_appearance_explicit,

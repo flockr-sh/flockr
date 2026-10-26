@@ -750,6 +750,57 @@ mod tests {
             .all(|runtime| runtime.test_scroll_metrics_reads() == 1));
     }
 
+    #[tokio::test(flavor = "current_thread")]
+    async fn completion_from_metadata_expiry_is_unread_for_clients_and_the_api() {
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = crate::app::App::new(
+            &crate::config::Config::default(),
+            crate::app::AppPolicy::TEST,
+            None,
+            api_rx,
+            crate::api::EventHub::default(),
+        );
+        app.state.workspaces = vec![crate::workspace::Workspace::test_new("active")];
+        app.state.active = Some(0);
+        app.state.ensure_test_terminals();
+        let terminal = app.state.terminals.values_mut().next().unwrap();
+        terminal.set_detected_state(
+            Some(crate::detect::Agent::Pi),
+            crate::detect::AgentState::Idle,
+        );
+        terminal
+            .set_agent_metadata(crate::terminal::AgentMetadataReport {
+                source: "custom:pi-metadata".into(),
+                agent_label: Some("pi".into()),
+                applies_to_source: None,
+                title: Some("Pi task".into()),
+                display_agent: None,
+                state_labels: std::collections::HashMap::new(),
+                clear_title: false,
+                clear_display_agent: false,
+                clear_state_labels: false,
+                ttl: Some(std::time::Duration::ZERO),
+                seq: None,
+            })
+            .expect("metadata accepted");
+        // The stored state is still working when the metadata expires, so the
+        // recomputed state finishes the turn on the expiry path.
+        terminal.state = crate::detect::AgentState::Working;
+        let deadline = app.state.next_agent_metadata_expiry().expect("deadline");
+        app.expire_metadata_at(deadline, deadline);
+
+        let metadata = app.session_metadata_snapshot();
+        let agent = &metadata.agents[0];
+        assert_eq!(agent.agent_status, crate::api::schema::AgentStatus::Done);
+        assert_eq!(agent.completion_seq, Some(agent.state_change_seq));
+        let (_, completions) = snapshot_with_completions(&app, "boot", 1, None, None);
+        assert_eq!(
+            completions.completions.get(&agent.pane_id),
+            Some(&agent.state_change_seq)
+        );
+        assert!(completions.unread.unwrap().contains(&agent.pane_id));
+    }
+
     #[test]
     fn snapshot_projects_cached_release_and_update_facts() {
         let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();

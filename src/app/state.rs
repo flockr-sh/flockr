@@ -824,7 +824,8 @@ pub struct AppState {
     pub toast: Option<ToastNotification>,
     pub pending_agent_notifications: std::collections::HashMap<PaneId, PendingAgentNotification>,
     /// Last reported focus state for the outer terminal hosting flockr.
-    /// None means unsupported or not yet reported, which preserves active-pane suppression.
+    /// None means unsupported, not yet reported, or no client attached. It
+    /// preserves active-pane toast suppression but never marks completions seen.
     pub outer_terminal_focus: Option<bool>,
     // Config
     pub prefix_keys: Vec<(KeyCode, KeyModifiers)>,

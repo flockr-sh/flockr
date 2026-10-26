@@ -463,11 +463,37 @@ impl AppState {
         self.view_active_tab(Instant::now())
     }
 
+    /// Whether someone is looking at the active tab: the foreground desktop
+    /// client reports that its terminal has focus. Unknown focus (no client,
+    /// or a terminal without focus reporting) does not count here; an
+    /// attached client still acknowledges what it shows and sends
+    /// `pane.mark_read`.
+    pub(crate) fn active_tab_watched(&self) -> bool {
+        self.outer_terminal_focus == Some(true)
+    }
+
+    /// Views the active tab after an explicit `pane.focus` or `agent.focus`,
+    /// which counts as looking even when no focused desktop terminal does.
+    /// `seen_delay` still applies, and its timer needs a focused viewer.
+    pub(crate) fn view_active_tab_explicitly(&mut self) -> bool {
+        self.view_active_tab_as(Instant::now(), true)
+    }
+
     /// Marks the active tab's panes (or only its focused pane, per
     /// `seen_scope`) seen once they have been shown for `seen_delay`, so
     /// passing through does not clear done agents. Until then it records when
-    /// they become due.
+    /// they become due. Nothing counts as shown unless the tab is watched.
     pub(crate) fn view_active_tab(&mut self, now: Instant) -> bool {
+        let watched = self.active_tab_watched();
+        self.view_active_tab_as(now, watched)
+    }
+
+    fn view_active_tab_as(&mut self, now: Instant, watched: bool) -> bool {
+        if !watched {
+            // Time nobody is looking does not count toward seen_delay_ms.
+            self.seen_view = None;
+            return false;
+        }
         let Some(ws) = self
             .active
             .and_then(|ws_idx| self.workspaces.get_mut(ws_idx))
@@ -2134,15 +2160,6 @@ impl AppState {
         }
         let suppress_completion = force_suppress_completion
             || (change.state == AgentState::Idle && suppress_acquisition_completion);
-        if change.previous_state != change.state {
-            self.next_agent_state_change_seq += 1;
-            if let Some(terminal) = self.terminals.get_mut(&terminal_id) {
-                terminal.last_agent_state_change_seq = Some(self.next_agent_state_change_seq);
-                terminal.last_agent_completion_seq = (!suppress_completion
-                    && is_completion_transition(&change))
-                .then_some(self.next_agent_state_change_seq);
-            }
-        }
         let seen = self.apply_pane_state_change(ws_idx, pane_id, &change, suppress_completion)?;
         let update = PaneStateUpdate {
             pane_id,
@@ -2216,10 +2233,26 @@ impl AppState {
         suppress_completion: bool,
     ) -> Option<bool> {
         let is_active_tab = self.pane_is_in_active_tab(ws_idx, pane_id);
-        let suppress_active_tab_notifications =
-            active_tab_suppresses_notifications(is_active_tab, self.outer_terminal_focus);
         let now = Instant::now();
-        let viewed = self.active_tab_pane_viewed(pane_id, now);
+        // Only a focused desktop terminal counts as looking; anything else
+        // stays done until a client acknowledges it or someone reads it.
+        let watched = is_active_tab && self.active_tab_watched();
+        let viewed = watched && self.active_tab_pane_viewed(pane_id, now);
+        let completion = !suppress_completion && is_completion_transition(change);
+        if change.previous_state != change.state {
+            // Every state change, including one from expiring agent metadata,
+            // gets a sequence so clients project the same completion as the API.
+            self.next_agent_state_change_seq += 1;
+            let seq = self.next_agent_state_change_seq;
+            let terminal_id = self.workspaces[ws_idx]
+                .pane_state(pane_id)?
+                .attached_terminal_id
+                .clone();
+            if let Some(terminal) = self.terminals.get_mut(&terminal_id) {
+                terminal.last_agent_state_change_seq = Some(seq);
+                terminal.last_agent_completion_seq = completion.then_some(seq);
+            }
+        }
         let pane = self.workspaces[ws_idx]
             .tabs
             .iter_mut()
@@ -2227,11 +2260,11 @@ impl AppState {
 
         if change.state != AgentState::Idle {
             pane.seen = true;
-        } else if !suppress_completion && is_completion_transition(change) {
-            pane.seen = suppress_active_tab_notifications && viewed;
+        } else if completion {
+            pane.seen = viewed;
         }
         let seen = pane.seen;
-        if suppress_active_tab_notifications && !seen {
+        if watched && !seen {
             // Finished in view before the tab was shown long enough.
             self.view_active_tab(now);
         }
@@ -3165,6 +3198,7 @@ mod tests {
     #[test]
     fn switch_workspace_marks_panes_seen() {
         let mut state = app_with_workspaces(&["a", "b"]);
+        state.outer_terminal_focus = Some(true);
         // Mark a pane in workspace 1 as unseen
         let id = *state.workspaces[1].panes.keys().next().unwrap();
         state.workspaces[1].panes.get_mut(&id).unwrap().seen = false;
@@ -3176,6 +3210,7 @@ mod tests {
     #[test]
     fn seen_delay_marks_a_tab_seen_only_after_it_stays_active() {
         let mut state = app_with_workspaces(&["a", "b"]);
+        state.outer_terminal_focus = Some(true);
         state.seen_delay = std::time::Duration::from_millis(750);
         let id = *state.workspaces[1].panes.keys().next().unwrap();
         state.workspaces[1].panes.get_mut(&id).unwrap().seen = false;
@@ -3208,6 +3243,7 @@ mod tests {
             crate::config::SeenScopeConfig::Tab,
         ] {
             let mut state = app_with_workspaces(&["a", "b"]);
+            state.outer_terminal_focus = Some(true);
             state.seen_scope = scope;
             let first = state.workspaces[1].focused_pane_id().unwrap();
             let split = state.workspaces[1].test_split(ratatui::layout::Direction::Horizontal);
@@ -3733,6 +3769,91 @@ mod tests {
             .seen_view
             .as_ref()
             .is_none_or(|view| view.held.is_none()));
+    }
+
+    fn finish_pi_turn(state: &mut AppState, pane_id: PaneId) {
+        let terminal_id = state.workspaces[0].panes[&pane_id]
+            .attached_terminal_id
+            .clone();
+        state.terminals.get_mut(&terminal_id).unwrap().state = AgentState::Working;
+        state.handle_app_event(AppEvent::StateChanged {
+            pane_id,
+            agent: Some(Agent::Pi),
+            state: AgentState::Idle,
+            visible_blocker: false,
+            visible_working: false,
+            process_exited: false,
+            observed_at: std::time::Instant::now(),
+        });
+    }
+
+    #[test]
+    fn active_tab_completion_stays_done_unless_a_focused_terminal_shows_it() {
+        // None: no client attached, or a terminal without focus reporting.
+        for focus in [None, Some(false)] {
+            let mut state = app_with_workspaces(&["active"]);
+            state.active = Some(0);
+            state.outer_terminal_focus = focus;
+            let pane_id = *state.workspaces[0].panes.keys().next().unwrap();
+            state.mark_active_tab_seen();
+
+            finish_pi_turn(&mut state, pane_id);
+            let pane = &state.workspaces[0].panes[&pane_id];
+            assert!(!pane.seen, "focus {focus:?}");
+            assert_eq!(
+                pane_agent_status(AgentState::Idle, pane.seen),
+                crate::api::schema::AgentStatus::Done
+            );
+            // Navigation and seen timers do not read it while nobody looks.
+            state.switch_workspace(0);
+            assert!(!state.view_active_tab(std::time::Instant::now()));
+            assert!(!state.workspaces[0].panes[&pane_id].seen);
+            assert_eq!(state.next_seen_deadline(), None);
+
+            // The terminal reporting focus while it shows the pane reads it.
+            state.outer_terminal_focus = Some(true);
+            assert!(state.mark_active_tab_seen());
+            assert!(state.workspaces[0].panes[&pane_id].seen);
+        }
+    }
+
+    #[test]
+    fn focused_terminal_reads_a_shown_completion_after_seen_delay() {
+        let mut state = app_with_workspaces(&["active"]);
+        state.active = Some(0);
+        state.outer_terminal_focus = Some(false);
+        state.seen_delay = std::time::Duration::from_secs(60);
+        let pane_id = *state.workspaces[0].panes.keys().next().unwrap();
+        finish_pi_turn(&mut state, pane_id);
+        assert!(!state.workspaces[0].panes[&pane_id].seen);
+
+        state.outer_terminal_focus = Some(true);
+        assert!(!state.mark_active_tab_seen());
+        let due = state.next_seen_deadline().expect("seen deadline");
+        assert!(!state.view_active_tab(due - std::time::Duration::from_millis(1)));
+        assert!(!state.workspaces[0].panes[&pane_id].seen);
+
+        // Losing focus before the delay passes starts it over.
+        state.outer_terminal_focus = None;
+        assert!(!state.view_active_tab(due));
+        assert!(!state.workspaces[0].panes[&pane_id].seen);
+        state.outer_terminal_focus = Some(true);
+        state.mark_active_tab_seen();
+        let due = state.next_seen_deadline().expect("restarted deadline");
+        assert!(state.view_active_tab(due));
+        assert!(state.workspaces[0].panes[&pane_id].seen);
+    }
+
+    #[test]
+    fn explicit_focus_reads_a_completion_without_a_focused_terminal() {
+        let mut state = app_with_workspaces(&["active"]);
+        state.active = Some(0);
+        let pane_id = *state.workspaces[0].panes.keys().next().unwrap();
+        finish_pi_turn(&mut state, pane_id);
+        assert!(!state.workspaces[0].panes[&pane_id].seen);
+
+        assert!(state.view_active_tab_explicitly());
+        assert!(state.workspaces[0].panes[&pane_id].seen);
     }
 
     #[test]
