@@ -4,7 +4,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { connections } from '../state/connections';
 import { statusText, useClientStatus } from '../state/hooks';
 import type { Nav } from '../state/nav';
-import { ui } from '../state/ui';
+import { colors, ui } from '../state/ui';
 import { GatewayClient, gridText, InputKind, linkAt, Subscription, SurfaceMode } from '../protocol';
 import { Composer } from '../terminal/Composer';
 import { PerfOverlay } from '../terminal/PerfOverlay';
@@ -34,6 +34,7 @@ export function TerminalScreen({ nav, serverId, paneId, title }: Props) {
   const [layout, setLayout] = useState<TerminalLayout | null>(null);
   const [sheet, setSheet] = useState<{ title: string; lines: string[] } | null>(null);
   const [lastError, setLastError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const viewStats = useRef(makeViewStats()).current;
   const insets = useSafeAreaInsets();
   const [keyboardOpen, setKeyboardOpen] = useState(false);
@@ -66,7 +67,15 @@ export function TerminalScreen({ nav, serverId, paneId, title }: Props) {
       paneId,
       mode === 'fit' && fitSize ? { mode: 'fit', cols: fitSize.cols, rows: fitSize.rows } : { mode: 'observe' },
       {
-        onEnded: (reason, message) => setEnded(message ? `${reason}: ${message}` : reason),
+        onEnded: (reason, message) => {
+          // Another device (or a desktop attach) holds this pane's size: keep watching at the desktop size.
+          if (mode === 'fit' && (reason === 'taken_over' || message?.startsWith('pane_busy'))) {
+            setNotice('Another device has this pane in Fit, showing it at desktop size');
+            setMode('observe');
+            return;
+          }
+          setEnded(message ? `${reason}: ${message}` : reason);
+        },
       },
     );
     setSub(s);
@@ -130,7 +139,7 @@ export function TerminalScreen({ nav, serverId, paneId, title }: Props) {
     <KeyboardAvoidingView style={ui.screen} behavior="padding">
       <SafeAreaView style={{ flex: 1 }} edges={['top', 'left', 'right']}>
         <View style={ui.header}>
-          <Pressable onPress={() => nav.pop()} style={ui.button}>
+          <Pressable accessibilityRole="button" onPress={() => nav.pop()} style={ui.button}>
             <Text style={ui.buttonText}>‹</Text>
           </Pressable>
           <View style={{ flex: 1 }}>
@@ -139,13 +148,18 @@ export function TerminalScreen({ nav, serverId, paneId, title }: Props) {
             </Text>
             <Text style={ui.sub} numberOfLines={1}>
               {statusText(status)}
-              {ended ? ` · ended: ${ended}` : ''}
               {lastError ? ` · ${lastError}` : ''}
             </Text>
           </View>
         </View>
         <View style={styles.toolbar}>
-          <Tool label={mode === 'fit' ? 'Fit ✓' : 'Fit'} onPress={() => setMode(mode === 'fit' ? 'observe' : 'fit')} />
+          <Tool
+            label={mode === 'fit' ? 'Fit ✓' : 'Fit'}
+            onPress={() => {
+              setNotice(null);
+              setMode(mode === 'fit' ? 'observe' : 'fit');
+            }}
+          />
           {mode === 'observe' ? (
             <Tool label={fitWidth ? 'Width' : `${zoom.toFixed(2)}x`} onPress={() => setFitWidth(!fitWidth)} />
           ) : (
@@ -170,6 +184,7 @@ export function TerminalScreen({ nav, serverId, paneId, title }: Props) {
             onLongPress={() => setNativeDebug(!nativeDebug)}
           />
         </View>
+        {ended || notice ? <Text style={styles.banner}>{ended ? `Stream ended: ${ended}` : notice}</Text> : null}
         <View style={{ flex: 1 }}>
           {perf ? <PerfOverlay client={client} sub={sub} view={viewStats} /> : null}
           <View style={{ flex: 1 }}>
@@ -201,13 +216,14 @@ export function TerminalScreen({ nav, serverId, paneId, title }: Props) {
 
 function Tool({ label, onPress, onLongPress }: { label: string; onPress: () => void; onLongPress?: () => void }) {
   return (
-    <Pressable onPress={onPress} onLongPress={onLongPress} style={[ui.button, styles.tool]}>
+    <Pressable accessibilityRole="button" onPress={onPress} onLongPress={onLongPress} style={[ui.button, styles.tool]}>
       <Text style={[ui.buttonText, { fontSize: 13 }]}>{label}</Text>
     </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
+  banner: { color: colors.dim, fontSize: 12, paddingHorizontal: 12, paddingVertical: 6 },
   toolbar: { flexDirection: 'row', gap: 6, paddingHorizontal: 8, paddingVertical: 6, flexWrap: 'wrap' },
   tool: { paddingHorizontal: 10, paddingVertical: 6 },
 });

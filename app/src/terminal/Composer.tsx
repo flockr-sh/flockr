@@ -1,5 +1,5 @@
 // Native text composer (keyboard, dictation, autocorrect) plus a control-key row.
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { colors, ui } from '../state/ui';
 
@@ -40,6 +40,11 @@ interface Props {
 
 export function Composer({ onSubmit, onPaste, onKeys, disabled, bottomInset = 0 }: Props) {
   const [text, setText] = useState('');
+  // A multiline input on iOS keeps its grown height after it is cleared, so each send
+  // mounts a fresh one, focused again if the old one had the keyboard.
+  const [generation, setGeneration] = useState(0);
+  const focused = useRef(false);
+  const [refocus, setRefocus] = useState(false);
   const send = (withEnter: boolean) => {
     if (!text) {
       if (withEnter) onKeys(['enter']);
@@ -48,6 +53,8 @@ export function Composer({ onSubmit, onPaste, onKeys, disabled, bottomInset = 0 
     if (withEnter) onSubmit(text);
     else onPaste(text);
     setText('');
+    setRefocus(focused.current);
+    setGeneration((g) => g + 1);
   };
   return (
     <View style={[styles.wrap, { paddingBottom: 8 + bottomInset }]}>
@@ -59,6 +66,7 @@ export function Composer({ onSubmit, onPaste, onKeys, disabled, bottomInset = 0 
       >
         {KEY_ROW.map((k) => (
           <Pressable
+            accessibilityRole="button"
             key={k.label}
             disabled={disabled}
             onPress={() => onKeys(k.keys)}
@@ -70,6 +78,10 @@ export function Composer({ onSubmit, onPaste, onKeys, disabled, bottomInset = 0 
       </ScrollView>
       <View style={styles.row}>
         <TextInput
+          key={generation}
+          autoFocus={refocus}
+          onFocus={() => (focused.current = true)}
+          onBlur={() => (focused.current = false)}
           style={[ui.input, styles.input]}
           value={text}
           onChangeText={setText}
@@ -81,6 +93,7 @@ export function Composer({ onSubmit, onPaste, onKeys, disabled, bottomInset = 0 
           editable={!disabled}
         />
         <Pressable
+          accessibilityRole="button"
           disabled={disabled}
           onPress={() => send(true)}
           onLongPress={() => send(false)}
