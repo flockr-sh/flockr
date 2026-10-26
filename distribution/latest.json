@@ -1,21 +1,21 @@
 {
-  "version": "1.0.0",
+  "version": "1.1.0",
   "protocol": 22,
   "endpoint_generation": 1,
-  "notes": "First flockr release. flockr is a hard fork of\n[herdr](https://github.com/herdrdev/herdr), taken from herdr's `master` at\n[`143bf5fd`](https://github.com/herdrdev/herdr/commit/143bf5fd4781d164260c63fe28e7dc08054ad32f)\n(after herdr v0.9.5). Changes before the fork are in\n[herdr's changelog](https://github.com/herdrdev/herdr/blob/143bf5fd4781d164260c63fe28e7dc08054ad32f/CHANGELOG.md).\nVersion numbers start over at 1.0.0.\n\n### Added\n- Settings screen (`prefix+s`) in six sections: appearance, sidebar, alerts,\n  behavior, session, and integrations. Changes save to the config file and\n  apply at once.\n- `ui.sidebar_position = \"right\"` puts the sidebar on the right edge.\n- The sidebar has a title row with the menu, and All and Active tabs to filter\n  the agents list.\n- Agents are grouped under one header per space. A worktree's agents nest\n  under their repo, as in the spaces list.\n- `branch` agent row token: the agent's own branch, following it into the\n  worktree it works in. `diff_stat` space row token: lines added and removed\n  by uncommitted changes. Worktree spaces show ahead/behind and `diff_stat`.\n- Agents and spaces are numbered in the sidebar, with `alt+1..9` and\n  `alt+shift+1..9` to jump to them.\n- `ui.seen_delay_ms` and `ui.seen_scope`: a done agent keeps its done badge\n  until its pane has been on screen long enough. `prefix+a` jumps to the next\n  agent that needs you, and `prefix+u` marks one done again.\n- `ui.keep_agents_in_use_first`: a pane whose agent starts a fresh session\n  moves behind the agents in use. Fresh sessions show a dotted ring, and\n  `prefix+shift+s` sorts panes by age.\n- Command palette (`prefix+:` or `prefix+/`) and vim jump keys in lists.\n- Link hints (`prefix+f`) open or copy a visible link.\n- tmux layout presets (`prefix+alt+1..8`, `prefix+space`) and tmux's split and\n  resize keys.\n\n### Changed\n- Runs beside herdr: its own binary, config dir (`~/.config/flockr`), socket,\n  `FLOCKR_*` environment variables, and agent hooks.\n- Toasts stay beside the sidebar instead of covering it.\n- Custom command popups are titled with their description.\n- Resumed agents keep the CLI options they were started with. Codex runs\n  without its shared daemon, so its hooks see the pane.\n\n### Removed\n- Self-update and background update checks.\n- Downloading agent detection rules between releases\n  (`flockr server update-agent-manifests`). Rules ship with each release.\n- The sidebar's priority sort, replaced by the All and Active tabs.\n\n### Compatibility\n- Plugins and configs written for herdr work unchanged: `herdr-plugin.toml`,\n  `min_herdr_version`, `HERDR_*` variables, and `delivery = \"herdr\"` are\n  accepted.",
+  "notes": "### Added\n- `ui.pane_focus_passthrough` lists foreground programs, such as nvim, that\n  get pane focus keys bound without the prefix (for example `ctrl+h`)\n  instead of flockr. At its edge, nvim can call `flockr pane focus`; the\n  README shows the setup.\n- Clicking a flockr system notification on Linux switches to the agent's\n  pane. On Hyprland it also brings the terminal window to the front.\n\n### Fixed\n- A stop signal sent right after the server started could kill it without\n  a clean shutdown.",
   "assets": {
-    "linux-x86_64": "https://github.com/flockr-sh/flockr/releases/download/v1.0.0/flockr-linux-x86_64",
-    "linux-aarch64": "https://github.com/flockr-sh/flockr/releases/download/v1.0.0/flockr-linux-aarch64",
-    "macos-x86_64": "https://github.com/flockr-sh/flockr/releases/download/v1.0.0/flockr-macos-x86_64",
-    "macos-aarch64": "https://github.com/flockr-sh/flockr/releases/download/v1.0.0/flockr-macos-aarch64",
-    "windows-x86_64": "https://github.com/flockr-sh/flockr/releases/download/v1.0.0/flockr-windows-x86_64.zip"
+    "linux-x86_64": "https://github.com/flockr-sh/flockr/releases/download/v1.1.0/flockr-linux-x86_64",
+    "linux-aarch64": "https://github.com/flockr-sh/flockr/releases/download/v1.1.0/flockr-linux-aarch64",
+    "macos-x86_64": "https://github.com/flockr-sh/flockr/releases/download/v1.1.0/flockr-macos-x86_64",
+    "macos-aarch64": "https://github.com/flockr-sh/flockr/releases/download/v1.1.0/flockr-macos-aarch64",
+    "windows-x86_64": "https://github.com/flockr-sh/flockr/releases/download/v1.1.0/flockr-windows-x86_64.zip"
   },
   "sha256": {
-    "linux-x86_64": "da9b5f3e9fdb88ae8da40ddf863c388b0b2da151c137628961f8ae33be9d364d",
-    "linux-aarch64": "7aa2c3c3b95484c37149620e6e14a92e3747502ba4c714102f2ba4530b210011",
-    "macos-x86_64": "612466230bd8358552f2eb30403e47133760f01ca181f60b5817559ce4901ed2",
-    "macos-aarch64": "e2e91221682c2b07f98029bce8b764bb25b57ac006fdb1de16e0968dbb9b58b5",
-    "windows-x86_64": "ec356dec65edca7fceaf8f8b7ddff168cd10db8a068800c0a1636ea48059f2ea"
+    "linux-x86_64": "b02f84368636af974eda071faf66223be67b783ad488ac43b347b0c243dcf41b",
+    "linux-aarch64": "28ecea15e7813e0cf141a0dc06a5b750907875a99d97ed31c446cad04f49e2d5",
+    "macos-x86_64": "aa813dc1a9a8364af12086da6a7dad32eadb56a04c2b4f92c705c3e017bff81c",
+    "macos-aarch64": "41a4935ef3a9c90ab56dada88367d72e7bcd3c0bfb5339d4790a760b96e301c7",
+    "windows-x86_64": "67b48f44534b8d4f3da9c64f8d41d91f92e15b3dc129979b7dad9a427d1eb76a"
   },
   "releases": {
     "1.0.0": {
@@ -35,6 +35,25 @@
         "macos-x86_64": "612466230bd8358552f2eb30403e47133760f01ca181f60b5817559ce4901ed2",
         "macos-aarch64": "e2e91221682c2b07f98029bce8b764bb25b57ac006fdb1de16e0968dbb9b58b5",
         "windows-x86_64": "ec356dec65edca7fceaf8f8b7ddff168cd10db8a068800c0a1636ea48059f2ea"
+      }
+    },
+    "1.1.0": {
+      "notes": "### Added\n- `ui.pane_focus_passthrough` lists foreground programs, such as nvim, that\n  get pane focus keys bound without the prefix (for example `ctrl+h`)\n  instead of flockr. At its edge, nvim can call `flockr pane focus`; the\n  README shows the setup.\n- Clicking a flockr system notification on Linux switches to the agent's\n  pane. On Hyprland it also brings the terminal window to the front.\n\n### Fixed\n- A stop signal sent right after the server started could kill it without\n  a clean shutdown.",
+      "protocol": 22,
+      "endpoint_generation": 1,
+      "assets": {
+        "linux-x86_64": "https://github.com/flockr-sh/flockr/releases/download/v1.1.0/flockr-linux-x86_64",
+        "linux-aarch64": "https://github.com/flockr-sh/flockr/releases/download/v1.1.0/flockr-linux-aarch64",
+        "macos-x86_64": "https://github.com/flockr-sh/flockr/releases/download/v1.1.0/flockr-macos-x86_64",
+        "macos-aarch64": "https://github.com/flockr-sh/flockr/releases/download/v1.1.0/flockr-macos-aarch64",
+        "windows-x86_64": "https://github.com/flockr-sh/flockr/releases/download/v1.1.0/flockr-windows-x86_64.zip"
+      },
+      "sha256": {
+        "linux-x86_64": "b02f84368636af974eda071faf66223be67b783ad488ac43b347b0c243dcf41b",
+        "linux-aarch64": "28ecea15e7813e0cf141a0dc06a5b750907875a99d97ed31c446cad04f49e2d5",
+        "macos-x86_64": "aa813dc1a9a8364af12086da6a7dad32eadb56a04c2b4f92c705c3e017bff81c",
+        "macos-aarch64": "41a4935ef3a9c90ab56dada88367d72e7bcd3c0bfb5339d4790a760b96e301c7",
+        "windows-x86_64": "67b48f44534b8d4f3da9c64f8d41d91f92e15b3dc129979b7dad9a427d1eb76a"
       }
     }
   }
