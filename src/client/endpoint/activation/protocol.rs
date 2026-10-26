@@ -10,7 +10,6 @@ pub(super) fn focus_result_matches(
             Some(crate::client::shell::ClientEndpointFocusTarget::Pane(expected)),
             crate::api::schema::ResponseResult::PaneInfo { pane },
         ) => pane.focused && &pane.pane_id == expected,
-        #[cfg(windows)]
         (
             Some(crate::client::shell::ClientEndpointFocusTarget::Notification {
                 pane_id: expected,
@@ -174,7 +173,6 @@ pub(super) fn focus_request(
     focus: &crate::client::shell::ClientEndpointFocusTarget,
 ) -> std::io::Result<crate::protocol::ClientMessage> {
     let method = match focus {
-        #[cfg(windows)]
         crate::client::shell::ClientEndpointFocusTarget::Notification {
             pane_id,
             boot_id: expected,
