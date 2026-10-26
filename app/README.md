@@ -59,6 +59,7 @@ npm run smoke -- --flockr <path/to/flockr>   # end-to-end vs a real flockr serve
 npm run mock-gateway -- --host <ip>   # mock server for the phone
 npx tsx scripts/push-check.ts --flockr <bin> --pane <shell pane> --log <flockr-server.log>   # real Expo push path
 scripts/emu.sh boot|open|shot|tap|swipe|text|key|stop   # drive the Android emulator
+scripts/ios.sh boot|open|snap|tap|tapl|tapxy|touch|swipexy|type|shot|stop   # drive the iOS Simulator on the Mac over ssh
 ```
 
 `push-check` registers a fake Expo token and fakes a blocked status on a plain
@@ -66,7 +67,7 @@ shell pane; it passes when the server log shows Expo's reply (Expo rejects the
 fake token as `DeviceNotRegistered` and the server clears it).
 
 `--flockr` runs the given binary for `mobile pair --no-wait --json`,
-`pane report-agent` and `mobile devices revoke`, so run it with the same
+`pane report-agent`, `pane release-agent` and `mobile devices revoke`, so run it with the same
 environment as the server under test (for a debug build: `XDG_CONFIG_HOME` /
 `XDG_STATE_HOME` of that server, `FLOCKR_SOCKET_PATH` unset). It pairs, checks
 API passthrough, agents, observe and fit (45x30) surfaces, typed text, keys,
