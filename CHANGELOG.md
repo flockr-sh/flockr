@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.1.0] - 2026-10-26
+
+### Added
+- `ui.pane_focus_passthrough` lists foreground programs, such as nvim, that
+  get pane focus keys bound without the prefix (for example `ctrl+h`)
+  instead of flockr. At its edge, nvim can call `flockr pane focus`; the
+  README shows the setup.
+- Clicking a flockr system notification on Linux switches to the agent's
+  pane. On Hyprland it also brings the terminal window to the front.
+
+### Fixed
+- A stop signal sent right after the server started could kill it without
+  a clean shutdown.
+
 ## [1.0.0] - 2026-10-18
 
 First flockr release. flockr is a hard fork of

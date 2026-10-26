@@ -1,6 +1,6 @@
 [package]
 name = "flockr"
-version = "1.0.0"
+version = "1.1.0"
 edition = "2021"
 build = "build.rs"
 description = "terminal workspace manager for AI coding agents"
