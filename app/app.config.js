@@ -50,6 +50,8 @@ module.exports = {
         {
           // Blocked/Done alerts.
           defaultChannel: 'agents',
+          // TestFlight and App Store builds use Apple's production push service.
+          mode: 'production',
         },
       ],
       [
