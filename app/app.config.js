@@ -1,9 +1,8 @@
 // Expo config. Mirrors the Corvi app's setup (variants, EAS profiles, ATS).
 const APP_VARIANT = process.env.APP_VARIANT || 'development';
 const IS_DEV = APP_VARIANT === 'development';
-// Paste the id from `eas init` here (see README), like Corvi's
-// extra.eas.projectId. Push tokens need it; Expo Go does not.
-const EAS_PROJECT_ID = process.env.EAS_PROJECT_ID || '';
+// EAS project @dmkenney/flockr-mobile. Push tokens need it.
+const EAS_PROJECT_ID = process.env.EAS_PROJECT_ID || 'a9e72b44-a4d7-4c9d-bffd-9b7addac30b3';
 
 module.exports = {
   expo: {
