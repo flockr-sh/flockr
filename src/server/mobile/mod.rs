@@ -1,6 +1,6 @@
 //! Opt-in mobile gateway: a WebSocket listener for the flockr phone app.
 //!
-//! Contract: `docs/mobile/protocol-v1.md` (`mobile.v1`). The gateway runs as
+//! Contract: `docs/mobile/protocol.md` (`mobile.v2`). The gateway runs as
 //! tokio tasks on the server runtime plus a few dedicated threads (surface
 //! drains, push worker, Expo sender). It costs nothing when disabled and adds
 //! no work to the server loop until a phone subscribes to a surface.
@@ -10,6 +10,7 @@ pub(crate) mod api_proxy;
 pub(crate) mod cells;
 pub(crate) mod connection;
 pub(crate) mod listener;
+pub(crate) mod noise;
 pub(crate) mod protocol;
 pub(crate) mod push;
 pub(crate) mod surface;
@@ -222,6 +223,9 @@ pub(crate) struct Gateway {
     pub dir: PathBuf,
     pub name: String,
     pub server_id: String,
+    /// Noise static private key. Read-only; each connection builds its own
+    /// handshake from it.
+    pub noise_key: [u8; 32],
     pub boot_id: String,
     pub push: crate::config::MobilePushConfig,
     pub max_devices: u32,
@@ -390,6 +394,13 @@ pub(crate) fn start(config: &MobileConfig, deps: GatewayDeps) -> Option<MobileGa
             return None;
         }
     };
+    let noise_key = match store::load_or_create_noise_key(&dir) {
+        Ok(key) => key,
+        Err(err) => {
+            warn!(err = %err, "mobile gateway could not load its noise key; not listening");
+            return None;
+        }
+    };
     let boot_id = store::random_bytes::<8>()
         .map(|bytes| format!("b-{}", store::base64url(&bytes)))
         .unwrap_or_else(|_| format!("b-{}", std::process::id()));
@@ -403,6 +414,7 @@ pub(crate) fn start(config: &MobileConfig, deps: GatewayDeps) -> Option<MobileGa
         dir: dir.clone(),
         name: config.display_name(),
         server_id,
+        noise_key,
         boot_id,
         push: config.push.clone(),
         max_devices: config.max_devices,
@@ -466,13 +478,17 @@ impl Gateway {
     /// A gateway with no listener, server loop, or push threads.
     pub(crate) fn for_test(dir: PathBuf) -> Arc<Self> {
         let (server_event_tx, _) = mpsc::channel(1);
-        let (_, shutdown) = watch::channel(false);
+        let (shutdown_tx, shutdown) = watch::channel(false);
+        // Keep the sender alive so connections in tests do not see a shutdown.
+        std::mem::forget(shutdown_tx);
         let server_id = store::load_or_create_server_fingerprint(&dir).unwrap();
+        let noise_key = store::load_or_create_noise_key(&dir).unwrap();
         Arc::new(Self {
             api: api_proxy::ApiCaller::new(dir.join("no-api.sock")),
             dir,
             name: "test".to_owned(),
             server_id,
+            noise_key,
             boot_id: "b-test".to_owned(),
             push: crate::config::MobilePushConfig::default(),
             max_devices: 8,

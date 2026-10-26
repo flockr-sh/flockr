@@ -1,5 +1,8 @@
-//! One phone connection: WebSocket upgrade, `hello`, auth or pairing, then
-//! message dispatch until either side closes (§7–§9).
+//! One phone connection: WebSocket upgrade, Noise handshake, `hello`, auth or
+//! pairing, then message dispatch until either side closes (§7–§9).
+//!
+//! The Noise session lives in this task only: inbound frames are decrypted
+//! and outbound messages encrypted here, never under a shared lock.
 
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
@@ -19,6 +22,7 @@ use tokio_tungstenite::tungstenite::{Error as WsError, Message};
 use tokio_tungstenite::WebSocketStream;
 use tracing::{debug, info, warn};
 
+use super::noise::{self, OpenError, Session};
 use super::protocol::{self, close, ClientMessage, DecodeError, ErrorCode, Hello, InputKind};
 use super::surface::{self, SubCtl, SubHandle};
 use super::{
@@ -44,8 +48,11 @@ const CLOSE_WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 /// How long a relative scroll keeps building on the last requested offset
 /// instead of the offset in the last frame sent.
 const SCROLL_TARGET_HOLD: Duration = Duration::from_secs(1);
+/// Cap on one reassembled message after `hello`: the largest input message
+/// plus room for its JSON envelope. Per-type limits are checked after decode.
+const MAX_INBOUND_MESSAGE_BYTES: usize = MAX_INPUT_BYTES + 64 * 1024;
 
-/// Upgrade check: path `/mobile/v1` and subprotocol `flockr.mobile.v1`.
+/// Upgrade check: path `/mobile/v2` and subprotocol `flockr.mobile.v2`.
 #[allow(clippy::result_large_err)] // The error type is fixed by tungstenite's callback trait.
 fn check_upgrade(request: &Request, mut response: Response) -> Result<Response, ErrorResponse> {
     let reject = |status: StatusCode, body: &str| {
@@ -77,7 +84,7 @@ fn check_upgrade(request: &Request, mut response: Response) -> Result<Response, 
     if !offered {
         return Err(reject(
             StatusCode::BAD_REQUEST,
-            "missing subprotocol flockr.mobile.v1",
+            &format!("missing subprotocol {}", protocol::SUBPROTOCOL),
         ));
     }
     response.headers_mut().insert(
@@ -95,17 +102,58 @@ async fn send_timed(sink: &mut WsSink, message: Message, limit: Duration) -> boo
     )
 }
 
-async fn close_with(sink: &mut WsSink, code: u16, error: Option<String>) {
-    if let Some(error) = error {
-        if !send_timed(sink, Message::Text(error.into()), CLOSE_WRITE_TIMEOUT).await {
-            return;
-        }
-    }
+/// Sends a plaintext WebSocket close frame.
+async fn close_plain(sink: &mut WsSink, code: u16) {
     let close = Message::Close(Some(CloseFrame {
         code: CloseCode::from(code),
         reason: "".into(),
     }));
     send_timed(sink, close, CLOSE_WRITE_TIMEOUT).await;
+}
+
+/// Write side of an established Noise channel.
+struct Link {
+    sink: WsSink,
+    session: Session,
+}
+
+impl Link {
+    /// Encrypts one JSON message and sends its frames. `false` when the peer
+    /// is gone or stopped reading.
+    async fn send(&mut self, text: &str, limit: Duration) -> bool {
+        let frames = match self.session.seal(text.as_bytes()) {
+            Ok(frames) => frames,
+            Err(err) => {
+                warn!(err = %err, "mobile message could not be encrypted");
+                return false;
+            }
+        };
+        let sink = &mut self.sink;
+        let write = async move {
+            for frame in frames {
+                sink.feed(Message::Binary(frame.into())).await?;
+            }
+            sink.flush().await
+        };
+        matches!(tokio::time::timeout(limit, write).await, Ok(Ok(())))
+    }
+
+    /// Sends `error` (if any) through the channel, then a plaintext close.
+    async fn close(&mut self, code: u16, error: Option<String>) {
+        if let Some(error) = error {
+            if !self.send(&error, CLOSE_WRITE_TIMEOUT).await {
+                return;
+            }
+        }
+        close_plain(&mut self.sink, code).await;
+    }
+}
+
+fn open_error_code(err: OpenError) -> u16 {
+    match err {
+        OpenError::TooBig => close::TOO_BIG,
+        OpenError::Decrypt | OpenError::BadFlag => close::PROTOCOL_ERROR,
+    }
 }
 
 /// Holds one of the limited unauthenticated slots until dropped.
@@ -319,17 +367,40 @@ fn welcome(gateway: &Gateway, auth: &Authenticated, max_in_flight: u32) -> Strin
     .to_string()
 }
 
-/// Reads the next text frame (skipping pings/pongs). `Err` carries a close code.
-async fn next_text(source: &mut WsSource) -> Result<Option<String>, u16> {
+/// Reads the next binary frame (skipping pings/pongs). `Err` carries a
+/// close code.
+async fn next_binary(source: &mut WsSource) -> Result<Option<Vec<u8>>, u16> {
     loop {
         match source.next().await {
             None => return Ok(None),
-            Some(Ok(Message::Text(text))) => return Ok(Some(text.to_string())),
-            Some(Ok(Message::Binary(_))) => return Err(close::PROTOCOL_ERROR),
+            Some(Ok(Message::Binary(frame))) => return Ok(Some(frame.to_vec())),
+            Some(Ok(Message::Text(_))) => return Err(close::PROTOCOL_ERROR),
             Some(Ok(Message::Close(_))) => return Ok(None),
             Some(Ok(_)) => continue,
             Some(Err(WsError::Capacity(_))) => return Err(close::TOO_BIG),
             Some(Err(_)) => return Ok(None),
+        }
+    }
+}
+
+/// Reads frames until one message of at most `cap` bytes is complete.
+async fn next_message(
+    source: &mut WsSource,
+    session: &mut Session,
+    cap: usize,
+) -> Result<Option<String>, u16> {
+    loop {
+        let Some(frame) = next_binary(source).await? else {
+            return Ok(None);
+        };
+        match session.open(&frame, cap) {
+            Ok(None) => continue,
+            Ok(Some(bytes)) => {
+                return String::from_utf8(bytes)
+                    .map(Some)
+                    .map_err(|_| close::PROTOCOL_ERROR)
+            }
+            Err(err) => return Err(open_error_code(err)),
         }
     }
 }
@@ -346,11 +417,12 @@ pub(crate) async fn serve(gateway: Arc<Gateway>, stream: TcpStream, peer: Socket
         debug!(%peer, "mobile connection refused: too many unauthenticated connections");
         return;
     };
-    // One deadline covers the upgrade and `hello`.
+    // One deadline covers the upgrade, the Noise handshake, and `hello`.
     let deadline = tokio::time::Instant::now() + HELLO_TIMEOUT;
+    // Every frame is one Noise message, so no frame is larger than Noise's limit.
     let config = WebSocketConfig::default()
-        .max_message_size(Some(MAX_INPUT_BYTES + 64 * 1024))
-        .max_frame_size(Some(MAX_INPUT_BYTES + 64 * 1024));
+        .max_message_size(Some(noise::MAX_FRAME_LEN))
+        .max_frame_size(Some(noise::MAX_FRAME_LEN));
     let upgrade =
         tokio_tungstenite::accept_hdr_async_with_config(stream, check_upgrade, Some(config));
     let ws = match tokio::time::timeout_at(deadline, upgrade).await {
@@ -367,28 +439,55 @@ pub(crate) async fn serve(gateway: Arc<Gateway>, stream: TcpStream, peer: Socket
     };
     let (mut sink, mut source) = ws.split();
 
-    let hello_text = match tokio::time::timeout_at(deadline, next_text(&mut source)).await {
+    let msg1 = match tokio::time::timeout_at(deadline, next_binary(&mut source)).await {
         Err(_) => {
             record_failure(&gateway, ip);
-            close_with(&mut sink, close::HELLO_TIMEOUT, None).await;
+            close_plain(&mut sink, close::HELLO_TIMEOUT).await;
             return;
         }
         Ok(Err(code)) => {
-            close_with(&mut sink, code, None).await;
+            close_plain(&mut sink, code).await;
+            return;
+        }
+        Ok(Ok(None)) => return,
+        Ok(Ok(Some(frame))) => frame,
+    };
+    let accepted = noise::responder(&gateway.noise_key)
+        .map_err(|err| err.to_string())
+        .and_then(|builder| noise::accept(builder, &msg1));
+    let (msg2, session) = match accepted {
+        Ok(accepted) => accepted,
+        Err(reason) => {
+            debug!(%peer, reason, "mobile handshake failed");
+            record_failure(&gateway, ip);
+            close_plain(&mut sink, close::HANDSHAKE_FAILED).await;
+            return;
+        }
+    };
+    let sent = tokio::time::timeout_at(deadline, sink.send(Message::Binary(msg2.into()))).await;
+    if !matches!(sent, Ok(Ok(()))) {
+        return;
+    }
+    let mut link = Link { sink, session };
+
+    let next = next_message(&mut source, &mut link.session, MAX_MESSAGE_BYTES);
+    let hello_text = match tokio::time::timeout_at(deadline, next).await {
+        Err(_) => {
+            record_failure(&gateway, ip);
+            close_plain(&mut link.sink, close::HELLO_TIMEOUT).await;
+            return;
+        }
+        Ok(Err(code)) => {
+            close_plain(&mut link.sink, code).await;
             return;
         }
         Ok(Ok(None)) => return,
         Ok(Ok(Some(text))) => text,
     };
-    if hello_text.len() > MAX_MESSAGE_BYTES {
-        close_with(&mut sink, close::TOO_BIG, None).await;
-        return;
-    }
     let hello = match ClientMessage::decode(&hello_text) {
         Ok(ClientMessage::Hello(hello)) => hello,
         Ok(_) | Err(DecodeError::Malformed(_)) => {
-            close_with(
-                &mut sink,
+            link.close(
                 close::PROTOCOL_ERROR,
                 Some(protocol::error(
                     None,
@@ -400,8 +499,7 @@ pub(crate) async fn serve(gateway: Arc<Gateway>, stream: TcpStream, peer: Socket
             return;
         }
         Err(DecodeError::BadRequest { message, .. }) => {
-            close_with(
-                &mut sink,
+            link.close(
                 close::PROTOCOL_ERROR,
                 Some(protocol::error(None, ErrorCode::BadRequest, message)),
             )
@@ -417,18 +515,14 @@ pub(crate) async fn serve(gateway: Arc<Gateway>, stream: TcpStream, peer: Socket
         ))
         .unwrap_or_default();
         error["supported"] = json!([protocol::VERSION]);
-        close_with(
-            &mut sink,
-            close::UNSUPPORTED_VERSION,
-            Some(error.to_string()),
-        )
-        .await;
+        link.close(close::UNSUPPORTED_VERSION, Some(error.to_string()))
+            .await;
         return;
     }
     let auth = match authenticate(&gateway, &hello, ip) {
         Ok(auth) => auth,
         Err((code, error)) => {
-            close_with(&mut sink, code, Some(error)).await;
+            link.close(code, Some(error)).await;
             return;
         }
     };
@@ -459,8 +553,7 @@ pub(crate) async fn serve(gateway: Arc<Gateway>, stream: TcpStream, peer: Socket
         allowed
     };
     if !registered {
-        close_with(
-            &mut sink,
+        link.close(
             close::TOO_MANY_CONNECTIONS,
             Some(protocol::error(
                 None,
@@ -474,8 +567,8 @@ pub(crate) async fn serve(gateway: Arc<Gateway>, stream: TcpStream, peer: Socket
     slot.release();
     touch_last_seen(&gateway, &device_id, false);
 
-    let welcome = Message::Text(welcome(&gateway, &auth, hello.max_in_flight()).into());
-    if !send_timed(&mut sink, welcome, WRITE_TIMEOUT).await {
+    let welcome = welcome(&gateway, &auth, hello.max_in_flight());
+    if !link.send(&welcome, WRITE_TIMEOUT).await {
         gateway.state().conns.remove(&conn_id);
         return;
     }
@@ -497,7 +590,7 @@ pub(crate) async fn serve(gateway: Arc<Gateway>, stream: TcpStream, peer: Socket
         sub_ended_tx,
         api_done_tx,
     };
-    conn.run(sink, source, out_rx, sub_ended_rx, api_done_rx)
+    conn.run(link, source, out_rx, sub_ended_rx, api_done_rx)
         .await;
     conn.cleanup();
     gateway.state().conns.remove(&conn_id);
@@ -555,7 +648,7 @@ struct Conn {
 impl Conn {
     async fn run(
         &mut self,
-        mut sink: WsSink,
+        mut link: Link,
         mut source: WsSource,
         out_rx: OutboundRx,
         mut sub_ended_rx: mpsc::UnboundedReceiver<u32>,
@@ -582,21 +675,21 @@ impl Conn {
                     }
                     let request = close_rx.borrow_and_update().clone();
                     if let Some((code, error)) = request {
-                        close_with(&mut sink, code, error).await;
+                        link.close(code, error).await;
                         return;
                     }
                 }
                 _ = shutdown.changed() => {
-                    let bye = Message::Text(json!({ "t": "bye", "reason": "server_shutdown" }).to_string().into());
-                    if send_timed(&mut sink, bye, CLOSE_WRITE_TIMEOUT).await {
-                        close_with(&mut sink, close::SERVER_SHUTDOWN, None).await;
+                    let bye = json!({ "t": "bye", "reason": "server_shutdown" }).to_string();
+                    if link.send(&bye, CLOSE_WRITE_TIMEOUT).await {
+                        close_plain(&mut link.sink, close::SERVER_SHUTDOWN).await;
                     }
                     return;
                 }
                 message = out_rx.recv() => match message {
                     Some(text) => {
                         let len = text.len();
-                        let sent = send_timed(&mut sink, Message::Text(text.into()), WRITE_TIMEOUT).await;
+                        let sent = link.send(&text, WRITE_TIMEOUT).await;
                         queued.fetch_sub(len, Ordering::AcqRel);
                         if !sent {
                             debug!(device_id = %self.device_id, "mobile write failed or stalled; closing");
@@ -614,17 +707,31 @@ impl Conn {
                     }
                     match incoming {
                     None | Some(Ok(Message::Close(_))) => return,
-                    Some(Ok(Message::Text(text))) => {
-                        if let Flow::Close(code, error) = self.handle_text(text.as_str()).await {
-                            close_with(&mut sink, code, error).await;
+                    Some(Ok(Message::Binary(frame))) => {
+                        let text = match link.session.open(&frame, MAX_INBOUND_MESSAGE_BYTES) {
+                            Ok(None) => continue,
+                            Ok(Some(bytes)) => String::from_utf8(bytes),
+                            Err(err) => {
+                                close_plain(&mut link.sink, open_error_code(err)).await;
+                                return;
+                            }
+                        };
+                        let flow = match text {
+                            Ok(text) => self.handle_text(&text).await,
+                            Err(_) => Flow::Close(
+                                close::PROTOCOL_ERROR,
+                                Some(protocol::error(None, ErrorCode::BadRequest, "message is not UTF-8")),
+                            ),
+                        };
+                        if let Flow::Close(code, error) = flow {
+                            link.close(code, error).await;
                             return;
                         }
                     }
-                    Some(Ok(Message::Binary(_))) => {
-                        close_with(
-                            &mut sink,
+                    Some(Ok(Message::Text(_))) => {
+                        link.close(
                             close::PROTOCOL_ERROR,
-                            Some(protocol::error(None, ErrorCode::BadRequest, "binary frames are not supported")),
+                            Some(protocol::error(None, ErrorCode::BadRequest, "text frames are not supported")),
                         )
                         .await;
                         return;
@@ -632,7 +739,7 @@ impl Conn {
                     Some(Ok(Message::Pong(_))) => last_pong = Instant::now(),
                     Some(Ok(_)) => {}
                     Some(Err(WsError::Capacity(_))) => {
-                        close_with(&mut sink, close::TOO_BIG, None).await;
+                        close_plain(&mut link.sink, close::TOO_BIG).await;
                         return;
                     }
                     Some(Err(_)) => return,
@@ -643,7 +750,7 @@ impl Conn {
                         debug!(device_id = %self.device_id, "mobile connection missed pongs; closing");
                         return;
                     }
-                    if !send_timed(&mut sink, Message::Ping(Vec::new().into()), WRITE_TIMEOUT).await {
+                    if !send_timed(&mut link.sink, Message::Ping(Vec::new().into()), WRITE_TIMEOUT).await {
                         return;
                     }
                 }
@@ -1175,7 +1282,7 @@ mod tests {
         let paired = authenticate(
             &gateway,
             &hello(&format!(
-                r#"{{"t":"hello","versions":[1],"app":{{"platform":"ios"}},"pair":{{"code":"{code}","device_name":"Phone","sid":"{}"}}}}"#,
+                r#"{{"t":"hello","versions":[2],"app":{{"platform":"ios"}},"pair":{{"code":"{code}","device_name":"Phone","sid":"{}"}}}}"#,
                 gateway.server_id
             )),
             ip,
@@ -1187,7 +1294,7 @@ mod tests {
         let ok = authenticate(
             &gateway,
             &hello(&format!(
-                r#"{{"t":"hello","versions":[1],"auth":{{"device_id":"{device_id}","token":"{token}"}}}}"#
+                r#"{{"t":"hello","versions":[2],"auth":{{"device_id":"{device_id}","token":"{token}"}}}}"#
             )),
             ip,
         )
@@ -1195,7 +1302,7 @@ mod tests {
         assert!(ok.token.is_none());
 
         let bad = hello(&format!(
-            r#"{{"t":"hello","versions":[1],"auth":{{"device_id":"{device_id}","token":"fmd1_wrong"}}}}"#
+            r#"{{"t":"hello","versions":[2],"auth":{{"device_id":"{device_id}","token":"fmd1_wrong"}}}}"#
         ));
         for _ in 0..AUTH_FAILURES_PER_IP {
             assert!(!ip_blocked(&gateway, ip));
@@ -1207,7 +1314,7 @@ mod tests {
         assert!(!ip_blocked(&gateway, "100.64.0.10".parse().unwrap()));
 
         let unknown = hello(&format!(
-            r#"{{"t":"hello","versions":[1],"auth":{{"device_id":"d_unknown","token":"{token}"}}}}"#
+            r#"{{"t":"hello","versions":[2],"auth":{{"device_id":"d_unknown","token":"{token}"}}}}"#
         ));
         assert_eq!(
             authenticate(&gateway, &unknown, "10.0.0.1".parse().unwrap())
@@ -1222,7 +1329,7 @@ mod tests {
             .update_devices(|devices| devices.remove(&device_id))
             .unwrap();
         let revoked = hello(&format!(
-            r#"{{"t":"hello","versions":[1],"auth":{{"device_id":"{device_id}","token":"{token}"}}}}"#
+            r#"{{"t":"hello","versions":[2],"auth":{{"device_id":"{device_id}","token":"{token}"}}}}"#
         ));
         assert_eq!(
             authenticate(&gateway, &revoked, "10.0.0.2".parse().unwrap())
@@ -1239,19 +1346,19 @@ mod tests {
         let dir = temp_dir("conn-hello");
         let gateway = Gateway::for_test(dir.clone());
         let ip: IpAddr = "100.64.0.1".parse().unwrap();
-        let neither = hello(r#"{"t":"hello","versions":[1]}"#);
+        let neither = hello(r#"{"t":"hello","versions":[2]}"#);
         assert_eq!(
             authenticate(&gateway, &neither, ip).err().unwrap().0,
             close::PROTOCOL_ERROR
         );
         let both = hello(
-            r#"{"t":"hello","versions":[1],"auth":{"device_id":"d","token":"t"},"pair":{"code":"c","sid":"s"}}"#,
+            r#"{"t":"hello","versions":[2],"auth":{"device_id":"d","token":"t"},"pair":{"code":"c","sid":"s"}}"#,
         );
         assert_eq!(
             authenticate(&gateway, &both, ip).err().unwrap().0,
             close::PROTOCOL_ERROR
         );
-        let pair = hello(r#"{"t":"hello","versions":[1],"pair":{"code":"c","sid":"s"}}"#);
+        let pair = hello(r#"{"t":"hello","versions":[2],"pair":{"code":"c","sid":"s"}}"#);
         for attempt in 0..PAIR_ATTEMPTS {
             let addr = IpAddr::from([10, 0, 1, attempt as u8]);
             assert_eq!(
@@ -1295,7 +1402,7 @@ mod tests {
         let fixture: Value = serde_json::from_str(
             &std::fs::read_to_string(
                 std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .join("tests/fixtures/mobile-v1/server.welcome.json"),
+                    .join("tests/fixtures/mobile-v2/server.welcome.json"),
             )
             .unwrap(),
         )
@@ -1332,28 +1439,256 @@ mod tests {
     #[test]
     fn upgrade_requires_path_and_subprotocol() {
         let ok = check_upgrade(
-            &request("/mobile/v1", Some("chat, flockr.mobile.v1")),
+            &request("/mobile/v2", Some("chat, flockr.mobile.v2")),
             Response::new(()),
         )
         .unwrap();
         assert_eq!(
             ok.headers().get("Sec-WebSocket-Protocol").unwrap(),
-            "flockr.mobile.v1"
+            "flockr.mobile.v2"
         );
-        assert_eq!(
-            check_upgrade(
-                &request("/other", Some("flockr.mobile.v1")),
-                Response::new(())
-            )
-            .unwrap_err()
-            .status(),
-            StatusCode::NOT_FOUND
-        );
-        assert_eq!(
-            check_upgrade(&request("/mobile/v1", None), Response::new(()))
-                .unwrap_err()
-                .status(),
-            StatusCode::BAD_REQUEST
-        );
+        for path in ["/other", "/mobile/v1"] {
+            assert_eq!(
+                check_upgrade(&request(path, Some("flockr.mobile.v2")), Response::new(()))
+                    .unwrap_err()
+                    .status(),
+                StatusCode::NOT_FOUND
+            );
+        }
+        for header in [None, Some("flockr.mobile.v1")] {
+            assert_eq!(
+                check_upgrade(&request("/mobile/v2", header), Response::new(()))
+                    .unwrap_err()
+                    .status(),
+                StatusCode::BAD_REQUEST
+            );
+        }
+    }
+
+    mod wire {
+        use super::*;
+        use crate::server::mobile::noise::tests::{finish, initiator, write_msg1};
+        use crate::server::mobile::noise::MAX_CHUNK_LEN;
+        use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+
+        /// A gateway in a temp dir with `serve` behind a loopback listener.
+        struct Server {
+            gateway: Arc<Gateway>,
+            addr: SocketAddr,
+            dir: std::path::PathBuf,
+        }
+
+        impl Drop for Server {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.dir);
+            }
+        }
+
+        async fn server(name: &str) -> Server {
+            let dir = temp_dir(name);
+            let gateway = Gateway::for_test(dir.clone());
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            let serving = gateway.clone();
+            tokio::spawn(async move {
+                while let Ok((stream, peer)) = listener.accept().await {
+                    tokio::spawn(serve(serving.clone(), stream, peer));
+                }
+            });
+            Server { gateway, addr, dir }
+        }
+
+        impl Server {
+            fn public_key(&self) -> [u8; 32] {
+                store::noise_public_key(&self.gateway.noise_key).unwrap()
+            }
+
+            fn failures(&self) -> usize {
+                self.gateway
+                    .state()
+                    .ip_failures
+                    .get_mut(&IpAddr::from([127, 0, 0, 1]))
+                    .map_or(0, |window| {
+                        window.count(Instant::now(), AUTH_FAILURE_WINDOW)
+                    })
+            }
+        }
+
+        async fn connect(addr: SocketAddr) -> Ws {
+            let stream = TcpStream::connect(addr).await.unwrap();
+            let mut request = format!("ws://{addr}/mobile/v2")
+                .into_client_request()
+                .unwrap();
+            request.headers_mut().insert(
+                "Sec-WebSocket-Protocol",
+                HeaderValue::from_static("flockr.mobile.v2"),
+            );
+            tokio_tungstenite::client_async(request, stream)
+                .await
+                .unwrap()
+                .0
+        }
+
+        async fn handshake(ws: &mut Ws, server_public: &[u8]) -> Session {
+            let mut client = initiator(server_public, None);
+            ws.send(Message::Binary(write_msg1(&mut client).into()))
+                .await
+                .unwrap();
+            match ws.next().await {
+                Some(Ok(Message::Binary(msg2))) => finish(client, &msg2),
+                other => panic!("expected handshake message 2, got {other:?}"),
+            }
+        }
+
+        async fn send(ws: &mut Ws, session: &mut Session, text: &str) {
+            for frame in session.seal(text.as_bytes()).unwrap() {
+                ws.send(Message::Binary(frame.into())).await.unwrap();
+            }
+        }
+
+        /// Next JSON message plus how many frames carried it.
+        async fn recv(ws: &mut Ws, session: &mut Session) -> (Value, usize) {
+            let mut frames = 0;
+            loop {
+                match ws.next().await {
+                    Some(Ok(Message::Binary(frame))) => {
+                        frames += 1;
+                        if let Some(bytes) = session.open(&frame, usize::MAX).unwrap() {
+                            return (serde_json::from_slice(&bytes).unwrap(), frames);
+                        }
+                    }
+                    Some(Ok(Message::Ping(_) | Message::Pong(_))) => {}
+                    other => panic!("expected a binary frame, got {other:?}"),
+                }
+            }
+        }
+
+        async fn close_code(ws: &mut Ws) -> u16 {
+            loop {
+                match ws.next().await {
+                    Some(Ok(Message::Close(Some(frame)))) => return u16::from(frame.code),
+                    Some(Ok(Message::Ping(_) | Message::Pong(_))) => {}
+                    other => panic!("expected a close frame, got {other:?}"),
+                }
+            }
+        }
+
+        #[tokio::test]
+        async fn pairs_over_noise_and_chunks_large_messages_both_ways() {
+            let server = server("wire-pair").await;
+            let (code, _) = pairing::create_pairing(&server.dir, 600, store::now_unix()).unwrap();
+            let mut ws = connect(server.addr).await;
+            let mut session = handshake(&mut ws, &server.public_key()).await;
+            let hello = json!({
+                "t": "hello",
+                "versions": [2],
+                "app": { "platform": "ios" },
+                "pair": { "code": code, "device_name": "Phone", "sid": server.gateway.server_id },
+            });
+            send(&mut ws, &mut session, &hello.to_string()).await;
+            let (welcome, _) = recv(&mut ws, &mut session).await;
+            assert_eq!(welcome["t"], "welcome");
+            assert_eq!(welcome["version"], 2);
+            assert!(welcome["device"]["token"]
+                .as_str()
+                .unwrap()
+                .starts_with("fmd1_"));
+
+            // Phone → server: a paste larger than one chunk is reassembled and
+            // handled (the test gateway has no API socket, so it fails there).
+            let paste = json!({
+                "t": "input.paste",
+                "id": "i1",
+                "target": "p_1",
+                "text": "x".repeat(MAX_CHUNK_LEN + 100),
+            });
+            send(&mut ws, &mut session, &paste.to_string()).await;
+            let (reply, frames) = recv(&mut ws, &mut session).await;
+            assert_eq!(frames, 1);
+            assert_eq!(reply["t"], "error");
+            assert_eq!(reply["id"], "i1");
+            assert_eq!(reply["code"], "server_unavailable");
+
+            // Server → phone: a message larger than one chunk.
+            let big = json!({ "t": "test.big", "data": "y".repeat(MAX_CHUNK_LEN * 2) });
+            let out = server
+                .gateway
+                .state()
+                .conns
+                .values()
+                .next()
+                .unwrap()
+                .out
+                .clone();
+            assert!(out.send(big.to_string()));
+            let (received, frames) = recv(&mut ws, &mut session).await;
+            assert_eq!(frames, 3);
+            assert_eq!(received, big);
+        }
+
+        #[tokio::test]
+        async fn unsupported_version_is_rejected_inside_the_channel() {
+            let server = server("wire-version").await;
+            let mut ws = connect(server.addr).await;
+            let mut session = handshake(&mut ws, &server.public_key()).await;
+            send(&mut ws, &mut session, r#"{"t":"hello","versions":[1]}"#).await;
+            let (error, _) = recv(&mut ws, &mut session).await;
+            assert_eq!(error["code"], "unsupported_version");
+            assert_eq!(error["supported"], json!([2]));
+            assert_eq!(close_code(&mut ws).await, close::UNSUPPORTED_VERSION);
+        }
+
+        #[tokio::test]
+        async fn wrong_server_key_closes_4006_and_counts_as_a_failure() {
+            let server = server("wire-wrong-key").await;
+            let other = store::noise_public_key(&[9_u8; 32]).unwrap();
+            let mut ws = connect(server.addr).await;
+            let mut client = initiator(&other, None);
+            ws.send(Message::Binary(write_msg1(&mut client).into()))
+                .await
+                .unwrap();
+            assert_eq!(close_code(&mut ws).await, close::HANDSHAKE_FAILED);
+            assert_eq!(server.failures(), 1);
+
+            // A short handshake message fails the same way.
+            let mut ws = connect(server.addr).await;
+            ws.send(Message::Binary(vec![0_u8; 32].into()))
+                .await
+                .unwrap();
+            assert_eq!(close_code(&mut ws).await, close::HANDSHAKE_FAILED);
+            assert_eq!(server.failures(), 2);
+        }
+
+        #[tokio::test]
+        async fn text_frames_close_4000() {
+            let server = server("wire-text").await;
+            let mut ws = connect(server.addr).await;
+            ws.send(Message::Text(r#"{"t":"hello"}"#.into()))
+                .await
+                .unwrap();
+            assert_eq!(close_code(&mut ws).await, close::PROTOCOL_ERROR);
+
+            let mut ws = connect(server.addr).await;
+            handshake(&mut ws, &server.public_key()).await;
+            ws.send(Message::Text(r#"{"t":"hello","versions":[2]}"#.into()))
+                .await
+                .unwrap();
+            assert_eq!(close_code(&mut ws).await, close::PROTOCOL_ERROR);
+        }
+
+        #[tokio::test]
+        async fn hello_over_the_cap_closes_1009_before_it_is_complete() {
+            let server = server("wire-cap").await;
+            let mut ws = connect(server.addr).await;
+            let mut session = handshake(&mut ws, &server.public_key()).await;
+            let frames = session.seal(&vec![b' '; MAX_CHUNK_LEN * 3]).unwrap();
+            // Two "more chunks follow" frames pass the 64 KiB hello cap; the
+            // last chunk is never sent.
+            for frame in frames.into_iter().take(2) {
+                assert_eq!(frame.len(), noise::MAX_FRAME_LEN);
+                ws.send(Message::Binary(frame.into())).await.unwrap();
+            }
+            assert_eq!(close_code(&mut ws).await, close::TOO_BIG);
+        }
     }
 }

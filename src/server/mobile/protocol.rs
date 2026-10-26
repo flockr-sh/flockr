@@ -1,4 +1,4 @@
-//! `mobile.v1` message types (`docs/mobile/protocol-v1.md` §8–§10). Pure.
+//! `mobile.v2` message types (`docs/mobile/protocol.md` §8–§10). Pure.
 //!
 //! Client messages are decoded leniently: unknown fields are ignored and
 //! unknown enum strings fall back to `Unknown`. Server messages are built with
@@ -7,9 +7,9 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-pub(crate) const SUBPROTOCOL: &str = "flockr.mobile.v1";
-pub(crate) const PATH: &str = "/mobile/v1";
-pub(crate) const VERSION: u32 = 1;
+pub(crate) const SUBPROTOCOL: &str = "flockr.mobile.v2";
+pub(crate) const PATH: &str = "/mobile/v2";
+pub(crate) const VERSION: u32 = 2;
 
 /// Close codes (§7).
 pub(crate) mod close {
@@ -21,6 +21,7 @@ pub(crate) mod close {
     pub(crate) const REVOKED: u16 = 4003;
     pub(crate) const TOO_MANY_CONNECTIONS: u16 = 4004;
     pub(crate) const PAIRING_FAILED: u16 = 4005;
+    pub(crate) const HANDSHAKE_FAILED: u16 = 4006;
     pub(crate) const HELLO_TIMEOUT: u16 = 4008;
     pub(crate) const SERVER_SHUTDOWN: u16 = 4009;
     pub(crate) const RATE_LIMITED: u16 = 4029;
@@ -455,7 +456,7 @@ mod tests {
     fn fixture(name: &str) -> String {
         std::fs::read_to_string(
             std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("tests/fixtures/mobile-v1")
+                .join("tests/fixtures/mobile-v2")
                 .join(name),
         )
         .unwrap()
@@ -463,7 +464,7 @@ mod tests {
 
     #[test]
     fn decodes_every_client_fixture() {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/mobile-v1");
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/mobile-v2");
         let mut decoded = 0;
         for entry in std::fs::read_dir(dir).unwrap() {
             let name = entry.unwrap().file_name().to_string_lossy().into_owned();
@@ -488,7 +489,7 @@ mod tests {
         else {
             panic!("not hello");
         };
-        assert_eq!(hello.negotiated_version(), Some(1));
+        assert_eq!(hello.negotiated_version(), Some(2));
         assert_eq!(hello.max_in_flight(), 2);
         assert_eq!(hello.auth.unwrap().device_id, "d_q8Zt3mVfR1xKp0aB");
         let ClientMessage::Hello(hello) =

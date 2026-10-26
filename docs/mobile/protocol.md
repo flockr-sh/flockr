@@ -1,6 +1,12 @@
-# flockr mobile protocol v1 (`mobile.v1`)
+# flockr mobile protocol v2 (`mobile.v2`)
 
-Status: draft contract for the prototype. Both the Rust server (`flockr`)
+Status: draft contract for the prototype.
+
+v2 carries every message inside a Noise channel (section 7.1) pinned to a
+server key from the pairing QR. Message types, close codes, and limits are
+the ones the plaintext v1 draft had, unless this file says otherwise. v1 was
+never released; servers support only v2 and phones paired under v1 must pair
+again. Both the Rust server (`flockr`)
 and the TypeScript app (`flockr-mobile`) implement this file independently.
 When code and this file disagree, fix one of them; do not guess.
 
@@ -12,7 +18,8 @@ Key words: MUST, MUST NOT, SHOULD, MAY as in RFC 2119.
   off by default, bound only to configured IP addresses.
 - The phone runs no terminal emulator and no SSH. The server renders pane
   cells; the phone draws them.
-- Everything on the socket is JSON text frames. The existing bincode
+- Every message is one JSON object, encrypted and carried in WebSocket
+  binary frames (section 7). The existing bincode
   endpoint codecs (`src/protocol/endpoint.rs`, `surface_delta.rs`,
   `surface_scroll.rs`, `wire.rs`) are **not** changed and **not** exposed.
   `PROTOCOL_VERSION` is not bumped. No new `ServerMessage`/`ClientMessage`
@@ -23,7 +30,8 @@ Key words: MUST, MUST NOT, SHOULD, MAY as in RFC 2119.
   2. Agent list stream (`agents.watch`).
   3. Terminal surface stream (subscribe to one pane; full frame, then deltas).
   4. Input and push-token registration.
-- No TLS in v1. See section 12.
+- Encryption: `Noise_NK_25519_ChaChaPoly_SHA256`, the server's static key
+  pinned by the pairing QR. No TLS. See sections 7.1 and 12.
 
 ## 2. Config
 
@@ -52,7 +60,9 @@ Sample config text (append to `src/main.rs` sample):
 ```toml
 # Mobile gateway for the flockr phone app. Off by default.
 # Binds only to the listed IP addresses (for example a NetBird or WireGuard
-# address). v1 has no TLS: only list addresses on an encrypted private network.
+# address). Traffic is end-to-end encrypted (Noise) and pinned to the server
+# key in the pairing QR. A public address works but exposes the pairing
+# endpoint to the internet; prefer a private network address.
 # Requires a server restart.
 # [mobile]
 # enabled = false
@@ -75,6 +85,14 @@ fails (for example NetBird is not up yet at boot), it logs a `warn!` and
 retries that address every 10 s until the server stops. It does not fall back
 to other addresses.
 
+Public addresses: once bound, an address that is not loopback, private
+(10/8, 172.16/12, 192.168/16), CGNAT/VPN (100.64/10), link-local
+(169.254/16, fe80::/10), or IPv6 ULA (fc00::/7) gets one `warn!`:
+`mobile gateway listening on public address <addr>: traffic is encrypted,
+but anyone on the internet can reach the pairing endpoint`. Binding
+proceeds. `flockr mobile status` shows the same note next to that address.
+IPv4-mapped IPv6 addresses are classified by their IPv4 part.
+
 ## 3. Files (state dir)
 
 All under `crate::config::state_dir()/mobile/` (so debug builds use
@@ -85,12 +103,21 @@ atomic (write temp file in the same dir, `fsync`, rename). Share one helper;
 | File | Writer | Content |
 |---|---|---|
 | `server-id` | server or CLI, first use | 32 random bytes, hex. Never leaves the host. |
+| `noise-key` | server or CLI, first use | 32 raw bytes: the X25519 static private key for Noise (section 7.1). Never leaves the host. |
 | `pairing.json` | CLI writes, server consumes | The one pending bootstrap code, or absent. |
 | `devices.json` | server (pair, push token, last seen), CLI (revoke) | Paired devices. |
 | `gateway.json` | server | Bound addresses, for CLI status/warnings. Removed on clean shutdown. |
 
 `server_id` (public fingerprint) = base64url-no-pad of the first 16 bytes of
 `sha256(server-id file bytes)`. 22 characters.
+
+Noise public key = X25519(`noise-key`, basepoint), 32 bytes. Its
+fingerprint (shown by `flockr mobile status`) = base64url-no-pad of the first
+16 bytes of `sha256(public key)`. `noise-key` is created without replacing an
+existing file (temp file, then hard link), so a CLI and a server creating it
+at the same time end up with the same key. A `noise-key` that is not exactly
+32 bytes is an error, not replaced: replacing it would break every pinned
+phone. Deleting it rotates the key; every phone must then pair again.
 
 `pairing.json`:
 
@@ -136,7 +163,7 @@ practical. A missing or unparsable `devices.json` means "no devices"; log a
 
 CLI and server can both write `devices.json`. Each writer re-reads, modifies,
 and renames. A lost update needs a revoke and a pairing within the same
-milliseconds; accepted for v1.
+milliseconds; accepted.
 
 ## 4. Secrets and tokens
 
@@ -161,7 +188,7 @@ Device token lifecycle:
 2. App stores it in `expo-secure-store` (Keychain on iOS).
 3. Presented in every `hello`.
 4. Ends only on revoke (CLI) or when the app sends `device.forget` (section
-   9.9). No rotation in v1.
+   9.9). No rotation.
 
 ## 5. CLI
 
@@ -184,8 +211,8 @@ flockr mobile status [--json]
    continue.
 2. If `gateway.json` is absent or its pid is not alive, print a warning that
    the server gateway is not listening.
-3. Ensure `server-id` exists. Generate a bootstrap code. Write
-   `pairing.json` (replacing any pending code).
+3. Ensure `server-id` and `noise-key` exist. Generate a bootstrap code.
+   Write `pairing.json` (replacing any pending code).
 4. Print the QR (section 6) using Unicode half blocks
    (`qrcode::render::unicode::Dense1x2`), then the pairing URL on its own
    line for copy/paste, then `Expires in 10:00`.
@@ -204,8 +231,12 @@ push (yes/no). `--json` prints the `devices` array without `token_sha256`.
 id: exit 1. `--all` removes every record. The running gateway drops the
 device's connections within 2 s (section 8.5).
 
-`status` prints enabled, configured listen addresses, bound addresses (from
-`gateway.json`), device count, pending pairing (expiry), push enabled.
+`status` prints enabled, configured listen addresses (with the public
+address note from section 2 where it applies), bound addresses (from
+`gateway.json`), the Noise key fingerprint (or "none yet"; `status` does not
+create the key), device count, pending pairing (expiry), push enabled.
+`--json` adds `key_fingerprint` (string or null) and `public_listen` (the
+listen addresses that get the note).
 
 ## 6. Pairing payload (QR)
 
@@ -219,22 +250,28 @@ JSON (keys exactly as shown; the app MUST ignore unknown keys):
 
 ```json
 {
-  "v": 1,
+  "v": 2,
   "name": "dk-desktop",
   "hosts": ["100.92.14.3", "dk-desktop.netbird.cloud"],
   "port": 47390,
   "sid": "Xb3k9QmT0aLz7Rwe2YvN1c",
+  "pk": "j0DFrbaPJWJK5bIU6nZ6bslNgp09e14a0bpvPiE4KF8",
   "code": "q1W2e3R4t5Y6u7I8o9P0aA",
   "exp": 1761330600
 }
 ```
 
+- `v`: `2`. The app rejects any other value with "this QR is from an older
+  flockr; update flockr and run `flockr mobile pair` again".
 - `hosts`: `mobile.advertise`, else the host part of each `listen` entry.
   IPv6 literals without brackets.
 - `port`: `mobile.port`. If listen entries use different ports, each host
   MAY be given as `"host:port"` (`"[v6]:port"`); the app uses an explicit
   port over `port`.
-- `sid`: `server_id` from section 3.
+- `sid`: `server_id` from section 3. Still checked, but `pk` is the real pin.
+- `pk`: the server's Noise static public key (section 3), base64url without
+  padding, 43 characters. The app stores it with the server record and uses
+  it for every later connection.
 - `exp`: unix seconds.
 
 The app also accepts the same URL pasted as text. QR error-correction level
@@ -243,19 +280,66 @@ from a link.
 
 ## 7. Transport
 
-- URL: `ws://<host>:<port>/mobile/v1`. Any other path: HTTP 404 and close.
+- URL: `ws://<host>:<port>/mobile/v2`. Any other path (including
+  `/mobile/v1`): HTTP 404 and close.
 - WebSocket subprotocol: client offers `Sec-WebSocket-Protocol:
-  flockr.mobile.v1`. Server MUST select it; if absent, reject the upgrade
-  with HTTP 400.
+  flockr.mobile.v2`. Server MUST select it; if absent (including when only
+  `flockr.mobile.v1` is offered), reject the upgrade with HTTP 400.
 - No HTTP endpoints besides the upgrade. Upgrade request headers capped at
   8 KiB.
 - `Origin` is not checked: auth is an in-band token, never a cookie, so a
   browser page cannot ride an existing session.
-- Text frames only. Binary frames: close `4000`.
-- Each text frame is exactly one JSON object with a string field `t`
-  (message type).
+- After the upgrade, every data frame is a WebSocket **binary** frame. A text
+  frame from either side: close `4000`. No WebSocket frame is larger than
+  65535 bytes (Noise's message limit); a larger one closes `1009`.
 - WebSocket ping: server sends a WS ping every 20 s; no pong for 60 s closes
   the connection. The app also MAY send app-level `ping` (section 9.10).
+  Ping/pong and close frames are plain WebSocket control frames (not
+  encrypted).
+
+### 7.1 Noise channel
+
+- Protocol name: `Noise_NK_25519_ChaChaPoly_SHA256`. Initiator: the phone
+  (no static key). Responder: the server, whose static public key the phone
+  knows from `pk` in the QR. NK gives server authentication (only the holder
+  of the pinned private key can complete the handshake), confidentiality,
+  and forward secrecy from the ephemeral keys. The phone proves who it is
+  with the device token or pairing code inside the channel (section 8).
+- Prologue: the 16 ASCII bytes `flockr.mobile.v2`.
+- Handshake payloads are empty in both messages. No rekey. No PSK.
+- Handshake:
+  1. Client → server: one binary frame = Noise message 1 (`-> e, es`),
+     exactly 48 bytes (32-byte ephemeral key + 16-byte tag of the empty
+     payload).
+  2. Server → client: one binary frame = Noise message 2 (`<- e, ee`),
+     exactly 48 bytes.
+  3. Both sides `Split()`: the client sends with the first cipher and
+     receives with the second; the server the reverse.
+- Any handshake failure (wrong length, message 1 does not decrypt): the
+  server closes `4006` with no `error` message (there is no channel yet) and
+  records an auth failure for the remote IP (section 12). A text frame
+  instead of message 1 closes `4000`.
+- The 10 s `hello` deadline covers the upgrade, the handshake, and `hello`.
+  The connection counts as unauthenticated until `hello` is accepted.
+
+### 7.2 Framing
+
+- After the handshake, each binary frame carries exactly one Noise
+  transport message: AEAD ciphertext of `flag (1 byte) || chunk`, plus a
+  16-byte tag.
+  - `flag = 0x00`: last chunk of a JSON message. `0x01`: more chunks follow.
+    Any other value, or an empty plaintext: close `4000`.
+  - `chunk` is at most 65518 bytes, so a frame is at most 65535 bytes.
+- A JSON message = the concatenation of its chunks: UTF-8, exactly one JSON
+  object with a string field `t` (message type).
+- Nonces are the Noise counters. WebSocket is ordered, so a frame that does
+  not decrypt is fatal: close `4000`.
+- An `error` message sent before a close goes through the channel; the
+  close frame itself is a plain WebSocket close with the code below.
+- Test vector: `tests/fixtures/mobile-v2/noise-nk.json` holds fixed keys,
+  both handshake messages, the handshake hash, and three transport
+  messages (flag byte included), generated with `snow`. Implementations
+  replay it byte for byte (see `tests/fixtures/mobile-v2/README.md`).
 
 Size limits:
 
@@ -265,7 +349,11 @@ Size limits:
 | client → server | anything else | 64 KiB |
 | server → client | any message | 4 MiB |
 
-Over the inbound cap: close `1009`. A server message that would exceed 4 MiB
+Limits apply to the reassembled JSON message. The server checks the running
+total as chunks arrive and closes `1009` as soon as it passes the cap, before
+the last chunk. Before `hello` the cap is 64 KiB; after it, the cap is
+1 MiB + 64 KiB, and each message type's limit is then checked after
+decoding (non-input messages over 64 KiB also close `1009`). A server message that would exceed 4 MiB
 is not sent: for surfaces the subscription ends with `frame_too_large`; for
 API responses the server sends `api.response` with error code
 `payload_too_large`.
@@ -275,28 +363,33 @@ API responses the server sends `api.response` with error code
 | Code | Name | When |
 |---|---|---|
 | 1000 | normal | Clean close either side. |
-| 1009 | too_big | Inbound frame over cap. |
-| 4000 | protocol_error | Malformed JSON, missing `t`, binary frame, message before `hello`. |
+| 1009 | too_big | Inbound message over cap (checked during reassembly), or a frame over 65535 bytes. |
+| 4000 | protocol_error | Malformed JSON, missing `t`, text frame, bad flag byte, transport frame that does not decrypt, message before `hello`. |
 | 4001 | unauthorized | Bad device token or unknown device. |
 | 4002 | unsupported_version | No common version. |
 | 4003 | revoked | Device revoked while connected. |
 | 4004 | too_many_connections | Connection limits (section 12). |
 | 4005 | pairing_failed | Bad, expired, or used bootstrap code. |
-| 4008 | hello_timeout | No `hello` within 10 s. |
+| 4006 | handshake_failed | Noise handshake failed (section 7.1). No `error` message. |
+| 4008 | hello_timeout | Handshake and `hello` not done within 10 s. |
 | 4009 | server_shutdown | Server stopping or live handoff. |
 | 4029 | rate_limited | Auth failure rate limit hit. |
 
 Before a 4xxx close the server SHOULD send an `error` message (section 9.1)
-with the same `code` name so the app can show text. The app treats 4001,
-4003, and 4005 as terminal (do not auto-reconnect; 4001/4003 delete the
-stored token and show "re-pair"). Others: reconnect with backoff 0.5 s, 1 s,
+with the same `code` name so the app can show text (except `4006`, which
+has no channel to send it in). The app treats 4001, 4003, 4005, and 4006 as
+terminal (do not auto-reconnect; 4001/4003 delete the stored token and show
+"re-pair"; 4006, or a message 2 that does not decrypt, shows "This server's
+key changed or the address is a different machine. Pair again." and keeps
+the token). Others: reconnect with backoff 0.5 s, 1 s,
 2 s, 4 s, ... capped at 30 s, with jitter.
 
 ## 8. Handshake and auth
 
 ### 8.1 Message order
 
-1. Client opens the socket and sends `hello` within 10 s.
+1. Client opens the socket, completes the Noise handshake (section 7.1),
+   and sends `hello`, all within 10 s.
 2. Server answers `welcome` (success) or `error` then closes.
 3. After `welcome`, either side may send any message.
 
@@ -309,7 +402,7 @@ Reconnect with a stored token:
 ```json
 {
   "t": "hello",
-  "versions": [1],
+  "versions": [2],
   "app": { "version": "0.1.0", "platform": "ios", "build": "12" },
   "auth": { "device_id": "d_q8Zt3mVfR1xKp0aB", "token": "fmd1_..." },
   "max_in_flight": 2
@@ -321,7 +414,7 @@ First connect from a QR:
 ```json
 {
   "t": "hello",
-  "versions": [1],
+  "versions": [2],
   "app": { "version": "0.1.0", "platform": "ios" },
   "pair": { "code": "q1W2e3R4t5Y6u7I8o9P0aA", "device_name": "Dylan's iPhone", "sid": "Xb3k9QmT0aLz7Rwe2YvN1c" }
 }
@@ -337,12 +430,12 @@ First connect from a QR:
 
 ### 8.3 Version negotiation
 
-Server picks the highest version in `versions` it supports. v1 servers
-support only `1`. None in common: `error` `unsupported_version` with
-`"supported": [1]`, close `4002`.
+Server picks the highest version in `versions` it supports. v2 servers
+support only `2`. None in common: `error` `unsupported_version` with
+`"supported": [2]`, close `4002`.
 
-Inside v1, optional behavior is announced in `welcome.features`. The app
-MUST NOT depend on a feature the server did not list. v1 servers list:
+Inside v2, optional behavior is announced in `welcome.features`. The app
+MUST NOT depend on a feature the server did not list. v2 servers list:
 
 - `"api"`, `"agents.watch"`, `"surface"`, `"surface.history"`,
   `"input"`, `"push.expo"` (only when push is enabled in config).
@@ -380,7 +473,7 @@ Auth path:
 ```json
 {
   "t": "welcome",
-  "version": 1,
+  "version": 2,
   "server": {
     "name": "dk-desktop",
     "server_id": "Xb3k9QmT0aLz7Rwe2YvN1c",
@@ -406,7 +499,8 @@ Auth path:
   restarted" when it changes.
 - The app MUST check `server.server_id` equals the `sid` it paired with. On
   mismatch it closes and shows "this address is now a different flockr
-  server". (Not cryptographic; see section 12.)
+  server". The cryptographic check is the Noise handshake against `pk`;
+  this one only gives a clearer message.
 - `methods`: the API allowlist (section 9.2) as sent by this server.
 
 ### 8.6 Revocation
@@ -655,7 +749,7 @@ characters, and modifiers `ctrl+`, `alt+`, `shift+` (e.g. `ctrl+c`,
 key: `error` `bad_request` naming the key (API code `invalid_key` is mapped
 to `bad_request`).
 
-Mouse input is not in v1.
+Mouse input is not in v2.
 
 ### 9.7 Push token
 
@@ -827,7 +921,7 @@ byte `0x02` → `16777216 + (value & 0xFFFFFF)`.
 Bits 0–8 are `CellData.modifier & 0x1FF` (ratatui `Modifier` bits); bits 9–12
 are `underline_style_from_modifier(modifier)`. The app applies reverse by
 swapping resolved fg/bg. Hidden: draw background only. Blink: draw as normal
-in v1.
+in v2.
 
 **Style** = JSON array `[fg, bg, flags]` or `[fg, bg, flags, link]` where
 `link` is an index into the link table (OSC 8 URI). Style id = index in the
@@ -975,7 +1069,7 @@ default 500). Reply:
 { "t": "surface.history.result", "id": "h1", "sub": 1, "lines": ["line 1", "line 2"] }
 ```
 
-Oldest first. No styles in v1. Viewport scrolling with styles uses
+Oldest first. No styles in v2. Viewport scrolling with styles uses
 `surface.scroll` (shared viewport, section 9.4).
 
 ### 10.8 Drawing notes for the app (Skia)
@@ -1081,7 +1175,7 @@ messages per request.
 
 Response handling (`{"data":[ticket,...]}` in request order):
 
-- `{"status":"ok"}`: done (receipts are not polled in v1).
+- `{"status":"ok"}`: done (receipts are not polled in v2).
 - `{"status":"error","details":{"error":"DeviceNotRegistered"}}`: clear
   that device's `push` field in `devices.json`.
 - Other ticket errors: `warn!` with the error string.
@@ -1094,23 +1188,26 @@ Sending runs on one dedicated thread fed by a bounded channel (capacity
 
 ## 12. Security and limits
 
-No TLS in v1, on purpose:
-
+- Encryption: every message travels inside the Noise channel (section 7.1).
+  There is no plaintext mode and no config switch. No TLS: the phone pins
+  the server's Noise key from the QR, so no certificate is needed.
+- Server authentication: only the holder of `noise-key` can complete the
+  handshake against the pinned `pk`. An impostor at the same address fails
+  with `4006`. `server_id` is kept as a second, non-cryptographic check.
+- The QR carries the bootstrap code and `pk`. Anyone who sees it before it
+  is used can pair within its TTL; `flockr mobile pair` waits and prints the
+  device that paired.
 - The gateway binds only to listed specific IPs; `0.0.0.0`/`::` are
-  rejected. Dylan lists his NetBird (WireGuard) address. WireGuard encrypts
-  and authenticates peers at the network layer; adding TLS would need
-  certificates the phone can trust, which a QR pin could cover in v2.
-- Tokens and terminal content travel in clear inside the tunnel. Anyone who
-  can read traffic on that interface (another process on a NetBird peer
-  that can sniff, or a misconfigured listen address on a LAN) can see them.
-  Document this in the sample config (done above) and in the app's pairing
-  screen.
-- `server_id` is a fingerprint check, not proof: it catches pairing with the
-  wrong host or an address that moved, not an active impostor on the
-  network. WireGuard peer keys cover that.
+  rejected. A public address is allowed, with a warning (section 2):
+  content is encrypted, but anyone on the internet can reach the pairing
+  endpoint and spend the rate limits below. A private network (NetBird,
+  WireGuard, LAN) is still the expected setup.
 - Device tokens: 256-bit, stored as SHA-256 only, constant-time compare,
   revocable. Bootstrap codes: 128-bit, single use, short TTL, 5 failed
   attempts kill the code.
+- Forward secrecy comes from the ephemeral keys. A leaked `noise-key` lets
+  an attacker impersonate the server to phones until the key is replaced
+  and phones pair again; it does not decrypt past sessions.
 
 Limits (constants in `src/server/mobile/mod.rs`):
 
@@ -1119,14 +1216,14 @@ Limits (constants in `src/server/mobile/mod.rs`):
 | Paired devices | `mobile.max_devices` (8) |
 | Connections per device | 4 |
 | Connections total | 16 |
-| Unauthenticated connections | 8 at once, 3 per remote IP; refused (socket dropped, no upgrade) when full; upgrade plus `hello` within 10 s, and a timeout counts as an auth failure |
+| Unauthenticated connections | 8 at once, 3 per remote IP; refused (socket dropped, no upgrade) when full; upgrade, handshake, and `hello` within 10 s; a timeout or a failed handshake counts as an auth failure |
 | Outbound writes | one frame may take 30 s to write, then the connection closes |
 | Auth/pair failures per remote IP | 5 per 60 s, then close `4029` for 60 s |
 | Pair attempts total | 10 per 60 s |
 | Subscriptions per connection | 4 |
 | Open API requests/streams per connection | 32 |
 | Inbound messages per connection | 200 per s (over: drop and `rate_limited` error once per s) |
-| Inbound sizes | 1 MiB input messages, 64 KiB others |
+| Inbound sizes | 1 MiB input messages, 64 KiB others (reassembled message; frames ≤ 65535 bytes) |
 | Outbound message | 4 MiB |
 | Surface size | cols ≤ 500, rows ≤ 200 |
 | Style table / link table | 4096 / 256, then full frame |
@@ -1140,10 +1237,11 @@ Treat a lost phone like a lost SSH key: `flockr mobile devices revoke`.
 
 Shared by CLI and server (no server runtime needed):
 
-- `src/mobile/mod.rs` — re-exports.
-- `src/mobile/store.rs` — state dir paths, `server-id`, `devices.json`,
-  `pairing.json`, `gateway.json`; token/id generation, hashing,
-  constant-time compare; atomic writes.
+- `src/mobile/mod.rs` — public-address classifier and note.
+- `src/mobile/store.rs` — state dir paths, `server-id`, `noise-key` (plus
+  public key and fingerprint), `devices.json`, `pairing.json`,
+  `gateway.json`; token/id generation, hashing, constant-time compare;
+  atomic writes.
 - `src/mobile/pairing.rs` — pairing payload JSON + URL encode/decode, QR
   rendering to a string.
 
@@ -1160,14 +1258,18 @@ and the new process re-binds):
 - `src/server/mobile/mod.rs` — `MobileGateway::start(config, deps) ->
   Option<MobileGatewayHandle>`; `deps` = `server_event_tx`, `EventHub`, API
   socket path, `ServerStop`. Limits constants.
-- `src/server/mobile/listener.rs` — bind/retry per address, accept,
-  per-IP rate limits, WebSocket upgrade (path + subprotocol check),
-  `gateway.json`.
-- `src/server/mobile/connection.rs` — per-connection state machine: hello,
-  auth/pair, dispatch, outbound queue, revocation check, app state.
+- `src/server/mobile/listener.rs` — bind/retry per address, public-address
+  warning, accept.
+- `src/server/mobile/connection.rs` — per-connection state machine: per-IP
+  limits, WebSocket upgrade (path + subprotocol check), Noise handshake,
+  hello, auth/pair, dispatch, outbound queue (encrypted in the connection
+  task), revocation check, app state.
+- `src/server/mobile/noise.rs` — Noise responder handshake, chunked
+  transport framing and reassembly (pure, no sockets). Its tests generate and
+  check `tests/fixtures/mobile-v2/noise-nk.json`.
 - `src/server/mobile/protocol.rs` — serde types for every message here
   (pure). Unit tests decode/encode JSON fixtures in
-  `tests/fixtures/mobile-v1/*.json` (one file per example in this doc), so the
+  `tests/fixtures/mobile-v2/*.json` (one file per example in this doc), so the
   app repo can copy the same fixtures for its tests.
 - `src/server/mobile/cells.rs` — `FrameData` → styles/runs, diff, shift
   detection (pure, unit-tested; add a small bench case for 120×40 and 300×80).
@@ -1203,6 +1305,7 @@ today (tokio lacks the `net` feature). `sha2`, `base64`, `serde_json`,
 |---|---|---|
 | tokio feature `net` | `TcpListener`/`TcpStream` for the gateway. | Feature flag on the existing dependency. |
 | `tokio-tungstenite` | WebSocket server handshake and framing on tokio. | `default-features = false, features = ["handshake"]`. No TLS features. Use `accept_hdr_async` to check path and subprotocol. |
+| `snow` 0.10 | Noise_NK handshake and transport ciphers (section 7.1). | `default-features = false, features = ["use-chacha20poly1305", "use-sha2", "use-curve25519", "use-getrandom"]`: only the one suite, pure Rust, no AES/BLAKE2/ring. |
 | `futures-util` | `StreamExt`/`SinkExt` for the WebSocket stream. | Move from the Linux-only table to `[dependencies]` (same version, `default-features = false, features = ["std", "sink"]`). |
 | `qrcode` | Terminal QR for `flockr mobile pair`. | `default-features = false`; uses only the Unicode renderer. |
 | `getrandom` | Token/code/id randomness. | Already in `Cargo.lock` (0.3.4) transitively; direct dep adds no new code. |
@@ -1222,18 +1325,28 @@ existing style.
   physical device); guard it so Expo Go still runs.
   `getExpoPushTokenAsync({ projectId })` with the EAS project id from
   `app.config.js`, as in Corvi.
-- Plain `ws://` to a NetBird IP needs an iOS ATS exception
+- The socket is still `ws://` (Noise encrypts the content, not the
+  WebSocket layer), so keep the iOS ATS exception
   (`ios.infoPlist.NSAppTransportSecurity.NSAllowsArbitraryLoads = true`) and
   Android cleartext (`expo-build-properties`
-  `android.usesCleartextTraffic = true`) in every build profile, not only
-  dev builds: v1 has no TLS, so a preview or TestFlight build without them
-  cannot connect. Expo Go allows it already.
-- Store per server: `{server_id, name, hosts, port, device_id, token}`.
-  Try hosts in order on connect; remember the last one that worked.
+  `android.usesCleartextTraffic = true`) in every build profile.
+- Store per server: `{server_id, pk, name, hosts, port, device_id, token}`.
+  Try hosts in order on connect; remember the last one that worked. A stored
+  record without `pk` (paired under v1): show "Pair again" and do not
+  connect.
+- Connect: open the WebSocket with the subprotocol, send message 1, await
+  message 2 (within the connect timeout), then send `hello` encrypted.
+- Pairing screen: say the connection is end-to-end encrypted and pinned to
+  the key in the QR code (no "plain WebSocket" warning).
+- Crypto in pure JS: `@noble/curves` (x25519), `@noble/ciphers`
+  (chacha20poly1305), `@noble/hashes` (sha256, hmac). Randomness from a
+  CSPRNG: in Expo, `expo-crypto` provides `crypto.getRandomValues` when the
+  runtime lacks it.
 - Implement the decoder against the JSON fixtures in
-  `tests/fixtures/mobile-v1/` (copy them into the app repo's tests).
+  `tests/fixtures/mobile-v2/` (copy them into the app repo's tests) and
+  replay `noise-nk.json` byte for byte.
 
-## 16. Server implementation notes (v1 prototype)
+## 16. Server implementation notes (prototype)
 
 What the Rust server does where this file left room, or where the first
 draft changed during implementation:
@@ -1264,3 +1377,12 @@ draft changed during implementation:
   `max_fps` limit what is encoded and sent, not what is rendered. The
   in-process render lane holds one frame, so a slow phone never queues work
   on the server loop.
+- The Noise session belongs to the connection task: inbound frames are
+  decrypted and outbound messages encrypted there, never under the gateway
+  lock. Other tasks queue plain JSON on the connection's outbound queue.
+- After `hello` the reassembly cap is 1 MiB + 64 KiB (the v1 WebSocket
+  message cap); per-type limits are checked after decoding, as before.
+- A text frame before the handshake closes `4000` and does not count as an
+  auth failure; a bad handshake message (`4006`) does.
+- A transport frame that does not decrypt, or has a bad flag byte, closes
+  `4000` without an `error` message.

@@ -1,5 +1,5 @@
-//! Mobile gateway state files: server identity, pending pairing code, paired
-//! devices, and the gateway's bound addresses.
+//! Mobile gateway state files: server identity, Noise static key, pending
+//! pairing code, paired devices, and the gateway's bound addresses.
 //!
 //! All files live in `state_dir()/mobile/`, are written atomically with mode
 //! 0600, and are shared by the CLI and the server.
@@ -15,6 +15,7 @@ use sha2::{Digest, Sha256};
 use tracing::warn;
 
 pub(crate) const SERVER_ID_FILE: &str = "server-id";
+pub(crate) const NOISE_KEY_FILE: &str = "noise-key";
 pub(crate) const PAIRING_FILE: &str = "pairing.json";
 pub(crate) const DEVICES_FILE: &str = "devices.json";
 pub(crate) const GATEWAY_FILE: &str = "gateway.json";
@@ -42,9 +43,9 @@ fn ensure_dir(dir: &Path) -> io::Result<()> {
     crate::ipc::restrict_socket_permissions(dir, 0o700)
 }
 
-/// Writes `bytes` to `path` through a temp file in the same directory:
-/// mode 0600, fsync, rename.
-pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
+/// Writes `bytes` to a fresh temp file (mode 0600, fsynced) next to `path`
+/// and returns the temp path.
+fn write_temp(path: &Path, bytes: &[u8]) -> io::Result<PathBuf> {
     let parent = path
         .parent()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "path has no parent"))?;
@@ -68,9 +69,29 @@ pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
         let _ = fs::remove_file(&tmp_path);
         return Err(err);
     }
+    Ok(tmp_path)
+}
+
+/// Writes `bytes` to `path` through a temp file in the same directory:
+/// mode 0600, fsync, rename.
+pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    let tmp_path = write_temp(path, bytes)?;
     fs::rename(&tmp_path, path).inspect_err(|_| {
         let _ = fs::remove_file(&tmp_path);
     })
+}
+
+/// Like [`atomic_write`], but never replaces an existing file: `Ok(false)`
+/// when `path` already exists.
+fn atomic_create(path: &Path, bytes: &[u8]) -> io::Result<bool> {
+    let tmp_path = write_temp(path, bytes)?;
+    let linked = fs::hard_link(&tmp_path, path);
+    let _ = fs::remove_file(&tmp_path);
+    match linked {
+        Ok(()) => Ok(true),
+        Err(err) if err.kind() == io::ErrorKind::AlreadyExists => Ok(false),
+        Err(err) => Err(err),
+    }
 }
 
 pub(crate) fn random_bytes<const N: usize>() -> io::Result<[u8; N]> {
@@ -173,6 +194,58 @@ pub(crate) fn server_fingerprint(secret: &[u8]) -> String {
 
 pub(crate) fn load_or_create_server_fingerprint(dir: &Path) -> io::Result<String> {
     Ok(server_fingerprint(&load_or_create_server_secret(dir)?))
+}
+
+/// Reads the gateway's Noise static private key. `None` when it does not
+/// exist yet.
+pub(crate) fn load_noise_key(dir: &Path) -> io::Result<Option<[u8; 32]>> {
+    match fs::read(dir.join(NOISE_KEY_FILE)) {
+        Ok(bytes) => <[u8; 32]>::try_from(bytes.as_slice())
+            .map(Some)
+            .map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "{} is {} bytes, expected 32; remove it and pair phones again",
+                        dir.join(NOISE_KEY_FILE).display(),
+                        bytes.len()
+                    ),
+                )
+            }),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(err),
+    }
+}
+
+/// Loads the Noise static private key (32 raw bytes), creating it on first
+/// use. The CLI and the server may race here; the first writer wins and both
+/// end up with the same key.
+pub(crate) fn load_or_create_noise_key(dir: &Path) -> io::Result<[u8; 32]> {
+    if let Some(key) = load_noise_key(dir)? {
+        return Ok(key);
+    }
+    let key = random_bytes::<32>()?;
+    if atomic_create(&dir.join(NOISE_KEY_FILE), &key)? {
+        return Ok(key);
+    }
+    load_noise_key(dir)?.ok_or_else(|| io::Error::other("noise key vanished while creating it"))
+}
+
+/// X25519 public key for a Noise static private key.
+pub(crate) fn noise_public_key(private: &[u8; 32]) -> io::Result<[u8; 32]> {
+    use snow::resolvers::{CryptoResolver, DefaultResolver};
+    let mut dh = DefaultResolver
+        .resolve_dh(&snow::params::DHChoice::Curve25519)
+        .ok_or_else(|| io::Error::other("X25519 is not available"))?;
+    dh.set(private);
+    <[u8; 32]>::try_from(dh.pubkey())
+        .map_err(|_| io::Error::other("X25519 public key is not 32 bytes"))
+}
+
+/// Key fingerprint shown by `flockr mobile status`: base64url of the first
+/// 16 bytes of SHA-256(public key).
+pub(crate) fn noise_key_fingerprint(public: &[u8; 32]) -> String {
+    base64url(&Sha256::digest(public)[..16])
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -472,6 +545,49 @@ pub(crate) mod tests {
             assert_eq!(mode & 0o777, 0o600);
         }
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn noise_key_is_created_once_with_mode_0600() {
+        let dir = temp_dir("noise-key");
+        assert_eq!(load_noise_key(&dir).unwrap(), None);
+        let first = load_or_create_noise_key(&dir).unwrap();
+        let second = load_or_create_noise_key(&dir).unwrap();
+        assert_eq!(first, second);
+        assert_eq!(fs::read(dir.join(NOISE_KEY_FILE)).unwrap(), first);
+        // Only the key file is left; the temp file is gone.
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(dir.join(NOISE_KEY_FILE))
+                .unwrap()
+                .permissions()
+                .mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+        fs::write(dir.join(NOISE_KEY_FILE), b"short").unwrap();
+        assert!(load_or_create_noise_key(&dir).is_err());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn noise_public_key_and_fingerprint() {
+        // RFC 7748 section 6.1, Alice's key pair.
+        let private: [u8; 32] = [
+            0x77, 0x07, 0x6d, 0x0a, 0x73, 0x18, 0xa5, 0x7d, 0x3c, 0x16, 0xc1, 0x72, 0x51, 0xb2,
+            0x66, 0x45, 0xdf, 0x4c, 0x2f, 0x87, 0xeb, 0xc0, 0x99, 0x2a, 0xb1, 0x77, 0xfb, 0xa5,
+            0x1d, 0xb9, 0x2c, 0x2a,
+        ];
+        let public = noise_public_key(&private).unwrap();
+        let hex: String = public.iter().map(|byte| format!("{byte:02x}")).collect();
+        assert_eq!(
+            hex,
+            "8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a"
+        );
+        let fingerprint = noise_key_fingerprint(&public);
+        assert_eq!(fingerprint.len(), 22);
+        assert_eq!(fingerprint, base64url(&Sha256::digest(public)[..16]));
     }
 
     #[test]

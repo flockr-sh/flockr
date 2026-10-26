@@ -1,7 +1,7 @@
 {
   "t": "hello",
   "versions": [
-    1
+    2
   ],
   "app": {
     "version": "0.1.0",

@@ -591,7 +591,7 @@ mod tests {
         serde_json::from_str(
             &std::fs::read_to_string(
                 std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .join("tests/fixtures/mobile-v1")
+                    .join("tests/fixtures/mobile-v2")
                     .join(name),
             )
             .unwrap(),

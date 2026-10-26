@@ -522,8 +522,9 @@ const DEFAULT_CONFIG: &str = r##"# flockr configuration
 # Mobile gateway for the flockr phone app. Off by default. Pair a phone with
 # `flockr mobile pair`; list and revoke devices with `flockr mobile devices`.
 # Binds only to the listed IP addresses (for example a NetBird or WireGuard
-# address). v1 has no TLS: tokens and terminal content travel in clear inside
-# that network, so only list addresses on an encrypted private network.
+# address). Traffic is end-to-end encrypted (Noise) and pinned to the server
+# key in the pairing QR. A public address works but exposes the pairing
+# endpoint to the internet; prefer a private network address.
 # 0.0.0.0 and :: are rejected. All keys need a server restart.
 # enabled = false
 # Literal IP addresses, optionally with a port: ["100.92.14.3", "[fd00::1]:47390"].

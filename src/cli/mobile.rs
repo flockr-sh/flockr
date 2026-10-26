@@ -90,14 +90,16 @@ fn pair(args: &[String]) -> std::io::Result<i32> {
     }
     let ttl = ttl.unwrap_or_else(|| config.pairing_ttl_secs());
     let sid = store::load_or_create_server_fingerprint(&dir)?;
+    let public_key = store::noise_public_key(&store::load_or_create_noise_key(&dir)?)?;
     let now = store::now_unix();
     let (code, record) = pairing::create_pairing(&dir, ttl, now)?;
     let payload = PairingPayload {
-        v: 1,
+        v: pairing::PAYLOAD_VERSION,
         name: config.display_name(),
         hosts,
         port: config.port,
         sid,
+        pk: store::base64url(&public_key),
         code,
         exp: record.expires_at,
     };
@@ -295,6 +297,18 @@ fn status(args: &[String]) -> std::io::Result<i32> {
         .ok()
         .flatten()
         .filter(|pairing| pairing.is_live(store::now_unix()));
+    let key_fingerprint = match store::load_noise_key(&dir) {
+        Ok(Some(key)) => store::noise_public_key(&key)
+            .map(|public| Some(store::noise_key_fingerprint(&public)))
+            .map_err(|err| err.to_string()),
+        Ok(None) => Ok(None),
+        Err(err) => Err(err.to_string()),
+    };
+    let public_listen = addrs
+        .iter()
+        .filter(|addr| crate::mobile::is_public_address(addr.ip()))
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
     if json {
         println!(
             "{}",
@@ -303,6 +317,8 @@ fn status(args: &[String]) -> std::io::Result<i32> {
                 "name": config.display_name(),
                 "listen": addrs.iter().map(ToString::to_string).collect::<Vec<_>>(),
                 "listen_errors": diagnostics,
+                "public_listen": public_listen,
+                "key_fingerprint": key_fingerprint.as_ref().ok().cloned().flatten(),
                 "bound": gateway.as_ref().map(|record| record.bound.clone()).unwrap_or_default(),
                 "running": gateway.is_some(),
                 "devices": devices.devices.len(),
@@ -329,12 +345,23 @@ fn status(args: &[String]) -> std::io::Result<i32> {
     for diagnostic in diagnostics {
         println!("          warning: {diagnostic}");
     }
+    for addr in &public_listen {
+        println!(
+            "          note: {addr} is a public address: {}",
+            crate::mobile::PUBLIC_ADDRESS_NOTE
+        );
+    }
     match &gateway {
         Some(record) if !record.bound.is_empty() => {
             println!("bound:    {}", record.bound.join(", "))
         }
         Some(_) => println!("bound:    none yet (retrying)"),
         None => println!("bound:    not running"),
+    }
+    match &key_fingerprint {
+        Ok(Some(fingerprint)) => println!("key:      {fingerprint}"),
+        Ok(None) => println!("key:      none yet (created by `flockr mobile pair` or the server)"),
+        Err(err) => println!("key:      error: {err}"),
     }
     println!("devices:  {}", devices.devices.len());
     match pairing {

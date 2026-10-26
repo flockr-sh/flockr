@@ -1,5 +1,5 @@
 {
-  "v": 1,
+  "v": 2,
   "name": "dk-desktop",
   "hosts": [
     "100.92.14.3",
@@ -7,6 +7,7 @@
   ],
   "port": 47390,
   "sid": "Xb3k9QmT0aLz7Rwe2YvN1c",
+  "pk": "j0DFrbaPJWJK5bIU6nZ6bslNgp09e14a0bpvPiE4KF8",
   "code": "q1W2e3R4t5Y6u7I8o9P0aA",
   "exp": 1761330600
 }

@@ -638,7 +638,7 @@ mod tests {
         let expected: Value = serde_json::from_str(
             &std::fs::read_to_string(
                 std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .join("tests/fixtures/mobile-v1/server.notify.json"),
+                    .join("tests/fixtures/mobile-v2/server.notify.json"),
             )
             .unwrap(),
         )

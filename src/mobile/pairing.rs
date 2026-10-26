@@ -8,8 +8,10 @@ use serde::{Deserialize, Serialize};
 use super::store::{self, DeviceRecord, PairingRecord};
 
 pub(crate) const PAIR_URL_PREFIX: &str = "flockr://pair?p=";
+/// Pairing payload version (`v`). The app rejects any other value.
+pub(crate) const PAYLOAD_VERSION: u32 = 2;
 
-/// JSON inside the pairing URL. Keys match `docs/mobile/protocol-v1.md` §6.
+/// JSON inside the pairing URL. Keys match `docs/mobile/protocol.md` §6.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct PairingPayload {
     pub v: u32,
@@ -17,6 +19,8 @@ pub(crate) struct PairingPayload {
     pub hosts: Vec<String>,
     pub port: u16,
     pub sid: String,
+    /// Server Noise static public key, base64url without padding (43 chars).
+    pub pk: String,
     pub code: String,
     pub exp: u64,
 }
@@ -158,20 +162,51 @@ mod tests {
     #[test]
     fn payload_round_trips_through_the_url() {
         let payload = PairingPayload {
-            v: 1,
+            v: PAYLOAD_VERSION,
             name: "dk-desktop".into(),
             hosts: vec!["100.92.14.3".into(), "dk.netbird.cloud".into()],
             port: 47390,
             sid: "Xb3k9QmT0aLz7Rwe2YvN1c".into(),
+            pk: store::base64url(&[7_u8; 32]),
             code: "q1W2e3R4t5Y6u7I8o9P0aA".into(),
             exp: 1761330600,
         };
+        assert_eq!(payload.pk.len(), 43);
         let url = payload.to_url();
         assert!(url.starts_with("flockr://pair?p="));
         assert!(!url.ends_with('='));
         assert_eq!(PairingPayload::from_url(&url).unwrap(), payload);
         assert!(PairingPayload::from_url("https://example.com").is_err());
         assert!(render_qr(&url).unwrap().contains('█'));
+    }
+
+    #[test]
+    fn payload_fixture_matches_the_struct() {
+        let text = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/mobile-v2/pairing.payload.json"),
+        )
+        .unwrap();
+        let payload: PairingPayload = serde_json::from_str(&text).unwrap();
+        assert_eq!(payload.v, PAYLOAD_VERSION);
+        assert_eq!(payload.pk.len(), 43);
+        let fixture: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(serde_json::to_value(&payload).unwrap(), fixture);
+        // The example key is the one in the Noise test vector.
+        let vector: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("tests/fixtures/mobile-v2/noise-nk.json"),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let public_hex = vector["responder_static_public_hex"].as_str().unwrap();
+        let public: Vec<u8> = (0..public_hex.len())
+            .step_by(2)
+            .map(|index| u8::from_str_radix(&public_hex[index..index + 2], 16).unwrap())
+            .collect();
+        assert_eq!(payload.pk, store::base64url(&public));
     }
 
     #[test]

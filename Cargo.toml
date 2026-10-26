@@ -51,12 +51,16 @@ sha2 = "0.10"
 time = { version = "0.3.47", features = ["formatting"] }
 # `net`: TCP listener for the opt-in mobile gateway.
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "process", "io-util", "signal", "net"] }
-# WebSocket handshake and framing for the mobile gateway. No TLS (see docs/mobile/protocol-v1.md).
+# WebSocket handshake and framing for the mobile gateway. Encryption is Noise
+# (snow), not TLS; see docs/mobile/protocol.md.
 tokio-tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
 # StreamExt/SinkExt for the mobile gateway WebSocket.
 futures-util = { version = "0.3", default-features = false, features = ["std", "sink"] }
 # Terminal QR code for `flockr mobile pair`.
 qrcode = { version = "0.14", default-features = false }
+# Noise_NK transport encryption for the mobile gateway (server static key
+# pinned by the pairing QR). Only the ChaCha20-Poly1305/SHA-256/X25519 suite.
+snow = { version = "0.10", default-features = false, features = ["use-chacha20poly1305", "use-sha2", "use-curve25519", "use-getrandom"] }
 # Random pairing codes and device tokens for the mobile gateway.
 getrandom = "0.3"
 # Blocking HTTPS client for Expo push notifications, on its own thread.

@@ -24,6 +24,12 @@ pub(crate) async fn run(gateway: Arc<Gateway>, addr: SocketAddr) {
     };
     let bound = listener.local_addr().unwrap_or(addr);
     info!(addr = %bound, "mobile gateway listening");
+    if crate::mobile::is_public_address(bound.ip()) {
+        warn!(
+            "mobile gateway listening on public address {bound}: {}",
+            crate::mobile::PUBLIC_ADDRESS_NOTE
+        );
+    }
     gateway.add_bound(bound.to_string());
     loop {
         tokio::select! {
