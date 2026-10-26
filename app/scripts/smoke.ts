@@ -131,6 +131,8 @@ interface Target {
   setStatus?(pane: string, status: 'working' | 'blocked' | 'idle'): Promise<void>;
   /** Undo setStatus so the pane is left as it was. */
   clearStatus?(pane: string): Promise<void>;
+  /** Make the pane's agent finish work, so it shows as done until read. */
+  finish?(pane: string): Promise<void>;
   revoke?(deviceId: string): Promise<void>;
   devices?(): Promise<string[]>;
   stop(): Promise<void>;
@@ -149,6 +151,10 @@ function flockrTarget(bin: string): Target {
     },
     async clearStatus(pane) {
       run('pane', 'release-agent', '--source', 'smoke', '--agent', 'claude', pane);
+    },
+    async finish(pane) {
+      run('pane', 'report-agent', '--source', 'smoke', '--agent', 'claude', '--state', 'working', pane);
+      run('pane', 'report-agent', '--source', 'smoke', '--agent', 'claude', '--state', 'idle', pane);
     },
     async revoke(deviceId) {
       run('mobile', 'devices', 'revoke', deviceId);
@@ -177,6 +183,10 @@ async function mockTarget(): Promise<{ target: Target; mock: MockGateway }> {
       },
       async clearStatus(pane) {
         mock.setStatus(pane, 'working');
+      },
+      async finish(pane) {
+        mock.setStatus(pane, 'working');
+        mock.setStatus(pane, 'done');
       },
       async revoke(deviceId) {
         mock.revoke(deviceId);
@@ -437,6 +447,32 @@ async function main(): Promise<void> {
       () => check('push: in-band notify for blocked agent', false, notifies),
     );
     console.log(`  notify: ${JSON.stringify(notifies[notifies.length - 1] ?? null)}`);
+    await target.clearStatus?.(pane);
+  }
+
+  // 12b. Marking a done agent read turns it idle for every client.
+  if (target.finish) {
+    const agentOf = () => (agentsMsg as AgentsMessage | null)?.agents.find((a) => a.pane_id === pane);
+    await target.finish(pane);
+    const done = await waitFor('done agent', () => agentOf()?.agent_status === 'done' && agentOf(), 8000).catch(
+      () => null,
+    );
+    if (!done) {
+      console.log(
+        `  skip mark_read: agent is ${agentOf()?.agent_status ?? 'missing'}, not done (is its pane on screen?)`,
+      );
+    } else {
+      const seq = done.state_change_seq ?? 0;
+      const stale = await client.request('pane.mark_read', { pane_id: pane, completion_seq: seq - 1 });
+      await sleep(500);
+      check('mark_read: an older completion leaves it done', !stale.error && agentOf()?.agent_status === 'done', stale);
+      const read = await client.request('pane.mark_read', { pane_id: pane, completion_seq: seq });
+      check('mark_read: ok', !read.error, read);
+      await waitFor('read agent', () => agentOf()?.agent_status === 'idle', 8000).then(
+        () => check('mark_read: agents watch shows idle', true),
+        () => check('mark_read: agents watch shows idle', false, agentOf()),
+      );
+    }
     await target.clearStatus?.(pane);
   }
   await client.unregisterPush().then(

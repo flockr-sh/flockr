@@ -1,11 +1,22 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Alert, Keyboard, KeyboardAvoidingView, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
+import {
+  Alert,
+  AppState,
+  Keyboard,
+  KeyboardAvoidingView,
+  Linking,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { connections } from '../state/connections';
-import { statusText, useClientStatus } from '../state/hooks';
+import { statusText, useAgents, useClientStatus } from '../state/hooks';
+import { completionToMarkRead, isTransportError, MARK_READ_DELAY_MS } from '../state/markRead';
 import type { Nav } from '../state/nav';
 import { colors, ui } from '../state/ui';
-import { GatewayClient, gridText, InputKind, linkAt, Subscription, SurfaceMode } from '../protocol';
+import { GatewayClient, GatewayError, gridText, InputKind, linkAt, Subscription, SurfaceMode } from '../protocol';
 import { Composer } from '../terminal/Composer';
 import { PerfOverlay } from '../terminal/PerfOverlay';
 import { TextSheet } from '../terminal/TextSheet';
@@ -38,6 +49,33 @@ export function TerminalScreen({ nav, serverId, paneId, title }: Props) {
   const viewStats = useRef(makeViewStats()).current;
   const insets = useSafeAreaInsets();
   const [keyboardOpen, setKeyboardOpen] = useState(false);
+
+  // Viewing a done agent marks it read on every device, once per completion.
+  const { msg: agentsMsg } = useAgents(client);
+  const [foreground, setForeground] = useState(AppState.currentState === 'active');
+  useEffect(() => {
+    const listener = AppState.addEventListener('change', (state) => setForeground(state === 'active'));
+    return () => listener.remove();
+  }, []);
+  const markedSeq = useRef<number | null>(null);
+  const agent = agentsMsg?.agents.find((a) => a.pane_id === paneId);
+  const toMark = completionToMarkRead(agent, foreground, markedSeq.current);
+  const online = status.state === 'open';
+  useEffect(() => {
+    if (!client || !online || toMark === null) return;
+    const t = setTimeout(() => {
+      client.api('pane.mark_read', { pane_id: paneId, completion_seq: toMark }).then(
+        () => {
+          markedSeq.current = toMark;
+        },
+        (e: unknown) => {
+          // A server that answered, even with an error, is not asked again for this completion.
+          if (!(e instanceof GatewayError && isTransportError(e.code))) markedSeq.current = toMark;
+        },
+      );
+    }, MARK_READ_DELAY_MS);
+    return () => clearTimeout(t);
+  }, [client, online, paneId, toMark]);
 
   useEffect(() => {
     const show = Keyboard.addListener('keyboardDidShow', () => setKeyboardOpen(true));

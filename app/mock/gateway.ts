@@ -556,6 +556,7 @@ export class MockGateway {
         'pane.read',
         'pane.send_text',
         'pane.send_keys',
+        'pane.mark_read',
         'events.subscribe',
       ],
       limits: {
@@ -704,6 +705,22 @@ export class MockGateway {
         return ok({ type: 'workspace_list', workspaces: this.workspaces });
       case 'tab.list':
         return ok({ type: 'tab_list', tabs: this.tabs });
+      case 'pane.mark_read': {
+        // Like the server: a done agent turns idle without a new state change.
+        const p = this.panes.find((x) => x.pane_id === params.pane_id);
+        if (!p)
+          return this.send(c, {
+            t: 'api.response',
+            id,
+            response: { id, error: { code: 'pane_not_found', message: `pane not found: ${String(params.pane_id)}` } },
+          });
+        const seq = typeof params.completion_seq === 'number' ? params.completion_seq : undefined;
+        if (p.status === 'done' && (seq === undefined || p.stateChangeSeq <= seq)) {
+          p.status = 'idle';
+          this.broadcastAgents();
+        }
+        return ok({ type: 'ok' });
+      }
       case 'agent.get': {
         const a = this.agentInfos().find((x) => x.pane_id === params.target || x.terminal_id === params.target);
         if (!a)
