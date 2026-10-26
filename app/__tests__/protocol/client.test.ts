@@ -297,6 +297,35 @@ describe('GatewayClient against the mock gateway', () => {
     await waitFor(() => gw.pane('p_1')?.term.cols === 100);
   });
 
+  it('wheel sends surface.wheel at a cell, or surface.scroll to servers without it', async () => {
+    const { client } = await pairedClient();
+    const sub = await subscribed(client, 'p_3');
+    sub.wheel(3, 5, 2);
+    sub.wheel(-2);
+    sub.wheel(0, 1, 1);
+    const wheels = () => gw.received.filter((m) => m.t === 'surface.wheel');
+    await waitFor(() => wheels().length === 2);
+    expect(wheels()).toEqual([
+      { t: 'surface.wheel', sub: sub.sub, lines: 3, col: 5, row: 2 },
+      { t: 'surface.wheel', sub: sub.sub, lines: -2 },
+    ]);
+
+    await gw.stop();
+    gw = new MockGateway({ animate: false, wheel: false });
+    await gw.start();
+    const old = (await pairedClient()).client;
+    expect(old.hasFeature('surface.wheel')).toBe(false);
+    const oldSub = await subscribed(old, 'p_3');
+    oldSub.wheel(4, 1, 1);
+    await waitFor(() => gw.received.some((m) => m.t === 'surface.scroll'));
+    expect(gw.received.find((m) => m.t === 'surface.scroll')).toEqual({
+      t: 'surface.scroll',
+      sub: oldSub.sub,
+      lines: 4,
+    });
+    expect(gw.received.some((m) => m.t === 'surface.wheel')).toBe(false);
+  });
+
   it('history returns plain lines', async () => {
     const { client } = await pairedClient();
     const sub = await subscribed(client, 'p_3');

@@ -281,6 +281,23 @@ export class Subscription {
     if (lines !== 0) this.client.sendRaw({ t: 'surface.scroll', sub: this.sub, lines });
   }
 
+  /**
+   * Mouse wheel steps at grid cell (col, row): positive = up into history.
+   * The server forwards them to apps that take mouse input (full-screen
+   * TUIs) and scrolls the viewport otherwise. Servers without
+   * `surface.wheel` get a plain `surface.scroll`.
+   */
+  wheel(lines: number, col?: number, row?: number): void {
+    if (lines === 0) return;
+    if (!this.client.hasFeature('surface.wheel')) return this.scroll(lines);
+    const msg: Record<string, unknown> = { t: 'surface.wheel', sub: this.sub, lines };
+    if (col !== undefined && row !== undefined && col >= 0 && row >= 0) {
+      msg.col = col;
+      msg.row = row;
+    }
+    this.client.sendRaw(msg);
+  }
+
   scrollToBottom(): void {
     this.client.sendRaw({ t: 'surface.scroll', sub: this.sub, to: 'bottom' });
   }

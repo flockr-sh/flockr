@@ -201,7 +201,8 @@ export function TerminalView({ sub, fitWidth, zoom, onZoom, onLayout, stats, deb
     if (renderer && size.width > 0) onLayout?.({ width: size.width, height: size.height, metrics: renderer.metrics });
   }, [renderer, size, onLayout]);
 
-  // Gestures: one finger vertical = scrollback (server viewport), horizontal =
+  // Gestures: one finger vertical = wheel scroll (the app's own scrolling or
+  // the server viewport's scrollback), horizontal =
   // pan; two fingers = pinch zoom.
   const gesture = useRef({
     axis: '' as '' | 'x' | 'y',
@@ -276,8 +277,18 @@ export function TerminalView({ sub, fitWidth, zoom, onZoom, onLayout, stats, deb
             const lines = Math.trunc(st.accY / lineH);
             if (lines !== 0) {
               st.accY -= lines * lineH;
-              // Drag down = scroll up into history = positive lines.
-              s.scroll(lines);
+              // Drag down = scroll up into history = positive lines. Sent as
+              // wheel steps at the finger's cell, so full-screen apps that
+              // draw their own scrolling move too.
+              const v = view.current;
+              const cellW = renderer.metrics.cellW * v.zoom;
+              const col = Math.floor((e.nativeEvent.locationX + v.offsetX) / cellW);
+              const row = Math.floor((e.nativeEvent.locationY + v.offsetY) / lineH);
+              s.wheel(
+                lines,
+                Math.min(Math.max(0, col), Math.max(0, s.grid.cols - 1)),
+                Math.min(Math.max(0, row), Math.max(0, s.grid.rows - 1)),
+              );
             }
           }
         },

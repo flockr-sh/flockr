@@ -60,6 +60,8 @@ export interface MockOptions {
   animate?: boolean;
   /** Emit `shift` in deltas. */
   shift?: boolean;
+  /** List `surface.wheel` in features (default true). */
+  wheel?: boolean;
   /** Noise static private key (32 bytes). Random per instance by default. */
   staticKey?: Uint8Array;
   log?: (msg: string) => void;
@@ -541,6 +543,7 @@ export class MockGateway {
         'input',
         'push.expo',
         ...(this.opts.shift !== false ? ['surface.shift'] : []),
+        ...(this.opts.wheel !== false ? ['surface.wheel'] : []),
       ],
       methods: [
         'ping',
@@ -658,7 +661,11 @@ export class MockGateway {
         return this.pump(c, s);
       }
       case 'surface.scroll':
-        return; // the mock has no scrollback viewport
+      case 'surface.wheel': {
+        // The mock has no scrollback viewport and no mouse-reporting apps.
+        if (!c.subs.has(msg.sub as number)) return err('not_found');
+        return;
+      }
       case 'surface.history': {
         const s = c.subs.get(msg.sub as number);
         if (!s) return err('not_found');
