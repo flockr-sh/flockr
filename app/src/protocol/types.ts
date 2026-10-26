@@ -191,6 +191,10 @@ export interface AgentInfo {
   focused?: boolean;
   cwd?: string;
   foreground_cwd?: string;
+  /** Git branch of the agent's checkout; full name (strip `worktree/` for display). */
+  branch?: string;
+  /** The agent is on a fresh session it has not worked in yet. */
+  session_empty?: boolean;
   [key: string]: unknown;
 }
 

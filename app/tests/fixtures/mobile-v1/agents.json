@@ -13,7 +13,8 @@
       "agent_status": "blocked",
       "state_change_seq": 41,
       "revision": 88,
-      "focused": false
+      "focused": false,
+      "branch": "worktree/mobile-agents"
     }
   ],
   "workspaces": [

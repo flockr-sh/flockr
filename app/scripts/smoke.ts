@@ -289,9 +289,17 @@ async function main(): Promise<void> {
   const rows = buildAgentRows(agentsMsg as unknown as AgentsMessage);
   for (const r of rows)
     console.log(
-      `  ${r.status.padEnd(8)} ${r.name.padEnd(10)} ${r.workspaceLabel} > ${r.tabLabel} (${r.agent.pane_id})`,
+      `  ${r.status.padEnd(8)} ${r.name.padEnd(10)} ${r.workspaceLabel} > ${r.tabLabel} (${r.agent.pane_id})` +
+        `${r.branch ? ` branch=${r.branch}` : ''}${r.sessionEmpty ? ' session_empty' : ''}`,
     );
   check('agents: list not empty', rows.length > 0, agentsMsg);
+  if (target.kind === 'mock') {
+    check(
+      'agents: branch and session_empty pass through',
+      rows.some((r) => r.branch === 'mobile-agents') && rows.some((r) => r.sessionEmpty),
+      rows.map((r) => [r.agent.pane_id, r.branch, r.sessionEmpty]),
+    );
+  }
   // A plain shell pane: the faked `claude` agent on flockr, the `shell` pane on the mock.
   const want = isReal ? 'claude' : 'shell';
   const pane = arg('--target') ?? rows.find((r) => r.name === want)?.agent.pane_id ?? rows[0]?.agent.pane_id;

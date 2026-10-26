@@ -9,6 +9,41 @@ export interface AgentRow {
   tab?: TabInfo;
   workspaceLabel: string;
   tabLabel: string;
+  /** Branch as the desktop sidebar shows it, without the `worktree/` namespace. */
+  branch?: string;
+  sessionEmpty: boolean;
+}
+
+/** How the sidebar marks an agent: a pulsing dot while working, a dot when it
+ * needs attention, a ring when idle, a dotted ring when idle on an unused session. */
+export type AgentMarker = 'pulse' | 'dot' | 'ring' | 'dotted-ring' | 'faint';
+
+export function agentMarker(status: AgentStatus, sessionEmpty: boolean): AgentMarker {
+  switch (status) {
+    case 'working':
+      return 'pulse';
+    case 'blocked':
+    case 'done':
+      return 'dot';
+    case 'idle':
+      return sessionEmpty ? 'dotted-ring' : 'ring';
+    default:
+      return 'faint';
+  }
+}
+
+/** Drops the `worktree/` namespace that new worktree branches get. */
+export function shortBranch(branch: string): string {
+  return branch.startsWith('worktree/') ? branch.slice('worktree/'.length) : branch;
+}
+
+/** Second row line: "tab <n> · <agent name> · <branch>", skipping missing parts
+ * and the agent name when the first line already shows it. */
+export function agentDetail(row: AgentRow): string {
+  const n = row.tab?.number;
+  const tab = n === undefined ? row.tabLabel : /^\d+$/.test(row.tabLabel) ? `tab ${n}` : `tab ${n} ${row.tabLabel}`;
+  const name = row.agent.name && row.agent.name !== row.name ? row.agent.name : undefined;
+  return [tab, name, row.branch].filter(Boolean).join(' · ');
 }
 
 export function agentName(a: Pick<AgentInfo, 'display_agent' | 'name' | 'agent'>): string {
@@ -29,6 +64,8 @@ export function buildAgentRows(msg: Pick<AgentsMessage, 'agents' | 'workspaces' 
       tab,
       workspaceLabel: workspace?.label || agent.workspace_id,
       tabLabel: tab?.label || agent.tab_id,
+      branch: agent.branch ? shortBranch(agent.branch) : undefined,
+      sessionEmpty: agent.session_empty === true,
     };
   });
   // Sidebar order: by space, then tab.

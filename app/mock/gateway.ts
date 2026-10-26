@@ -46,6 +46,8 @@ export interface MockPane {
   desktopSize: [number, number];
   attachOwner: string | null;
   stateChangeSeq: number;
+  branch?: string;
+  sessionEmpty?: boolean;
 }
 
 export interface MockOptions {
@@ -181,9 +183,9 @@ export class MockGateway {
         agent_status: 'working',
       },
     ];
-    this.addPane('p_1', 't_1', 'w_1', 'tab_1', 'Claude', 'blocked', 'tui', 100, 40);
-    this.addPane('p_2', 't_2', 'w_1', 'tab_1', 'Codex', 'working', 'log', 100, 40);
-    this.addPane('p_3', 't_3', 'w_1', 'tab_2', 'shell', 'idle', 'shell', 100, 40);
+    this.addPane('p_1', 't_1', 'w_1', 'tab_1', 'Claude', 'blocked', 'tui', 100, 40).branch = 'worktree/mobile-agents';
+    this.addPane('p_2', 't_2', 'w_1', 'tab_1', 'Codex', 'working', 'log', 100, 40).branch = 'main';
+    this.addPane('p_3', 't_3', 'w_1', 'tab_2', 'shell', 'idle', 'shell', 100, 40).sessionEmpty = true;
     this.addPane('p_4', 't_4', 'w_2', 'tab_3', 'stress', 'working', 'stress', 120, 50);
   }
 
@@ -579,6 +581,8 @@ export class MockGateway {
       state_change_seq: p.stateChangeSeq,
       revision: p.stateChangeSeq,
       focused: false,
+      ...(p.branch ? { branch: p.branch } : {}),
+      ...(p.sessionEmpty ? { session_empty: true } : {}),
     }));
   }
 

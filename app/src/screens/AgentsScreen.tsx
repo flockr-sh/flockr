@@ -1,12 +1,20 @@
-import React, { useState } from 'react';
-import { Alert, Pressable, SectionList, StyleSheet, Text, View } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { Alert, Animated, Pressable, SectionList, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { connections } from '../state/connections';
 import { statusText, useAgents, useClientStatus, useServers, useTerminals } from '../state/hooks';
 import type { Nav } from '../state/nav';
 import { colors, statusColor, ui } from '../state/ui';
 import { repairMessage, repairReason, repairShort } from '../state/storage';
-import { groupBySpace, type AgentRow, type TerminalRow } from '../protocol';
+import {
+  agentDetail,
+  agentMarker,
+  groupBySpace,
+  type AgentMarker,
+  type AgentRow,
+  type AgentStatus,
+  type TerminalRow,
+} from '../protocol';
 
 interface Props {
   nav: Nav;
@@ -168,23 +176,30 @@ function tabText(label: string): string {
 
 function AgentCard({ row, onPress }: { row: AgentRow; onPress: () => void }) {
   const title = row.agent.terminal_title_stripped || row.agent.title;
+  const detail = agentDetail(row);
+  // Like the sidebar, the marker carries the status; only states that ask for
+  // attention also get a word.
+  const word = row.status === 'blocked' || row.status === 'done' ? row.status : null;
   return (
     <Pressable
       accessibilityRole="button"
+      accessibilityLabel={`${row.name}, ${row.sessionEmpty && row.status === 'idle' ? 'idle, empty session' : row.status}`}
       onPress={onPress}
       style={({ pressed }) => [styles.card, pressed && { backgroundColor: colors.panelHi }]}
     >
-      <View style={[styles.dot, { backgroundColor: statusColor[row.status] }]} />
+      <StatusMarker kind={agentMarker(row.status, row.sessionEmpty)} status={row.status} />
       <View style={{ flex: 1 }}>
         <View style={styles.line}>
           <Text style={styles.name} numberOfLines={1}>
             {row.name}
           </Text>
-          <Text style={[styles.status, { color: statusColor[row.status] }]}>{row.status}</Text>
+          {word ? <Text style={[styles.status, { color: statusColor[row.status] }]}>{word}</Text> : null}
         </View>
-        <Text style={ui.sub} numberOfLines={1}>
-          {tabText(row.tabLabel)}
-        </Text>
+        {detail ? (
+          <Text style={ui.sub} numberOfLines={1}>
+            {detail}
+          </Text>
+        ) : null}
         {title ? (
           <Text style={[ui.sub, { marginTop: 2 }]} numberOfLines={1}>
             {title}
@@ -192,6 +207,54 @@ function AgentCard({ row, onPress }: { row: AgentRow; onPress: () => void }) {
         ) : null}
       </View>
     </Pressable>
+  );
+}
+
+const MARKER = 10;
+
+/** The sidebar's status icon (Dots style) drawn with views so it sizes the same on every font. */
+function StatusMarker({ kind, status }: { kind: AgentMarker; status: AgentStatus }) {
+  const color = statusColor[status];
+  if (kind === 'pulse') return <PulseDot color={color} />;
+  if (kind === 'dot') return <View style={[styles.marker, { backgroundColor: color }]} />;
+  if (kind === 'ring') return <View style={[styles.marker, { borderWidth: 1.5, borderColor: color }]} />;
+  if (kind === 'dotted-ring') return <DottedRing color={colors.dim} />;
+  return (
+    <View style={styles.marker}>
+      <View style={[styles.faint, { backgroundColor: color }]} />
+    </View>
+  );
+}
+
+function PulseDot({ color }: { color: string }) {
+  const opacity = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(opacity, { toValue: 0.3, duration: 700, useNativeDriver: true }),
+        Animated.timing(opacity, { toValue: 1, duration: 700, useNativeDriver: true }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [opacity]);
+  return <Animated.View style={[styles.marker, { backgroundColor: color, opacity }]} />;
+}
+
+const RING_DOTS = Array.from({ length: 8 }, (_, i) => {
+  const a = (i / 8) * 2 * Math.PI;
+  const r = (MARKER - 2) / 2;
+  return { left: r + r * Math.cos(a), top: r + r * Math.sin(a) };
+});
+
+/** Dotted borders with a radius render solid on some Android versions, so place the dots by hand. */
+function DottedRing({ color }: { color: string }) {
+  return (
+    <View style={styles.marker}>
+      {RING_DOTS.map((p, i) => (
+        <View key={i} style={[styles.ringDot, { left: p.left, top: p.top, backgroundColor: color }]} />
+      ))}
+    </View>
   );
 }
 
@@ -213,8 +276,10 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.border,
   },
-  dot: { width: 10, height: 10, borderRadius: 5 },
+  marker: { width: MARKER, height: MARKER, borderRadius: MARKER / 2, alignItems: 'center', justifyContent: 'center' },
+  ringDot: { position: 'absolute', width: 2, height: 2, borderRadius: 1 },
+  faint: { width: 4, height: 4, borderRadius: 2, opacity: 0.8 },
   line: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   name: { color: colors.text, fontSize: 16, fontWeight: '600', flexShrink: 1 },
-  status: { fontSize: 12, fontWeight: '600', textTransform: 'uppercase' },
+  status: { fontSize: 12, fontWeight: '600' },
 });
