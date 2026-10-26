@@ -1,0 +1,8 @@
+{
+  "t": "surface.subscribe",
+  "id": "s1",
+  "sub": 1,
+  "target": "p_3",
+  "mode": "observe",
+  "max_fps": 30
+}
