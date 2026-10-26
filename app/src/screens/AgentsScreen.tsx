@@ -1,12 +1,12 @@
 import React, { useState } from 'react';
-import { Alert, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Alert, Pressable, SectionList, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { connections } from '../state/connections';
 import { statusText, useAgents, useClientStatus, useServers, useTerminals } from '../state/hooks';
 import type { Nav } from '../state/nav';
 import { colors, statusColor, ui } from '../state/ui';
 import { repairMessage, repairReason, repairShort } from '../state/storage';
-import type { AgentRow, TerminalRow } from '../protocol';
+import { groupBySpace, type AgentRow, type TerminalRow } from '../protocol';
 
 interface Props {
   nav: Nav;
@@ -89,10 +89,12 @@ export function AgentsScreen({ nav, serverId }: Props) {
             />
           </View>
           {tab === 'agents' ? (
-            <FlatList
-              data={rows}
+            <SectionList
+              sections={groupBySpace(rows)}
               keyExtractor={(r) => r.agent.pane_id}
-              contentContainerStyle={{ padding: 8, gap: 8 }}
+              contentContainerStyle={styles.list}
+              stickySectionHeadersEnabled={false}
+              renderSectionHeader={({ section }) => <Text style={styles.space}>{section.title}</Text>}
               ListEmptyComponent={
                 <View style={styles.empty}>
                   <Text style={ui.sub}>{loaded ? 'No agents.' : 'Waiting for the agent list…'}</Text>
@@ -101,10 +103,12 @@ export function AgentsScreen({ nav, serverId }: Props) {
               renderItem={({ item }) => <AgentCard row={item} onPress={() => open(item)} />}
             />
           ) : (
-            <FlatList
-              data={terminals.rows}
+            <SectionList
+              sections={groupBySpace(terminals.rows)}
               keyExtractor={(r) => r.pane.pane_id}
-              contentContainerStyle={{ padding: 8, gap: 8 }}
+              contentContainerStyle={styles.list}
+              stickySectionHeadersEnabled={false}
+              renderSectionHeader={({ section }) => <Text style={styles.space}>{section.title}</Text>}
               ListEmptyComponent={
                 <View style={styles.empty}>
                   <Text style={ui.sub}>{terminals.loaded ? 'No shell panes.' : 'Loading panes…'}</Text>
@@ -145,7 +149,7 @@ function TerminalCard({ row, onPress }: { row: TerminalRow; onPress: () => void 
           {row.title}
         </Text>
         <Text style={ui.sub} numberOfLines={1}>
-          {row.workspaceLabel} › {row.tabLabel}
+          {tabText(row.tabLabel)}
         </Text>
         {row.cwd ? (
           <Text style={[ui.sub, { marginTop: 2 }]} numberOfLines={1} ellipsizeMode="head">
@@ -155,6 +159,11 @@ function TerminalCard({ row, onPress }: { row: TerminalRow; onPress: () => void 
       </View>
     </Pressable>
   );
+}
+
+/** Tabs are often named only by number; say so. */
+function tabText(label: string): string {
+  return /^\d+$/.test(label) ? `tab ${label}` : label;
 }
 
 function AgentCard({ row, onPress }: { row: AgentRow; onPress: () => void }) {
@@ -174,7 +183,7 @@ function AgentCard({ row, onPress }: { row: AgentRow; onPress: () => void }) {
           <Text style={[styles.status, { color: statusColor[row.status] }]}>{row.status}</Text>
         </View>
         <Text style={ui.sub} numberOfLines={1}>
-          {row.workspaceLabel} › {row.tabLabel}
+          {tabText(row.tabLabel)}
         </Text>
         {title ? (
           <Text style={[ui.sub, { marginTop: 2 }]} numberOfLines={1}>
@@ -188,6 +197,8 @@ function AgentCard({ row, onPress }: { row: AgentRow; onPress: () => void }) {
 
 const styles = StyleSheet.create({
   empty: { padding: 24, alignItems: 'center' },
+  list: { padding: 8, gap: 8 },
+  space: { color: colors.text, fontSize: 15, fontWeight: '700', paddingTop: 8, paddingHorizontal: 4 },
   tabs: { flexDirection: 'row', gap: 6, paddingHorizontal: 8, paddingTop: 8 },
   tab: { flex: 1, alignItems: 'center', paddingVertical: 8, borderRadius: 8, backgroundColor: colors.panel },
   tabActive: { backgroundColor: colors.panelHi },

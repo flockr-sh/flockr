@@ -195,16 +195,16 @@ describe('GatewayClient against the mock gateway', () => {
     expect(c.currentHostIndex).toBe(1);
   });
 
-  it('streams the agent list and sorts it', async () => {
+  it('streams the agent list and its updates', async () => {
     const { client } = await pairedClient();
     const got: AgentsMessage[] = [];
     client.watchAgents((m) => got.push(m));
     await waitFor(() => got.length === 1);
-    expect(buildAgentRows(got[0]).map((r) => r.status)).toEqual(['blocked', 'working', 'working', 'idle']);
+    expect(buildAgentRows(got[0])).toHaveLength(4);
     gw.setStatus('p_3', 'blocked');
     await waitFor(() => got.length === 2);
     expect(got[1].rev).toBe(2);
-    expect(buildAgentRows(got[1])[1].agent.pane_id).toBe('p_3');
+    expect(buildAgentRows(got[1]).find((r) => r.agent.pane_id === 'p_3')?.status).toBe('blocked');
   });
 
   it('sends in-band notify only while foreground', async () => {

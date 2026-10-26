@@ -1,4 +1,4 @@
-import { AgentsMessage, buildAgentRows, normalizeStatus } from '../../src/protocol';
+import { AgentsMessage, buildAgentRows, groupBySpace, normalizeStatus } from '../../src/protocol';
 import { fixture } from './fixtures';
 
 describe('agent rows', () => {
@@ -9,20 +9,29 @@ describe('agent rows', () => {
     expect(rows[0]).toMatchObject({ name: 'Claude', status: 'blocked', workspaceLabel: 'flockr', tabLabel: 'mobile' });
   });
 
-  it('sorts blocked, done, working, idle, unknown, then workspace and tab number', () => {
-    const base = { terminal_id: 't', workspace_id: 'w', tab_id: 'x' };
+  it('sorts in sidebar order (space, then tab) and groups by space', () => {
     const msg = {
       agents: [
-        { ...base, pane_id: 'a', agent_status: 'idle' as const },
-        { ...base, pane_id: 'b', agent_status: 'working' as const },
-        { ...base, pane_id: 'c', agent_status: 'mystery' as never },
-        { ...base, pane_id: 'd', agent_status: 'blocked' as const },
-        { ...base, pane_id: 'e', agent_status: 'done' as const },
+        { terminal_id: 't', pane_id: 'a', workspace_id: 'w2', tab_id: 'w2:t1', agent_status: 'blocked' as const },
+        { terminal_id: 't', pane_id: 'b', workspace_id: 'w1', tab_id: 'w1:t2', agent_status: 'idle' as const },
+        { terminal_id: 't', pane_id: 'c', workspace_id: 'w1', tab_id: 'w1:t1', agent_status: 'mystery' as never },
       ],
-      workspaces: [],
-      tabs: [],
-    };
-    expect(buildAgentRows(msg).map((r) => r.agent.pane_id)).toEqual(['d', 'e', 'b', 'a', 'c']);
+      workspaces: [
+        { workspace_id: 'w1', number: 1, label: 'Dotfiles' },
+        { workspace_id: 'w2', number: 2, label: 'flockr' },
+      ],
+      tabs: [
+        { tab_id: 'w1:t1', workspace_id: 'w1', number: 1, label: '1' },
+        { tab_id: 'w1:t2', workspace_id: 'w1', number: 2, label: '2' },
+        { tab_id: 'w2:t1', workspace_id: 'w2', number: 1, label: '1' },
+      ],
+    } as unknown as AgentsMessage;
+    const rows = buildAgentRows(msg);
+    expect(rows.map((r) => r.agent.pane_id)).toEqual(['c', 'b', 'a']);
+    expect(groupBySpace(rows).map((g) => [g.title, g.data.map((r) => r.agent.pane_id)])).toEqual([
+      ['Dotfiles', ['c', 'b']],
+      ['flockr', ['a']],
+    ]);
     expect(normalizeStatus('later')).toBe('unknown');
   });
 });

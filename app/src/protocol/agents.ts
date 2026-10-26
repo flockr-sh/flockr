@@ -1,14 +1,6 @@
 // Agent list helpers: sorting and labels (section 9.3, 11.3).
 import { AgentInfo, AgentStatus, AgentsMessage, TabInfo, WorkspaceInfo, normalizeStatus } from './types';
 
-export const STATUS_ORDER: Record<AgentStatus, number> = {
-  blocked: 0,
-  done: 1,
-  working: 2,
-  idle: 3,
-  unknown: 4,
-};
-
 export interface AgentRow {
   agent: AgentInfo;
   status: AgentStatus;
@@ -39,14 +31,25 @@ export function buildAgentRows(msg: Pick<AgentsMessage, 'agents' | 'workspaces' 
       tabLabel: tab?.label || agent.tab_id,
     };
   });
+  // Sidebar order: by space, then tab.
   rows.sort(
     (a, b) =>
-      STATUS_ORDER[a.status] - STATUS_ORDER[b.status] ||
       (a.workspace?.number ?? 1e9) - (b.workspace?.number ?? 1e9) ||
       (a.tab?.number ?? 1e9) - (b.tab?.number ?? 1e9) ||
       a.agent.pane_id.localeCompare(b.agent.pane_id),
   );
   return rows;
+}
+
+/** Consecutive rows of the same space as list sections, keeping row order. */
+export function groupBySpace<T extends { workspaceLabel: string }>(rows: T[]): { title: string; data: T[] }[] {
+  const sections: { title: string; data: T[] }[] = [];
+  for (const row of rows) {
+    const last = sections[sections.length - 1];
+    if (last && last.title === row.workspaceLabel) last.data.push(row);
+    else sections.push({ title: row.workspaceLabel, data: [row] });
+  }
+  return sections;
 }
 
 /** A pane with no agent, from `pane.list`. */
