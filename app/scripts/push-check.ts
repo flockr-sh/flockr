@@ -64,7 +64,7 @@ async function main(): Promise<void> {
     const tail = readFileSync(log, 'utf8').slice(logStart);
     found = tail.split('\n').find((l) => /Expo/.test(l)) ?? '';
   }
-  run('pane', 'report-agent', '--source', 'push-check', '--agent', 'claude', '--state', 'idle', pane);
+  run('pane', 'release-agent', '--source', 'push-check', '--agent', 'claude', pane);
   client.close();
   run('mobile', 'devices', 'revoke', creds.device_id);
 
