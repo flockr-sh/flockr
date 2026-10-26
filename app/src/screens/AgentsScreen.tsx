@@ -52,7 +52,7 @@ export function AgentsScreen({ nav, serverId }: Props) {
   return (
     <SafeAreaView style={ui.screen} edges={['top', 'left', 'right']}>
       <View style={ui.header}>
-        <Pressable onPress={() => nav.pop()} style={ui.button}>
+        <Pressable accessibilityRole="button" onPress={() => nav.pop()} style={ui.button}>
           <Text style={ui.buttonText}>‹</Text>
         </Pressable>
         <View style={{ flex: 1 }}>
@@ -61,14 +61,18 @@ export function AgentsScreen({ nav, serverId }: Props) {
           </Text>
           <Text style={ui.sub}>{server?.needsRepair ? 'token rejected: pair again' : statusText(status)}</Text>
         </View>
-        <Pressable onPress={remove} style={ui.button}>
+        <Pressable accessibilityRole="button" onPress={remove} style={ui.button}>
           <Text style={[ui.buttonText, { color: colors.danger }]}>Remove</Text>
         </Pressable>
       </View>
       {server?.needsRepair ? (
         <View style={styles.empty}>
           <Text style={ui.text}>This phone was revoked or its token is no longer valid.</Text>
-          <Pressable style={[ui.button, ui.primary, { marginTop: 12 }]} onPress={() => nav.push({ name: 'pair' })}>
+          <Pressable
+            accessibilityRole="button"
+            style={[ui.button, ui.primary, { marginTop: 12 }]}
+            onPress={() => nav.push({ name: 'pair' })}
+          >
             <Text style={[ui.buttonText, ui.primaryText]}>Pair again</Text>
           </Pressable>
         </View>
@@ -115,7 +119,12 @@ export function AgentsScreen({ nav, serverId }: Props) {
 
 function TabButton({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
   return (
-    <Pressable onPress={onPress} style={[styles.tab, active && styles.tabActive]}>
+    <Pressable
+      accessibilityRole="tab"
+      accessibilityState={{ selected: active }}
+      onPress={onPress}
+      style={[styles.tab, active && styles.tabActive]}
+    >
       <Text style={[ui.buttonText, { fontSize: 14 }, !active && { color: colors.dim }]}>{label}</Text>
     </Pressable>
   );
@@ -123,7 +132,11 @@ function TabButton({ label, active, onPress }: { label: string; active: boolean;
 
 function TerminalCard({ row, onPress }: { row: TerminalRow; onPress: () => void }) {
   return (
-    <Pressable onPress={onPress} style={({ pressed }) => [styles.card, pressed && { backgroundColor: colors.panelHi }]}>
+    <Pressable
+      accessibilityRole="button"
+      onPress={onPress}
+      style={({ pressed }) => [styles.card, pressed && { backgroundColor: colors.panelHi }]}
+    >
       <Text style={styles.prompt}>$</Text>
       <View style={{ flex: 1 }}>
         <Text style={styles.name} numberOfLines={1}>
@@ -145,7 +158,11 @@ function TerminalCard({ row, onPress }: { row: TerminalRow; onPress: () => void 
 function AgentCard({ row, onPress }: { row: AgentRow; onPress: () => void }) {
   const title = row.agent.terminal_title_stripped || row.agent.title;
   return (
-    <Pressable onPress={onPress} style={({ pressed }) => [styles.card, pressed && { backgroundColor: colors.panelHi }]}>
+    <Pressable
+      accessibilityRole="button"
+      onPress={onPress}
+      style={({ pressed }) => [styles.card, pressed && { backgroundColor: colors.panelHi }]}
+    >
       <View style={[styles.dot, { backgroundColor: statusColor[row.status] }]} />
       <View style={{ flex: 1 }}>
         <View style={styles.line}>

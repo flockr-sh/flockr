@@ -121,6 +121,7 @@ export default function App() {
       {banner ? (
         <SafeAreaView edges={['top']} style={styles.bannerWrap} pointerEvents="box-none">
           <Pressable
+            accessibilityRole="button"
             style={[styles.banner, { borderLeftColor: statusColor[banner.kind === 'blocked' ? 'blocked' : 'done'] }]}
             onPress={() => {
               setBanner(null);

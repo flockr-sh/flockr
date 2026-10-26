@@ -63,7 +63,7 @@ export function PairScreen({ nav, initialUrl }: { nav: Nav; initialUrl?: string 
   return (
     <SafeAreaView style={ui.screen}>
       <View style={ui.header}>
-        <Pressable onPress={() => nav.pop()} style={ui.button}>
+        <Pressable accessibilityRole="button" onPress={() => nav.pop()} style={ui.button}>
           <Text style={ui.buttonText}>‹</Text>
         </Pressable>
         <Text style={[ui.title, { flex: 1 }]}>Pair a server</Text>
@@ -83,14 +83,18 @@ export function PairScreen({ nav, initialUrl }: { nav: Nav; initialUrl?: string 
               />
             </View>
           ) : (
-            <Pressable style={[ui.button, ui.primary]} onPress={() => void requestPermission()}>
+            <Pressable
+              accessibilityRole="button"
+              style={[ui.button, ui.primary]}
+              onPress={() => void requestPermission()}
+            >
               <Text style={[ui.buttonText, ui.primaryText]}>
                 {permission?.canAskAgain === false ? 'Camera blocked in Settings' : 'Allow camera to scan'}
               </Text>
             </Pressable>
           )
         ) : (
-          <Pressable style={ui.button} onPress={() => setScanning(true)}>
+          <Pressable accessibilityRole="button" style={ui.button} onPress={() => setScanning(true)}>
             <Text style={ui.buttonText}>Scan QR code</Text>
           </Pressable>
         )}
@@ -108,6 +112,7 @@ export function PairScreen({ nav, initialUrl }: { nav: Nav; initialUrl?: string 
           multiline
         />
         <Pressable
+          accessibilityRole="button"
           disabled={busy || !text.trim()}
           style={[ui.button, ui.primary, (busy || !text.trim()) && { opacity: 0.5 }]}
           onPress={() => void pair(text)}

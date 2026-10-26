@@ -312,7 +312,7 @@ export function TerminalView({ sub, fitWidth, zoom, onZoom, onLayout, stats, deb
         <SkiaPictureView ref={viewRef} style={styles.fill} picture={fallbackPicture} debug={debug} opaque />
       </View>
       {scrolledBack > 0 ? (
-        <Pressable style={styles.backPill} onPress={() => sub?.scrollToBottom()}>
+        <Pressable accessibilityRole="button" style={styles.backPill} onPress={() => sub?.scrollToBottom()}>
           <Text style={styles.backPillText}>
             {scrolledBack} {scrolledBack === 1 ? 'line' : 'lines'} back · Bottom ↓
           </Text>

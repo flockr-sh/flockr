@@ -14,7 +14,11 @@ export function ServersScreen({ nav, pushNote }: { nav: Nav; pushNote: string | 
     <SafeAreaView style={ui.screen}>
       <View style={ui.header}>
         <Text style={[ui.title, { flex: 1 }]}>flockr</Text>
-        <Pressable style={[ui.button, ui.primary]} onPress={() => nav.push({ name: 'pair' })}>
+        <Pressable
+          accessibilityRole="button"
+          style={[ui.button, ui.primary]}
+          onPress={() => nav.push({ name: 'pair' })}
+        >
           <Text style={[ui.buttonText, ui.primaryText]}>Pair</Text>
         </Pressable>
       </View>
@@ -44,7 +48,11 @@ function ServerCard({ server, onPress }: { server: StoredServer; onPress: () => 
   const status = useClientStatus(client);
   const host = server.hosts[server.lastHost ?? 0] ?? server.hosts[0];
   return (
-    <Pressable onPress={onPress} style={({ pressed }) => [styles.card, pressed && { backgroundColor: colors.panelHi }]}>
+    <Pressable
+      accessibilityRole="button"
+      onPress={onPress}
+      style={({ pressed }) => [styles.card, pressed && { backgroundColor: colors.panelHi }]}
+    >
       <Text style={styles.name}>{server.name}</Text>
       <Text style={ui.sub}>
         {host}:{server.port} · {server.needsRepair ? 'needs re-pair' : statusText(status)}
