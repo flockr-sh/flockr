@@ -314,6 +314,7 @@ impl Gateway {
             "surface",
             "surface.history",
             "surface.shift",
+            "surface.wheel",
             "input",
         ];
         if self.push.enabled {

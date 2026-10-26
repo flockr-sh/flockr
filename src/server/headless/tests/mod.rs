@@ -124,6 +124,7 @@ fn test_headless_server_with_event_hub(event_hub: api::EventHub) -> HeadlessServ
         server_config_diagnostic_without_keybindings: None,
         terminal_attach_owners: HashMap::new(),
         mobile_surface_devices: HashMap::new(),
+        mobile_wheel_remainder: HashMap::new(),
         pending_alt_screen_reads: Vec::new(),
         deferred_alt_screen_reads: Vec::new(),
         next_activity_stamp: 1,
@@ -8457,4 +8458,111 @@ async fn fresh_session_move_resizes_panes_to_their_new_cells() {
     assert_eq!(size(&server, first_pane), small);
     assert_eq!(size(&server, second_pane), large);
     shutdown_test_runtimes(&mut server);
+}
+
+/// A server with one terminal fed `screen`, plus the PTY input channel and
+/// the terminal's public pane id.
+fn with_mobile_wheel_test_server(
+    screen: &[u8],
+    test: impl FnOnce(&mut HeadlessServer, &mut tokio::sync::mpsc::Receiver<Bytes>, String),
+) {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("test runtime");
+    let _runtime_guard = rt.enter();
+    let mut server = test_headless_server();
+    let workspace = crate::workspace::Workspace::test_new("mobile-wheel");
+    let pane_id = workspace.tabs[0].root_pane;
+    let terminal_id = workspace.terminal_id(pane_id).expect("terminal id").clone();
+    let public_pane_id = format!("{}:p1", workspace.id);
+    server.app.state.workspaces = vec![workspace];
+    server.app.state.ensure_test_terminals();
+    let (runtime, mut input_rx) =
+        crate::terminal::TerminalRuntime::test_with_channel_and_scrollback_bytes(
+            80,
+            24,
+            64 * 1024,
+            screen,
+            128,
+        );
+    server.app.terminal_runtimes.insert(terminal_id, runtime);
+
+    test(&mut server, &mut input_rx, public_pane_id);
+
+    shutdown_test_runtimes(&mut server);
+    drop(server);
+    drop(_runtime_guard);
+    rt.shutdown_timeout(Duration::from_millis(100));
+}
+
+fn drain_input(input_rx: &mut tokio::sync::mpsc::Receiver<Bytes>) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    while let Ok(chunk) = input_rx.try_recv() {
+        bytes.extend_from_slice(&chunk);
+    }
+    bytes
+}
+
+#[test]
+fn mobile_wheel_sends_wheel_reports_when_the_app_has_mouse_reporting() {
+    with_mobile_wheel_test_server(
+        b"\x1b[?1049h\x1b[?1000h\x1b[?1006h",
+        |server, input_rx, target| {
+            let wheel = |server: &mut HeadlessServer, lines, column, row| {
+                let (reply, mut reply_rx) = tokio::sync::oneshot::channel();
+                let rendered = server.handle_server_event(ServerEvent::MobilePaneWheel {
+                    target: target.clone(),
+                    lines,
+                    column,
+                    row,
+                    reply,
+                });
+                (rendered, reply_rx.try_recv().expect("reply"))
+            };
+
+            // One wheel event per three dragged lines; the rest carries over.
+            assert_eq!(wheel(server, 7, Some(4), Some(2)), (true, Ok(true)));
+            // SGR wheel up is button 64; cells are 1-based on the wire.
+            assert_eq!(drain_input(input_rx), b"\x1b[<64;5;3M".repeat(2));
+            assert_eq!(wheel(server, 2, Some(4), Some(2)), (true, Ok(true)));
+            assert_eq!(drain_input(input_rx), b"\x1b[<64;5;3M".to_vec());
+
+            assert_eq!(wheel(server, -6, Some(500), None), (true, Ok(true)));
+            // Wheel down is 65; the column is clamped and the row defaults to
+            // the middle of the 24-row grid.
+            assert_eq!(drain_input(input_rx), b"\x1b[<65;80;13M".repeat(2));
+        },
+    );
+}
+
+#[test]
+fn mobile_wheel_sends_arrow_keys_under_alternate_scroll() {
+    with_mobile_wheel_test_server(b"\x1b[?1049h\x1b[?1007h", |server, input_rx, target| {
+        assert_eq!(
+            server.apply_mobile_pane_wheel(&target, 6, None, None),
+            Ok(true)
+        );
+        assert_eq!(drain_input(input_rx), b"\x1b[A\x1b[A");
+    });
+}
+
+#[test]
+fn mobile_wheel_leaves_host_scrollback_to_the_gateway() {
+    let mut screen = Vec::new();
+    for line in 0..100 {
+        screen.extend_from_slice(format!("line {line}\r\n").as_bytes());
+    }
+    with_mobile_wheel_test_server(&screen, |server, input_rx, target| {
+        assert_eq!(
+            server.apply_mobile_pane_wheel(&target, 5, None, None),
+            Ok(false)
+        );
+        assert!(drain_input(input_rx).is_empty());
+        let runtime = server.app.terminal_runtimes.values().next().unwrap();
+        assert_eq!(runtime.scroll_metrics().unwrap().offset_from_bottom, 0);
+        assert!(server
+            .apply_mobile_pane_wheel("w404:p1", 1, None, None)
+            .is_err());
+    });
 }

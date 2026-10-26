@@ -8,6 +8,9 @@ use super::*;
 use crate::server::client_transport::ClientWriter;
 use crate::server::mobile::{SurfaceOpenError, SurfaceOpened};
 
+/// Lines a desktop mouse wheel notch usually scrolls; one phone wheel event per this many dragged rows.
+const WHEEL_LINES_PER_EVENT: i32 = 3;
+
 impl HeadlessServer {
     pub(super) fn open_mobile_surface(
         &mut self,
@@ -101,5 +104,66 @@ impl HeadlessServer {
             .ok_or_else(|| format!("terminal {terminal_id} not found"))?;
         runtime.scroll_reset();
         apply_client_pane_input_events(runtime, events).map(|_| ())
+    }
+
+    pub(super) fn apply_mobile_pane_wheel(
+        &mut self,
+        target: &str,
+        lines: i32,
+        column: Option<u16>,
+        row: Option<u16>,
+    ) -> Result<bool, String> {
+        if self.handoff_in_progress {
+            return Err("server is handing off".to_owned());
+        }
+        let terminal_id = self
+            .resolve_terminal_target_id_string(target)
+            .ok_or_else(|| format!("terminal target {target} not found"))?;
+        let runtime = self
+            .runtime_for_terminal_id_string(&terminal_id)
+            .ok_or_else(|| format!("terminal {terminal_id} not found"))?;
+        if !matches!(
+            runtime.wheel_routing(),
+            Some(
+                crate::pane::WheelRouting::MouseReport | crate::pane::WheelRouting::AlternateScroll
+            )
+        ) {
+            return Ok(false);
+        }
+        // Apps scroll several lines per wheel event, so a drag of `lines` rows
+        // sends one event per WHEEL_LINES_PER_EVENT and carries the rest over.
+        let pending = self
+            .mobile_wheel_remainder
+            .entry(terminal_id.clone())
+            .or_default();
+        let total = *pending + lines;
+        let events = total / WHEEL_LINES_PER_EVENT;
+        *pending = total - events * WHEEL_LINES_PER_EVENT;
+        if events == 0 {
+            return Ok(true);
+        }
+        let runtime = self
+            .runtime_for_terminal_id_string(&terminal_id)
+            .ok_or_else(|| format!("terminal {terminal_id} not found"))?;
+        let (rows, cols) = runtime.current_size();
+        let column = column.unwrap_or(cols / 2).min(cols.saturating_sub(1));
+        let row = row.unwrap_or(rows / 2).min(rows.saturating_sub(1));
+        let direction = if events > 0 {
+            protocol::AttachScrollDirection::Up
+        } else {
+            protocol::AttachScrollDirection::Down
+        };
+        for _ in 0..events.unsigned_abs() {
+            apply_terminal_attach_scroll(
+                runtime,
+                protocol::AttachScrollSource::Wheel,
+                direction,
+                1,
+                Some(column),
+                Some(row),
+                0,
+            )?;
+        }
+        Ok(true)
     }
 }

@@ -48,6 +48,8 @@ const CLOSE_WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 /// How long a relative scroll keeps building on the last requested offset
 /// instead of the offset in the last frame sent.
 const SCROLL_TARGET_HOLD: Duration = Duration::from_secs(1);
+/// Cap on wheel steps in one `surface.wheel`, each way.
+const MAX_WHEEL_LINES: i64 = 50;
 /// Cap on one reassembled message after `hello`: the largest input message
 /// plus room for its JSON envelope. Per-type limits are checked after decode.
 const MAX_INBOUND_MESSAGE_BYTES: usize = MAX_INPUT_BYTES + 64 * 1024;
@@ -937,6 +939,7 @@ impl Conn {
                 }
             }
             ClientMessage::SurfaceScroll(request) => self.surface_scroll(request).await,
+            ClientMessage::SurfaceWheel(request) => self.surface_wheel(request).await,
             ClientMessage::SurfaceHistory(request) => self.surface_history(request).await,
             ClientMessage::Input(input) => {
                 let limit = match &input.kind {
@@ -1136,6 +1139,55 @@ impl Conn {
             .await
         {
             self.api_error(request.id.as_deref(), err);
+        }
+    }
+
+    /// Wheel steps go to the app when it takes mouse wheel input, as on the
+    /// desktop; otherwise this is a `surface.scroll` by the same lines.
+    async fn surface_wheel(&mut self, request: protocol::SurfaceWheel) {
+        let Some(sub) = self.subs.get(&request.sub) else {
+            self.error(
+                request.id.as_deref(),
+                ErrorCode::NotFound,
+                "no such subscription",
+            );
+            return;
+        };
+        let lines = request.lines.clamp(-MAX_WHEEL_LINES, MAX_WHEEL_LINES);
+        if lines == 0 {
+            return;
+        }
+        let (reply_tx, reply_rx) = oneshot::channel();
+        let sent = self
+            .gateway
+            .server_event_tx
+            .send(ServerEvent::MobilePaneWheel {
+                target: sub.terminal_id.clone(),
+                // Clamped to ±MAX_WHEEL_LINES above.
+                lines: lines as i32,
+                column: request.col,
+                row: request.row,
+                reply: reply_tx,
+            })
+            .await;
+        let id = request.id.as_deref();
+        if sent.is_err() {
+            self.error(id, ErrorCode::ServerUnavailable, "server loop is gone");
+            return;
+        }
+        match reply_rx.await {
+            Ok(Ok(true)) => {}
+            Ok(Ok(false)) => {
+                self.surface_scroll(protocol::SurfaceScroll {
+                    id: request.id,
+                    sub: request.sub,
+                    lines: Some(lines),
+                    to: None,
+                })
+                .await;
+            }
+            Ok(Err(message)) => self.error(id, ErrorCode::NotFound, message),
+            Err(_) => self.error(id, ErrorCode::ServerUnavailable, "server did not answer"),
         }
     }
 
@@ -1624,6 +1676,32 @@ mod tests {
             let (received, frames) = recv(&mut ws, &mut session).await;
             assert_eq!(frames, 3);
             assert_eq!(received, big);
+        }
+
+        #[tokio::test]
+        async fn surface_wheel_is_listed_and_needs_an_open_subscription() {
+            let server = server("wire-wheel").await;
+            let (code, _) = pairing::create_pairing(&server.dir, 600, store::now_unix()).unwrap();
+            let mut ws = connect(server.addr).await;
+            let mut session = handshake(&mut ws, &server.public_key()).await;
+            let hello = json!({
+                "t": "hello",
+                "versions": [2],
+                "pair": { "code": code, "device_name": "Phone", "sid": server.gateway.server_id },
+            });
+            send(&mut ws, &mut session, &hello.to_string()).await;
+            let (welcome, _) = recv(&mut ws, &mut session).await;
+            assert!(welcome["features"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("surface.wheel")));
+
+            let wheel = json!({ "t": "surface.wheel", "id": "w1", "sub": 9, "lines": 3 });
+            send(&mut ws, &mut session, &wheel.to_string()).await;
+            let (reply, _) = recv(&mut ws, &mut session).await;
+            assert_eq!(reply["t"], "error");
+            assert_eq!(reply["id"], "w1");
+            assert_eq!(reply["code"], "not_found");
         }
 
         #[tokio::test]

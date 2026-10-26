@@ -619,6 +619,17 @@ pub(crate) enum ServerEvent {
         events: Vec<ClientPaneInputEvent>,
         reply: tokio::sync::oneshot::Sender<Result<(), String>>,
     },
+    /// The mobile gateway sent mouse wheel steps to one terminal. The reply is
+    /// `Ok(true)` when the app took them as wheel input and `Ok(false)` when
+    /// the terminal scrolls its own scrollback instead (nothing was sent).
+    MobilePaneWheel {
+        target: String,
+        /// Wheel steps; positive scrolls up.
+        lines: i32,
+        column: Option<u16>,
+        row: Option<u16>,
+        reply: tokio::sync::oneshot::Sender<Result<bool, String>>,
+    },
     /// Ctrl+C or external shutdown signal received.
     QuitSignal,
 }

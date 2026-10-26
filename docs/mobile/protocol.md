@@ -441,6 +441,8 @@ MUST NOT depend on a feature the server did not list. v2 servers list:
   `"input"`, `"push.expo"` (only when push is enabled in config).
 - `"surface.shift"` if the server can emit `shift` in deltas (section 10.5).
   The app MUST still handle `shift` whenever it is present.
+- `"surface.wheel"` if the server takes `surface.wheel` (section 9.4).
+  Without it the app scrolls with `surface.scroll` only.
 
 ### 8.4 Server checks
 
@@ -481,7 +483,7 @@ Auth path:
     "boot_id": "b-7f3a..."
   },
   "device": { "device_id": "d_q8Zt3mVfR1xKp0aB", "name": "Dylan's iPhone", "token": "fmd1_..." },
-  "features": ["api", "agents.watch", "surface", "surface.history", "input", "push.expo"],
+  "features": ["api", "agents.watch", "surface", "surface.history", "input", "push.expo", "surface.shift", "surface.wheel"],
   "methods": ["agent.list", "agent.get", "..."],
   "limits": {
     "max_in_flight": 2,
@@ -676,6 +678,7 @@ See section 10 for the frame format and server behavior.
 { "t": "surface.resync", "sub": 1 }
 { "t": "surface.scroll", "sub": 1, "lines": 10 }
 { "t": "surface.scroll", "sub": 1, "to": "bottom" }
+{ "t": "surface.wheel", "sub": 1, "lines": 3, "col": 40, "row": 12 }
 { "t": "surface.history", "id": "h1", "sub": 1, "lines": 500 }
 { "t": "surface.unsubscribe", "sub": 1 }
 ```
@@ -695,6 +698,20 @@ See section 10 for the frame format and server behavior.
   `pane.scroll`; the desktop sees it). Takes effect on the next frame.
   `lines` is relative to the last offset this connection asked for (within
   the last second), so several scrolls between frames add up.
+- `surface.wheel` (feature `"surface.wheel"`): mouse wheel steps, routed
+  the way the desktop client routes its wheel. `lines > 0` is wheel up
+  (back into history), `< 0` wheel down; clamped to ±50 per message, `0`
+  does nothing. `col`/`row` (optional, 0-based) are the cell under the
+  finger in the subscription's grid; default is the grid center, and values
+  past the edge are clamped. When the app in the pane has mouse reporting
+  on, the server sends one wheel event per 3 lines (a desktop wheel notch
+  scrolls about 3) at that cell to the PTY, carrying the remainder over to
+  the next message for that terminal; on the alternate screen with
+  alternate scroll mode (`?1007`) and no mouse reporting, it sends the same
+  number of up/down arrow keys. Either way the shared
+  viewport returns to the bottom. Otherwise it is exactly
+  `surface.scroll` with the same `lines`. No reply on success; errors carry
+  `id` when given.
 - `surface.history`: plain-text history (section 10.7).
 
 ### 9.5 Surface messages (server → client)
@@ -1226,6 +1243,7 @@ Limits (constants in `src/server/mobile/mod.rs`):
 | Inbound sizes | 1 MiB input messages, 64 KiB others (reassembled message; frames ≤ 65535 bytes) |
 | Outbound message | 4 MiB |
 | Surface size | cols ≤ 500, rows ≤ 200 |
+| `surface.wheel` steps | ±50 per message |
 | Style table / link table | 4096 / 256, then full frame |
 | Pushes | 30 per device per minute |
 

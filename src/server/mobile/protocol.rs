@@ -154,6 +154,20 @@ pub(crate) struct SurfaceScroll {
     pub to: Option<String>,
 }
 
+/// `surface.wheel`: mouse wheel steps at a cell. `lines` > 0 scrolls up
+/// (back into history), like `surface.scroll`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub(crate) struct SurfaceWheel {
+    #[serde(default)]
+    pub id: Option<String>,
+    pub sub: u32,
+    pub lines: i64,
+    #[serde(default)]
+    pub col: Option<u16>,
+    #[serde(default)]
+    pub row: Option<u16>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub(crate) struct SurfaceHistory {
     pub id: String,
@@ -241,6 +255,7 @@ pub(crate) enum ClientMessage {
     SurfaceAck(SurfaceAck),
     SurfaceResync(SurfaceRef),
     SurfaceScroll(SurfaceScroll),
+    SurfaceWheel(SurfaceWheel),
     SurfaceHistory(SurfaceHistory),
     SurfaceUnsubscribe(SurfaceRef),
     Input(Input),
@@ -325,6 +340,7 @@ impl ClientMessage {
             "surface.ack" => Self::SurfaceAck(typed(value)?),
             "surface.resync" => Self::SurfaceResync(typed(value)?),
             "surface.scroll" => Self::SurfaceScroll(typed(value)?),
+            "surface.wheel" => Self::SurfaceWheel(typed(value)?),
             "surface.history" => Self::SurfaceHistory(typed(value)?),
             "surface.unsubscribe" => Self::SurfaceUnsubscribe(typed(value)?),
             "input.text" | "input.key" | "input.paste" | "input.submit" => {
@@ -548,6 +564,34 @@ mod tests {
         };
         assert_eq!(subscribe.mode, SurfaceMode::Unknown);
         assert_eq!(subscribe.max_fps(), 60);
+    }
+
+    #[test]
+    fn surface_wheel_needs_lines_and_has_an_optional_cell() {
+        assert_eq!(
+            ClientMessage::decode(&fixture("client.surface.wheel.json")).unwrap(),
+            ClientMessage::SurfaceWheel(SurfaceWheel {
+                id: None,
+                sub: 1,
+                lines: 3,
+                col: Some(40),
+                row: Some(12),
+            })
+        );
+        assert_eq!(
+            ClientMessage::decode(r#"{"t":"surface.wheel","id":"w1","sub":2,"lines":-4}"#).unwrap(),
+            ClientMessage::SurfaceWheel(SurfaceWheel {
+                id: Some("w1".into()),
+                sub: 2,
+                lines: -4,
+                col: None,
+                row: None,
+            })
+        );
+        assert!(matches!(
+            ClientMessage::decode(r#"{"t":"surface.wheel","id":"w1","sub":2}"#),
+            Err(DecodeError::BadRequest { id: Some(id), .. }) if id == "w1"
+        ));
     }
 
     #[test]

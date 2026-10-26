@@ -19,7 +19,8 @@
     "surface.history",
     "input",
     "push.expo",
-    "surface.shift"
+    "surface.shift",
+    "surface.wheel"
   ],
   "methods": [
     "agent.list",
