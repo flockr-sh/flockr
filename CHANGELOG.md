@@ -1,5 +1,20 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- Mobile gateway for the flockr phone app, off by default (`[mobile]` in
+  the config). `flockr mobile pair` shows a QR code; the phone then lists
+  agents and terminals, streams panes, types into them, and gets alerts
+  when an agent is blocked or done. `flockr mobile devices` lists and
+  revokes phones, and `flockr mobile status` shows the gateway.
+- Every phone connection is end-to-end encrypted with Noise and pinned to
+  the server key in the QR code. There is no plain-text mode.
+- `pane.mark_read` API method. Reading a finished agent on any desktop
+  client or phone now clears its done badge everywhere.
+- `agent.list` and `agent.get` report the agent's `branch` and whether its
+  session is still empty (`session_empty`).
+
 ## [1.1.0] - 2026-10-26
 
 ### Added
