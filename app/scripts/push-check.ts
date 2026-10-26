@@ -12,7 +12,7 @@
 import { execFileSync } from 'node:child_process';
 import { readFileSync, statSync } from 'node:fs';
 import { WebSocket } from 'ws';
-import { Credentials, GatewayClient, parseHostEntry, parsePairingUrl } from '../src/protocol';
+import { Credentials, decodeServerKey, GatewayClient, parseHostEntry, parsePairingUrl } from '../src/protocol';
 
 const arg = (name: string) => {
   const i = process.argv.indexOf(name);
@@ -29,10 +29,13 @@ async function main(): Promise<void> {
 
   const payload = parsePairingUrl((JSON.parse(run('mobile', 'pair', '--no-wait', '--json')) as { url: string }).url);
   const hosts = payload.hosts.map((h) => parseHostEntry(h, payload.port));
+  const serverKey = decodeServerKey(payload.pk);
+  if (!serverKey) throw new Error('pairing payload has no valid pk');
   const make = (credentials: Credentials) =>
     new GatewayClient({
       hosts,
       sid: payload.sid,
+      serverKey,
       credentials,
       app: { version: '0.1.0', platform: 'node' },
       createSocket: (url, protocols) => new WebSocket(url, protocols) as never,

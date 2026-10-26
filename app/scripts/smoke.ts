@@ -17,6 +17,7 @@ import {
   AgentsMessage,
   buildAgentRows,
   Credentials,
+  decodeServerKey,
   GatewayClient,
   GatewayError,
   Grid,
@@ -69,14 +70,23 @@ function sizeSummary(t: string): string {
   return `${t}: n=${s.count} avg=${Math.round(s.bytes / s.count)}B median=${med}B max=${s.max}B total=${(s.bytes / 1024).toFixed(1)}KB`;
 }
 
+// Plain `ws` socket; the client sets binaryType to 'arraybuffer'. Message
+// sizes are counted from the decrypted JSON through `onMessageText`.
+let binaryFrames = 0;
+let textFrames = 0;
 const createSocket: WebSocketFactory = (url, protocols) => {
   const ws = new WebSocket(url, protocols);
-  // Wrap onmessage so every text frame is counted before the client sees it.
   const like = {
     get readyState() {
       return ws.readyState;
     },
-    send: (d: string) => ws.send(d),
+    set binaryType(t: string) {
+      ws.binaryType = t as 'arraybuffer';
+    },
+    get binaryType() {
+      return ws.binaryType;
+    },
+    send: (d: Uint8Array) => ws.send(d),
     close: (code?: number, reason?: string) => ws.close(code, reason),
     onopen: null as WebSocketLike['onopen'],
     onmessage: null as WebSocketLike['onmessage'],
@@ -85,10 +95,9 @@ const createSocket: WebSocketFactory = (url, protocols) => {
   };
   ws.on('open', () => like.onopen?.({}));
   ws.on('message', (data, isBinary) => {
-    if (isBinary) return;
-    const text = data.toString();
-    record(text);
-    like.onmessage?.({ data: text });
+    if (isBinary) binaryFrames++;
+    else textFrames++;
+    like.onmessage?.({ data: isBinary ? data : data.toString() });
   });
   ws.on('close', (code, reason) => like.onclose?.({ code, reason: reason.toString() }));
   ws.on('error', (e) => like.onerror?.(e));
@@ -120,6 +129,8 @@ interface Target {
   kind: 'flockr' | 'mock' | 'manual';
   pairUrl(): Promise<string>;
   setStatus?(pane: string, status: 'working' | 'blocked' | 'idle'): Promise<void>;
+  /** Undo setStatus so the pane is left as it was. */
+  clearStatus?(pane: string): Promise<void>;
   revoke?(deviceId: string): Promise<void>;
   devices?(): Promise<string[]>;
   stop(): Promise<void>;
@@ -135,6 +146,9 @@ function flockrTarget(bin: string): Target {
     },
     async setStatus(pane, status) {
       run('pane', 'report-agent', '--source', 'smoke', '--agent', 'claude', '--state', status, pane);
+    },
+    async clearStatus(pane) {
+      run('pane', 'release-agent', '--source', 'smoke', '--agent', 'claude', pane);
     },
     async revoke(deviceId) {
       run('mobile', 'devices', 'revoke', deviceId);
@@ -161,6 +175,9 @@ async function mockTarget(): Promise<{ target: Target; mock: MockGateway }> {
       async setStatus(pane, status) {
         mock.setStatus(pane, status);
       },
+      async clearStatus(pane) {
+        mock.setStatus(pane, 'working');
+      },
       async revoke(deviceId) {
         mock.revoke(deviceId);
       },
@@ -172,9 +189,13 @@ async function mockTarget(): Promise<{ target: Target; mock: MockGateway }> {
 }
 
 function newClient(payload: PairingPayload, credentials: Credentials): GatewayClient {
+  const serverKey = decodeServerKey(payload.pk);
+  if (!serverKey) throw new Error('pairing payload has no valid pk');
   return new GatewayClient({
     hosts: payload.hosts.map((h) => parseHostEntry(h, payload.port)),
     sid: payload.sid,
+    serverKey,
+    onMessageText: record,
     credentials,
     app: { version: '0.1.0', platform: 'node' },
     createSocket,
@@ -222,7 +243,7 @@ async function main(): Promise<void> {
   pairClient.on('paired', (d) => (paired = d));
   pairClient.connect();
   const welcome = await pairClient.waitReady();
-  check('pair: welcome', welcome.version === 1 && welcome.server.server_id === payload.sid, welcome.server);
+  check('pair: welcome', welcome.version === 2 && welcome.server.server_id === payload.sid, welcome.server);
   await waitFor('paired event', () => paired);
   const creds = paired as unknown as { device_id: string; token: string };
   check('pair: device token issued', creds.token.startsWith('fmd1_') || !isReal, creds.device_id);
@@ -266,7 +287,10 @@ async function main(): Promise<void> {
   const unwatch = client.watchAgents((m) => (agentsMsg = m));
   await waitFor('agents', () => agentsMsg);
   const rows = buildAgentRows(agentsMsg as unknown as AgentsMessage);
-  for (const r of rows) console.log(`  ${r.status.padEnd(8)} ${r.name.padEnd(10)} ${r.workspaceLabel} > ${r.tabLabel} (${r.agent.pane_id})`);
+  for (const r of rows)
+    console.log(
+      `  ${r.status.padEnd(8)} ${r.name.padEnd(10)} ${r.workspaceLabel} > ${r.tabLabel} (${r.agent.pane_id})`,
+    );
   check('agents: list not empty', rows.length > 0, agentsMsg);
   // A plain shell pane: the faked `claude` agent on flockr, the `shell` pane on the mock.
   const want = isReal ? 'claude' : 'shell';
@@ -285,7 +309,10 @@ async function main(): Promise<void> {
   // 7. Fit mode at an iPhone-sized grid; type a command and see it echoed.
   resetSizes();
   const fit = await openSub(client, pane, { mode: 'fit', cols: 45, rows: 30 });
-  check('surface: fit 45x30', fit.grid.cols === 45 && fit.grid.rows === 30, { cols: fit.grid.cols, rows: fit.grid.rows });
+  check('surface: fit 45x30', fit.grid.cols === 45 && fit.grid.rows === 30, {
+    cols: fit.grid.cols,
+    rows: fit.grid.rows,
+  });
   const fitFrame = sizes.get('surface.frame');
   const marker = `smoke${Math.floor(Math.random() * 1e6)}`;
   if (isReal) {
@@ -304,7 +331,14 @@ async function main(): Promise<void> {
   const typeDeltas = sizes.get('surface.delta');
   console.log(`  typing echo: ${sizeSummary('surface.delta')} echo=${fit.echo.last?.toFixed(1) ?? '-'}ms`);
   await fit.input('submit', '');
-  await waitFor('command output', () => screen(fit.grid).split('\n').some((l) => l.trim() === marker || (!isReal && l.includes(`ran "echo ${marker}"`))), 5000).then(
+  await waitFor(
+    'command output',
+    () =>
+      screen(fit.grid)
+        .split('\n')
+        .some((l) => l.trim() === marker || (!isReal && l.includes(`ran "echo ${marker}"`))),
+    5000,
+  ).then(
     () => check('input: submit runs command', true),
     (e) => check('input: submit runs command', false, String(e) + '\n' + screen(fit.grid)),
   );
@@ -343,14 +377,17 @@ async function main(): Promise<void> {
     await sleep(300);
     resetSizes();
     const t0 = Date.now();
-    await fit.input('text', `end=$((SECONDS+${busySeconds})); i=0; while [ $SECONDS -lt $end ]; do printf 'line %d the quick brown fox jumps over the lazy dog\\n' $i; i=$((i+1)); done`);
+    await fit.input(
+      'text',
+      `end=$((SECONDS+${busySeconds})); i=0; while [ $SECONDS -lt $end ]; do printf 'line %d the quick brown fox jumps over the lazy dog\\n' $i; i=$((i+1)); done`,
+    );
     await fit.input('submit', '');
     await sleep(busySeconds * 1000 + 800);
     const secs = (Date.now() - t0) / 1000;
     const d = sizes.get('surface.delta');
     const f = sizes.get('surface.frame');
     const total = (d?.bytes ?? 0) + (f?.bytes ?? 0);
-    busy = `busy ${secs.toFixed(1)}s: ${sizeSummary('surface.delta')}; ${sizeSummary('surface.frame')}; ${((d?.count ?? 0) + (f?.count ?? 0)) / secs | 0} updates/s, ${(total / 1024 / secs).toFixed(1)} KB/s`;
+    busy = `busy ${secs.toFixed(1)}s: ${sizeSummary('surface.delta')}; ${sizeSummary('surface.frame')}; ${(((d?.count ?? 0) + (f?.count ?? 0)) / secs) | 0} updates/s, ${(total / 1024 / secs).toFixed(1)} KB/s`;
     console.log(`  ${busy}`);
     check('busy: updates flowed', (d?.count ?? 0) + (f?.count ?? 0) > 5, busy);
     check('busy: no resyncs', fit.stats.resyncs === 0, fit.stats.resyncs);
@@ -371,7 +408,11 @@ async function main(): Promise<void> {
       () => check('surface: scroll to bottom restores view', false),
     );
     const lines = await fit.history(200);
-    check('surface: history', lines.some((l) => l.includes('quick brown fox')), lines.slice(-3));
+    check(
+      'surface: history',
+      lines.some((l) => l.includes('quick brown fox')),
+      lines.slice(-3),
+    );
   }
 
   // 12. Push register (fake token) and in-band notify while in the foreground.
@@ -388,7 +429,7 @@ async function main(): Promise<void> {
       () => check('push: in-band notify for blocked agent', false, notifies),
     );
     console.log(`  notify: ${JSON.stringify(notifies[notifies.length - 1] ?? null)}`);
-    await target.setStatus(pane, 'working');
+    await target.clearStatus?.(pane);
   }
   await client.unregisterPush().then(
     () => check('push: unregister ok', true),
@@ -421,10 +462,13 @@ async function main(): Promise<void> {
     }
   }
   client.close();
+  check('noise: every server frame was binary', textFrames === 0 && binaryFrames > 0, { binaryFrames, textFrames });
 
   console.log('\n--- measurements (45x30 fit) ---');
   console.log(`full frame: ${fitFrame ? `${fitFrame.list[0]}B` : 'n/a'}`);
-  console.log(`typing a 12-char command: ${typeDeltas ? `${typeDeltas.count} deltas, avg ${Math.round(typeDeltas.bytes / typeDeltas.count)}B` : 'n/a'}`);
+  console.log(
+    `typing a 12-char command: ${typeDeltas ? `${typeDeltas.count} deltas, avg ${Math.round(typeDeltas.bytes / typeDeltas.count)}B` : 'n/a'}`,
+  );
   console.log(`one keystroke: ${oneChar}`);
   if (busy) console.log(busy);
   await target.stop();

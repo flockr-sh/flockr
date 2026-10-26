@@ -86,6 +86,19 @@ export function utf8Length(text: string): number {
 
 export class PairingError extends Error {}
 
+export const OLD_PAIRING_MESSAGE = 'this QR is from an older flockr; update flockr and run `flockr mobile pair` again';
+
+/** Decode a stored or scanned `pk` (43-char base64url) into the 32-byte key, or null. */
+export function decodeServerKey(pk: unknown): Uint8Array | null {
+  if (typeof pk !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(pk)) return null;
+  try {
+    const bytes = base64UrlDecode(pk);
+    return bytes.length === 32 ? bytes : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Parse `flockr://pair?p=<base64url JSON>`. Also accepts the bare `p` value.
  * `nowSecs` is used to reject expired codes.
@@ -117,20 +130,22 @@ export function parsePairingUrl(input: string, nowSecs?: number): PairingPayload
 function validatePayload(json: unknown, nowSecs?: number): PairingPayload {
   if (typeof json !== 'object' || json === null) throw new PairingError('payload is not an object');
   const o = json as Record<string, unknown>;
-  if (o.v !== 1) throw new PairingError(`unsupported pairing version ${String(o.v)}`);
+  if (o.v !== 2) throw new PairingError(OLD_PAIRING_MESSAGE);
   const hosts = Array.isArray(o.hosts) ? o.hosts.filter((h): h is string => typeof h === 'string' && h.length > 0) : [];
   if (hosts.length === 0) throw new PairingError('payload has no hosts');
   if (typeof o.port !== 'number' || o.port < 1 || o.port > 65535) throw new PairingError('payload has no valid port');
   if (typeof o.sid !== 'string' || !o.sid) throw new PairingError('payload has no sid');
+  if (!decodeServerKey(o.pk)) throw new PairingError('payload has no valid server key (pk)');
   if (typeof o.code !== 'string' || !o.code) throw new PairingError('payload has no code');
   const exp = typeof o.exp === 'number' ? o.exp : 0;
   if (nowSecs !== undefined && exp > 0 && exp < nowSecs) throw new PairingError('pairing code expired');
   return {
-    v: 1,
+    v: 2,
     name: typeof o.name === 'string' && o.name ? o.name : hosts[0],
     hosts,
     port: o.port,
     sid: o.sid,
+    pk: o.pk as string,
     code: o.code,
     exp,
   };

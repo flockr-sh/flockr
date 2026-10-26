@@ -29,7 +29,7 @@ async function main(): Promise<void> {
     log: (m) => console.log(`[mock] ${m}`),
   });
   const { port } = await gw.start();
-  console.log(`mock flockr gateway on ws://${host}:${port}/mobile/v1`);
+  console.log(`mock flockr gateway on ws://${host}:${port}/mobile/v2 (Noise key ${gw.pk})`);
   const printPairing = () => {
     const url = gw.createPairing(600);
     qrcode.generate(url, { small: true }, (qr) => console.log(qr));

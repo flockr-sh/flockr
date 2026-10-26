@@ -19,8 +19,8 @@ module.exports = {
       supportsTablet: true,
       infoPlist: {
         ITSAppUsesNonExemptEncryption: false,
-        // mobile.v1 is plain ws:// to a NetBird/WireGuard address (no TLS in
-        // v1; WireGuard encrypts the link). iOS blocks cleartext without this.
+        // mobile.v2 is plain ws:// (no TLS); the payload is Noise encrypted
+        // in the app. iOS blocks cleartext sockets without this.
         NSAppTransportSecurity: {
           NSAllowsArbitraryLoads: true,
           NSAllowsLocalNetworking: true,

@@ -1,16 +1,34 @@
-// Mock mobile.v1 gateway (Node + ws). Used by the jest tests and by
+// Mock mobile.v2 gateway (Node + ws). Used by the jest tests and by
 // `npm run mock-gateway` to try the app without a flockr server.
-// It follows docs/mobile/protocol-v1.md closely enough to exercise the app's
-// client; it is not a reference implementation of the Rust server.
+// It follows docs/mobile/protocol-v1.md plus the v2 Noise transport closely
+// enough to exercise the app's client; it is not a reference implementation
+// of the Rust server.
 import { createHash, randomBytes } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 import { WebSocket, WebSocketServer } from 'ws';
-import { encodePairingUrl } from '../src/protocol/pairing';
+import {
+  CipherState,
+  FrameError,
+  generateKeyPair,
+  HANDSHAKE_MSG_LEN,
+  KeyPair,
+  keyPairFromPrivate,
+  MessageReader,
+  NOISE_MAX_MESSAGE,
+  NoiseResponder,
+  sealMessage,
+} from '../src/protocol/noise';
+import { base64UrlEncode, encodePairingUrl } from '../src/protocol/pairing';
 import type { AgentInfo, AgentStatus, Style, TabInfo, WorkspaceInfo } from '../src/protocol/types';
 import { SurfaceEncoder } from './encoder';
 import { FakeTerminal } from './terminal';
 
-const SUBPROTOCOL = 'flockr.mobile.v1';
+const SUBPROTOCOL = 'flockr.mobile.v2';
+const WS_PATH = '/mobile/v2';
+/** v1 inbound caps: 1 MiB for input text messages, 64 KiB for the rest. */
+const MAX_INPUT_BYTES = 1024 * 1024;
+const MAX_OTHER_BYTES = 64 * 1024;
+const INPUT_TYPES = new Set(['input.paste', 'input.submit', 'input.text']);
 
 export type PaneKind = 'shell' | 'log' | 'tui' | 'stress';
 
@@ -42,6 +60,8 @@ export interface MockOptions {
   animate?: boolean;
   /** Emit `shift` in deltas. */
   shift?: boolean;
+  /** Noise static private key (32 bytes). Random per instance by default. */
+  staticKey?: Uint8Array;
   log?: (msg: string) => void;
 }
 
@@ -68,6 +88,9 @@ interface Sub {
 
 interface Conn {
   ws: WebSocket;
+  /** Transport ciphers after the Noise handshake. */
+  tx: CipherState | null;
+  reader: MessageReader | null;
   device: Device | null;
   maxInFlight: number;
   subs: Map<number, Sub>;
@@ -84,6 +107,8 @@ export class MockGateway {
   readonly sid: string;
   readonly name: string;
   readonly bootId = `b-${randomBytes(4).toString('hex')}`;
+  /** Noise static key; its public half goes in the pairing payload as `pk`. */
+  readonly staticKey: KeyPair;
   readonly panes: MockPane[] = [];
   readonly workspaces: WorkspaceInfo[];
   readonly tabs: TabInfo[];
@@ -101,6 +126,7 @@ export class MockGateway {
 
   constructor(private readonly opts: MockOptions = {}) {
     this.sid = b64url(randomBytes(16));
+    this.staticKey = opts.staticKey ? keyPairFromPrivate(opts.staticKey) : generateKeyPair();
     this.name = opts.name ?? 'mock-flockr';
     this.workspaces = [
       {
@@ -264,8 +290,8 @@ export class MockGateway {
     this.wss = new WebSocketServer({
       host,
       port: this.opts.port ?? 0,
-      path: '/mobile/v1',
-      maxPayload: 1024 * 1024,
+      path: WS_PATH,
+      maxPayload: NOISE_MAX_MESSAGE,
       handleProtocols: (protocols) => (protocols.has(SUBPROTOCOL) ? SUBPROTOCOL : false),
     });
     await new Promise<void>((resolve, reject) => {
@@ -303,14 +329,28 @@ export class MockGateway {
     const exp = Math.floor(Date.now() / 1000) + ttlSecs;
     this.pairing = { code_sha256: sha256(code), exp, failed: 0, consumed: false };
     return encodePairingUrl({
-      v: 1,
+      v: 2,
       name: this.name,
       hosts: hosts ?? [this.host],
       port: this.port,
       sid: this.sid,
+      pk: this.pk,
       code,
       exp,
     });
+  }
+
+  /** Server public key as it appears in the pairing payload. */
+  get pk(): string {
+    return base64UrlEncode(this.staticKey.publicKey);
+  }
+
+  /** Send a message to every connected client, then optionally close (tests). */
+  sendToAll(msg: Record<string, unknown>, closeCode?: number): void {
+    for (const c of this.conns) {
+      this.send(c, msg);
+      if (closeCode !== undefined) this.endConn(c, closeCode, 'test');
+    }
   }
 
   revoke(device_id: string): void {
@@ -365,6 +405,8 @@ export class MockGateway {
   private onConnection(ws: WebSocket): void {
     const conn: Conn = {
       ws,
+      tx: null,
+      reader: null,
       device: null,
       maxInFlight: 2,
       subs: new Map(),
@@ -377,14 +419,40 @@ export class MockGateway {
     const helloTimer = setTimeout(() => {
       if (!conn.device) this.endConn(conn, 4008, 'hello_timeout');
     }, 10000);
+    const noise = new NoiseResponder(this.staticKey);
     ws.on('message', (data, isBinary) => {
-      if (isBinary) return this.endConn(conn, 4000, 'binary');
+      if (!isBinary) return this.endConn(conn, 4000, 'text frame');
+      const buf = data as Buffer;
+      const bytes = new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
+      if (!conn.tx || !conn.reader) {
+        try {
+          if (bytes.length !== HANDSHAKE_MSG_LEN) throw new Error(`message 1 is ${bytes.length} bytes`);
+          noise.readMessage1(bytes);
+          const { message, ciphers } = noise.writeMessage2();
+          ws.send(message);
+          conn.tx = ciphers.send;
+          conn.reader = new MessageReader(ciphers.recv, MAX_INPUT_BYTES);
+        } catch (e) {
+          this.log(`handshake failed: ${String(e)}`);
+          this.endConn(conn, 4006, 'handshake_failed');
+        }
+        return;
+      }
+      let text: string | null;
+      try {
+        text = conn.reader.push(bytes);
+      } catch (e) {
+        return this.endConn(conn, e instanceof FrameError ? e.closeCode : 4000, (e as Error).message);
+      }
+      if (text === null) return;
       let msg: Record<string, unknown>;
       try {
-        msg = JSON.parse(data.toString());
+        msg = JSON.parse(text);
       } catch {
         return this.endConn(conn, 4000, 'bad json');
       }
+      if (conn.reader.lastSize > MAX_OTHER_BYTES && !INPUT_TYPES.has(String(msg.t)))
+        return this.endConn(conn, 1009, 'too big');
       if (typeof msg.t !== 'string') return this.endConn(conn, 4000, 'missing t');
       this.received.push(msg);
       if (!conn.device) {
@@ -403,7 +471,8 @@ export class MockGateway {
   }
 
   private send(c: Conn, msg: Record<string, unknown>): void {
-    if (c.ws.readyState === WebSocket.OPEN) c.ws.send(JSON.stringify(msg));
+    if (c.ws.readyState !== WebSocket.OPEN || !c.tx) return;
+    for (const frame of sealMessage(c.tx, JSON.stringify(msg))) c.ws.send(frame);
   }
 
   private endConn(c: Conn, code: number, reason: string): void {
@@ -421,7 +490,10 @@ export class MockGateway {
 
   private onHello(c: Conn, msg: Record<string, unknown>): void {
     const versions = Array.isArray(msg.versions) ? msg.versions : [];
-    if (!versions.includes(1)) return this.fail(c, 'unsupported_version', 4002);
+    if (!versions.includes(2)) {
+      this.send(c, { t: 'error', code: 'unsupported_version', supported: [2] });
+      return this.endConn(c, 4002, 'unsupported_version');
+    }
     const auth = msg.auth as { device_id?: string; token?: string } | undefined;
     const pair = msg.pair as { code?: string; device_name?: string; sid?: string } | undefined;
     if (!!auth === !!pair) return this.endConn(c, 4000, 'auth xor pair');
@@ -458,7 +530,7 @@ export class MockGateway {
     if (!device) return;
     this.send(c, {
       t: 'welcome',
-      version: 1,
+      version: 2,
       server: { name: this.name, server_id: this.sid, flockr_version: 'mock', boot_id: this.bootId },
       device: { device_id: device.device_id, name: device.name, ...(token ? { token } : {}) },
       features: [

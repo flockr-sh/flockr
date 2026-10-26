@@ -1,6 +1,9 @@
-// mobile.v1 gateway client. No React deps: runs in React Native and Node.
+// mobile.v2 gateway client. No React deps: runs in React Native and Node.
+// Every message rides in a Noise_NK channel pinned to the server key from
+// pairing (see noise.ts).
 import { applyDelta, applyFrame, emptyGrid, Grid, GridChange, resolveTheme, ResolvedTheme } from './grid';
-import { HostPort, utf8Length, wsUrl } from './pairing';
+import { FrameError, HANDSHAKE_MSG_LEN, MessageReader, NoiseInitiator, sealMessage, CipherState } from './noise';
+import { HostPort, wsUrl } from './pairing';
 import { Clock, defaultClock, Latency, SurfaceStats, Window } from './stats';
 import {
   AgentsMessage,
@@ -10,6 +13,7 @@ import {
   CloseCode,
   ErrorMessage,
   HelloMessage,
+  MAX_SERVER_MESSAGE_BYTES,
   NotifyMessage,
   PROTOCOL_VERSION,
   ServerMessage,
@@ -30,7 +34,9 @@ import {
 
 export interface WebSocketLike {
   readonly readyState: number;
-  send(data: string): void;
+  /** The client sets 'arraybuffer'. */
+  binaryType?: string;
+  send(data: Uint8Array): void;
   close(code?: number, reason?: string): void;
   onopen: ((ev: unknown) => void) | null;
   onmessage: ((ev: { data: unknown }) => void) | null;
@@ -49,6 +55,8 @@ export interface ClientOptions {
   hosts: HostPort[];
   /** Server fingerprint from pairing; `welcome.server.server_id` must match. */
   sid: string;
+  /** Server Noise static public key from pairing (32 bytes). The handshake pins it. */
+  serverKey: Uint8Array;
   credentials: Credentials;
   app: AppInfo;
   createSocket: WebSocketFactory;
@@ -64,6 +72,8 @@ export interface ClientOptions {
   clock?: Clock;
   random?: () => number;
   log?: (msg: string) => void;
+  /** Sees each decrypted server message before dispatch (smoke-test byte accounting). */
+  onMessageText?: (text: string) => void;
 }
 
 export type ConnState = 'idle' | 'connecting' | 'open' | 'waiting' | 'closed' | 'failed';
@@ -87,6 +97,9 @@ export interface FatalInfo {
   /** The stored device token no longer works; the app must re-pair. */
   tokenDead: boolean;
 }
+
+/** Error code for a failed Noise handshake (server closed 4006, or message 2 did not decrypt). */
+export const HANDSHAKE_FAILED = 'handshake_failed';
 
 export class GatewayError extends Error {
   constructor(
@@ -312,6 +325,9 @@ export class GatewayClient {
   private readonly clock: Clock;
   private readonly random: () => number;
   private credentials: Credentials;
+  /** Transport ciphers once the handshake is done; null before. */
+  private tx: CipherState | null = null;
+  private reader: MessageReader | null = null;
   readonly rtt: Latency;
   readonly inputRtt: Latency;
   readonly bytesIn: Window;
@@ -421,6 +437,7 @@ export class GatewayClient {
     const s = this.socket;
     this.socket = null;
     this.welcomeMsg = null;
+    this.tx = this.reader = null;
     if (s) {
       s.onopen = s.onmessage = s.onerror = null;
       s.onclose = null;
@@ -461,10 +478,14 @@ export class GatewayClient {
       this.onSocketGone(null, 0, String(e), false);
       return;
     }
+    socket.binaryType = 'arraybuffer';
     this.socket = socket;
+    this.tx = this.reader = null;
     let opened = false;
+    let noise: NoiseInitiator | null = null;
+    // Covers the WebSocket open and the Noise handshake.
     this.connectTimer = setTimeout(() => {
-      if (!opened && this.socket === socket) {
+      if (!this.tx && this.socket === socket) {
         this.log(`connect timeout ${url}`);
         socket.onopen = socket.onmessage = socket.onerror = socket.onclose = null;
         try {
@@ -477,11 +498,43 @@ export class GatewayClient {
     }, this.opts.connectTimeoutMs ?? 5000);
     socket.onopen = () => {
       opened = true;
+      try {
+        noise = new NoiseInitiator(this.opts.serverKey);
+        socket.send(noise.writeMessage1());
+      } catch (e) {
+        this.log(`noise setup failed: ${String(e)}`);
+        this.abort(socket, CloseCode.handshakeFailed, String(e));
+      }
+    };
+    socket.onmessage = (ev) => {
+      if (this.socket !== socket) return;
+      const bytes = binaryData(ev.data);
+      if (!bytes) {
+        this.log('text frame from server');
+        this.abort(socket, CloseCode.protocolError, 'text frame');
+        return;
+      }
+      if (this.tx) {
+        this.onFrame(socket, bytes);
+        return;
+      }
+      // Noise message 2.
+      if (!noise) return this.abort(socket, CloseCode.protocolError, 'frame before handshake');
+      try {
+        if (bytes.length !== HANDSHAKE_MSG_LEN) throw new Error(`message 2 is ${bytes.length} bytes`);
+        const { ciphers } = noise.readMessage2(bytes);
+        noise = null;
+        this.tx = ciphers.send;
+        this.reader = new MessageReader(ciphers.recv, MAX_SERVER_MESSAGE_BYTES);
+      } catch (e) {
+        this.log(`handshake failed: ${String(e)}`);
+        this.abort(socket, CloseCode.handshakeFailed, 'handshake failed');
+        return;
+      }
       if (this.connectTimer) clearTimeout(this.connectTimer);
       this.connectTimer = null;
       this.sendHello();
     };
-    socket.onmessage = (ev) => this.onMessage(ev.data);
     socket.onerror = () => {
       // onclose follows; nothing to do here.
     };
@@ -503,9 +556,23 @@ export class GatewayClient {
     this.sendRaw(hello as unknown as Record<string, unknown>, true);
   }
 
+  /** Close the socket ourselves and handle it as closed with `code`. */
+  private abort(socket: WebSocketLike, code: number, reason: string): void {
+    if (this.socket !== socket) return;
+    socket.onopen = socket.onmessage = socket.onerror = socket.onclose = null;
+    try {
+      // 4006 is the server's code; the client closes a failed handshake as a protocol error.
+      socket.close(code === CloseCode.handshakeFailed ? CloseCode.protocolError : code, reason);
+    } catch {
+      // already closed
+    }
+    this.onSocketGone(socket, code, reason, true);
+  }
+
   private onSocketGone(socket: WebSocketLike | null, code: number, reason: string, opened: boolean): void {
     if (socket && this.socket !== socket) return;
     this.socket = null;
+    this.tx = this.reader = null;
     const hadWelcome = this.welcomeMsg !== null;
     this.welcomeMsg = null;
     if (this.connectTimer) clearTimeout(this.connectTimer);
@@ -578,9 +645,10 @@ export class GatewayClient {
   /** @internal Send one message. Returns false if not connected. */
   sendRaw(msg: Record<string, unknown>, beforeWelcome = false): boolean {
     const s = this.socket;
-    if (!s || s.readyState !== WS_OPEN) return false;
+    const tx = this.tx;
+    if (!s || !tx || s.readyState !== WS_OPEN) return false;
     if (!beforeWelcome && !this.welcomeMsg) return false;
-    s.send(JSON.stringify(msg));
+    for (const frame of sealMessage(tx, JSON.stringify(msg))) s.send(frame);
     return true;
   }
 
@@ -744,9 +812,32 @@ export class GatewayClient {
 
   // --- receiving ---
 
-  private onMessage(data: unknown): void {
-    if (typeof data !== 'string') return;
-    const bytes = utf8Length(data);
+  private onFrame(socket: WebSocketLike, frame: Uint8Array): void {
+    const reader = this.reader;
+    if (!reader) return;
+    let text: string | null;
+    const t0 = this.clock();
+    try {
+      text = reader.push(frame);
+      this.decryptMs += this.clock() - t0;
+    } catch (e) {
+      const code = e instanceof FrameError ? e.closeCode : CloseCode.protocolError;
+      this.log(`bad frame: ${String(e)}`);
+      this.abort(socket, code, (e as Error).message);
+      return;
+    }
+    if (text !== null) {
+      const decryptMs = this.decryptMs;
+      this.decryptMs = 0;
+      this.onMessage(text, reader.lastSize, decryptMs);
+    }
+  }
+
+  /** Decrypt time of the chunks of the message being reassembled. */
+  private decryptMs = 0;
+
+  private onMessage(data: string, bytes: number, decryptMs: number): void {
+    this.opts.onMessageText?.(data);
     const t0 = this.clock();
     this.bytesIn.add(bytes, t0);
     this.msgsIn.add(1, t0);
@@ -757,7 +848,8 @@ export class GatewayClient {
       this.log('dropping non-JSON message');
       return;
     }
-    const parseMs = this.clock() - t0;
+    // Decrypt counts as parse: both are per-message receive cost before the grid is touched.
+    const parseMs = this.clock() - t0 + decryptMs;
     if (!msg || typeof msg.t !== 'string') return;
     this.dispatch(msg, bytes, parseMs);
   }
@@ -926,6 +1018,8 @@ export function closeName(code: number): string {
       return 'too_many_connections';
     case 4005:
       return 'pairing_failed';
+    case 4006:
+      return HANDSHAKE_FAILED;
     case 4008:
       return 'hello_timeout';
     case 4009:
@@ -935,4 +1029,11 @@ export function closeName(code: number): string {
     default:
       return code ? `close_${code}` : 'unreachable';
   }
+}
+
+/** Bytes of a binary WebSocket message (ArrayBuffer in RN/browsers, Buffer/views in Node), or null for text. */
+function binaryData(data: unknown): Uint8Array | null {
+  if (data instanceof ArrayBuffer) return new Uint8Array(data);
+  if (ArrayBuffer.isView(data)) return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+  return null;
 }

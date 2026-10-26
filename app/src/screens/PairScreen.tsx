@@ -5,14 +5,16 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { connections } from '../state/connections';
 import type { Nav } from '../state/nav';
 import { colors, ui } from '../state/ui';
-import { GatewayError, parsePairingUrl } from '../protocol';
+import { GatewayError, HANDSHAKE_FAILED, OLD_PAIRING_MESSAGE, parsePairingUrl } from '../protocol';
 
 const ERRORS: Record<string, string> = {
   pairing_failed: 'The pairing code is wrong, expired, or already used. Run `flockr mobile pair` again.',
   too_many_devices: 'This server has reached its device limit. Revoke one with `flockr mobile devices revoke`.',
   server_mismatch: 'The server at that address is not the one that made this code.',
-  timeout: 'No answer from the server. Is the gateway enabled and is the phone on the same NetBird/LAN network?',
+  timeout:
+    'No answer from the server. Is the gateway enabled, and can this phone reach it (same VPN such as NetBird, or same network)?',
   unsupported_version: 'This app and the server do not share a protocol version.',
+  [HANDSHAKE_FAILED]: "This server's key changed or the address is a different machine. Pair again.",
 };
 
 export function PairScreen({ nav, initialUrl }: { nav: Nav; initialUrl?: string }) {
@@ -34,7 +36,9 @@ export function PairScreen({ nav, initialUrl }: { nav: Nav; initialUrl?: string 
       setError(
         msg === 'pairing code expired'
           ? 'This pairing code has expired. Run `flockr mobile pair` again.'
-          : 'That is not a complete flockr pairing link. Copy the whole flockr://pair?p=… line again.',
+          : msg === OLD_PAIRING_MESSAGE
+            ? 'This QR is from an older flockr. Update flockr and run `flockr mobile pair` again.'
+            : 'That is not a complete flockr pairing link. Copy the whole flockr://pair?p=… line again.',
       );
       handled.current = false;
       return;
@@ -121,8 +125,8 @@ export function PairScreen({ nav, initialUrl }: { nav: Nav; initialUrl?: string 
         </Pressable>
         {error ? <Text style={{ color: colors.danger }}>{error}</Text> : null}
         <Text style={styles.note}>
-          The connection is plain WebSocket (no TLS). Only pair over an encrypted private network such as NetBird or
-          WireGuard. Anyone who can read traffic on that network can read the terminal and the device token.
+          The connection is end-to-end encrypted and pinned to the server key in the QR code. Only the computer that
+          showed the code can answer, even on an untrusted network.
         </Text>
       </ScrollView>
     </SafeAreaView>

@@ -5,6 +5,7 @@ import {
   buildAgentRows,
   ClientOptions,
   Credentials,
+  decodeServerKey,
   FatalInfo,
   GatewayClient,
   GatewayError,
@@ -15,6 +16,13 @@ import {
   Subscription,
   WebSocketLike,
 } from '../../src/protocol';
+import { generateKeyPair, HANDSHAKE_MSG_LEN } from '../../src/protocol/noise';
+
+function keyOf(pk: string): Uint8Array {
+  const k = decodeServerKey(pk);
+  if (!k) throw new Error('bad pk');
+  return k;
+}
 
 const createSocket = (url: string, protocols: string[]) => new WebSocket(url, protocols) as unknown as WebSocketLike;
 
@@ -49,6 +57,7 @@ describe('GatewayClient against the mock gateway', () => {
     const c = new GatewayClient({
       hosts: p.hosts.map((h) => parseHostEntry(h, p.port)),
       sid: p.sid,
+      serverKey: keyOf(p.pk),
       credentials,
       app: { version: 'test', platform: 'node' },
       createSocket,
@@ -122,6 +131,7 @@ describe('GatewayClient against the mock gateway', () => {
     const c = new GatewayClient({
       hosts: [{ host: '127.0.0.1', port: p.port }],
       sid: 'not-this-server',
+      serverKey: keyOf(p.pk),
       credentials: { kind: 'auth', device_id, token },
       app: { version: 'test', platform: 'node' },
       createSocket,
@@ -131,6 +141,33 @@ describe('GatewayClient against the mock gateway', () => {
     const fatal = new Promise<FatalInfo>((r) => c.on('fatal', r));
     c.connect();
     expect((await fatal).error).toBe('server_mismatch');
+  });
+
+  it('a different server key fails the handshake (4006): terminal, token kept', async () => {
+    const { token, device_id } = await pairedClient();
+    const c = makeClient(
+      { kind: 'auth', device_id, token },
+      { reconnect: true, serverKey: generateKeyPair().publicKey },
+    );
+    const fatal = new Promise<FatalInfo>((r) => c.on('fatal', r));
+    c.connect();
+    expect(await fatal).toMatchObject({ code: 4006, error: 'handshake_failed', tokenDead: false });
+    expect(c.connStatus).toMatchObject({ state: 'failed', error: 'handshake_failed' });
+    expect(gw.received.filter((m) => m.t === 'hello')).toHaveLength(1);
+  });
+
+  it('hello carries versions [2]', async () => {
+    await pairedClient();
+    const hello = gw.received.find((m) => m.t === 'hello');
+    expect(hello?.versions).toEqual([2]);
+  });
+
+  it('a text frame from the server is a protocol error', async () => {
+    const { client } = await pairedClient({ reconnect: true, random: () => 0 });
+    const statuses: string[] = [];
+    client.on('status', (s) => statuses.push(`${s.state}:${s.code ?? ''}`));
+    for (const ws of (gw as unknown as { wss: { clients: Set<WebSocket> } }).wss.clients) ws.send('{"t":"pong"}');
+    await waitFor(() => statuses.includes('waiting:4000'));
   });
 
   it('revocation closes with 4003 and kills the token', async () => {
@@ -300,10 +337,7 @@ describe('GatewayClient against the mock gateway', () => {
     const welcomes: number[] = [];
     client.on('welcome', () => welcomes.push(1));
     // What a server stop or live handoff sends: surface.ended, then a close.
-    for (const ws of (gw as unknown as { wss: { clients: Set<WebSocket> } }).wss.clients) {
-      ws.send(JSON.stringify({ t: 'surface.ended', sub: sub.sub, reason: 'server_shutdown' }));
-      ws.close(4009);
-    }
+    gw.sendToAll({ t: 'surface.ended', sub: sub.sub, reason: 'server_shutdown' }, 4009);
     await waitFor(() => welcomes.length === 1, 5000);
     await waitFor(() => sub.grid.seq === 1 && client.ready);
     expect(sub.ended).toBeNull();
@@ -314,5 +348,75 @@ describe('GatewayClient against the mock gateway', () => {
     const { client } = await pairedClient();
     await client.forget();
     expect(gw.devices).toHaveLength(0);
+  });
+});
+
+/** A socket that answers message 1 with `reply` and records what the client sent. */
+function fakeSocket(reply: (msg1: Uint8Array) => unknown) {
+  const sent: Uint8Array[] = [];
+  const closes: number[] = [];
+  const sock: WebSocketLike = {
+    readyState: 0,
+    send(data: Uint8Array) {
+      sent.push(data);
+      if (sent.length === 1) setTimeout(() => sock.onmessage?.({ data: reply(data) }), 0);
+    },
+    close(code?: number) {
+      closes.push(code ?? 1000);
+    },
+    onopen: null,
+    onmessage: null,
+    onclose: null,
+    onerror: null,
+  };
+  setTimeout(() => {
+    (sock as { readyState: number }).readyState = 1;
+    sock.onopen?.({});
+  }, 0);
+  return { sock, sent, closes };
+}
+
+describe('GatewayClient handshake failures (fake socket)', () => {
+  const base = {
+    hosts: [{ host: '127.0.0.1', port: 1 }],
+    sid: 's',
+    credentials: { kind: 'auth', device_id: 'd', token: 't' } as Credentials,
+    app: { version: 'test', platform: 'node' },
+    pingIntervalMs: 0,
+    reconnect: true,
+  };
+
+  it('message 2 that does not decrypt is terminal handshake_failed', async () => {
+    const f = fakeSocket(() => new Uint8Array(HANDSHAKE_MSG_LEN).fill(9).buffer);
+    const c = new GatewayClient({ ...base, serverKey: generateKeyPair().publicKey, createSocket: () => f.sock });
+    const fatal = new Promise<FatalInfo>((r) => c.on('fatal', r));
+    c.connect();
+    expect(await fatal).toMatchObject({ code: 4006, error: 'handshake_failed', tokenDead: false });
+    expect(f.sent).toHaveLength(1);
+    expect(f.sent[0]).toHaveLength(HANDSHAKE_MSG_LEN);
+    expect(f.closes).toEqual([4000]);
+    c.close();
+  });
+
+  it('message 2 of the wrong length is terminal handshake_failed', async () => {
+    const f = fakeSocket(() => new Uint8Array(47).buffer);
+    const c = new GatewayClient({ ...base, serverKey: generateKeyPair().publicKey, createSocket: () => f.sock });
+    const fatal = new Promise<FatalInfo>((r) => c.on('fatal', r));
+    c.connect();
+    expect((await fatal).error).toBe('handshake_failed');
+    c.close();
+  });
+
+  it('a text frame instead of message 2 is a protocol error, not a handshake failure', async () => {
+    const f = fakeSocket(() => '{"t":"welcome"}');
+    const c = new GatewayClient({ ...base, serverKey: generateKeyPair().publicKey, createSocket: () => f.sock });
+    const status = new Promise<string>((r) =>
+      c.on('status', (s) => {
+        if (s.state === 'waiting' || s.state === 'failed') r(`${s.state}:${s.code}`);
+      }),
+    );
+    c.connect();
+    expect(await status).toBe('waiting:4000');
+    c.close();
   });
 });

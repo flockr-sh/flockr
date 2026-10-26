@@ -1,9 +1,12 @@
-// mobile.v1 wire types. Source of truth: flockr docs/mobile/protocol-v1.md.
+// mobile.v2 wire types. Source of truth: flockr docs/mobile/protocol-v1.md
+// (messages) plus the v2 Noise transport (see noise.ts).
 // No React or React Native imports in src/protocol/: it also runs under Node.
 
-export const PROTOCOL_VERSION = 1;
-export const SUBPROTOCOL = 'flockr.mobile.v1';
-export const WS_PATH = '/mobile/v1';
+export const PROTOCOL_VERSION = 2;
+export const SUBPROTOCOL = 'flockr.mobile.v2';
+export const WS_PATH = '/mobile/v2';
+/** Largest server → client JSON message (v1 section 7). */
+export const MAX_SERVER_MESSAGE_BYTES = 4 * 1024 * 1024;
 
 export type AgentStatus = 'idle' | 'working' | 'blocked' | 'done' | 'unknown';
 
@@ -27,6 +30,8 @@ export interface PairingPayload {
   hosts: string[];
   port: number;
   sid: string;
+  /** Server Noise static public key, base64url without padding (43 chars). */
+  pk: string;
   code: string;
   exp: number;
 }
@@ -130,6 +135,8 @@ export const CloseCode = {
   revoked: 4003,
   tooManyConnections: 4004,
   pairingFailed: 4005,
+  /** v2: the Noise handshake failed (wrong key or a different machine). */
+  handshakeFailed: 4006,
   helloTimeout: 4008,
   serverShutdown: 4009,
   rateLimited: 4029,
@@ -141,6 +148,7 @@ export const TERMINAL_CLOSE_CODES: ReadonlySet<number> = new Set([
   CloseCode.revoked,
   CloseCode.pairingFailed,
   CloseCode.unsupportedVersion,
+  CloseCode.handshakeFailed,
 ]);
 
 /** Close codes after which the stored device token is dead. */

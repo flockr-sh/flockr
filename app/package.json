@@ -17,12 +17,16 @@
   },
   "dependencies": {
     "@expo-google-fonts/jetbrains-mono": "^0.4.1",
+    "@noble/ciphers": "2.4.0",
+    "@noble/curves": "2.4.0",
+    "@noble/hashes": "2.4.0",
     "@shopify/react-native-skia": "2.14.0",
     "expo": "~58.0.19",
     "expo-build-properties": "~58.0.11",
     "expo-camera": "~58.0.12",
     "expo-clipboard": "~58.0.4",
     "expo-constants": "~58.0.13",
+    "expo-crypto": "~58.0.7",
     "expo-dev-client": "~58.0.15",
     "expo-device": "~58.0.5",
     "expo-font": "~58.0.10",
@@ -56,6 +60,9 @@
     ],
     "transform": {
       "^.+\\.[jt]sx?$": "babel-jest"
-    }
+    },
+    "transformIgnorePatterns": [
+      "/node_modules/(?!@noble/)"
+    ]
   }
 }

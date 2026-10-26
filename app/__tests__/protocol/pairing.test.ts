@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   encodePairingUrl,
   PairingPayload,
@@ -9,11 +11,49 @@ import {
   wsUrl,
   base64UrlDecode,
   base64UrlEncode,
+  decodeServerKey,
 } from '../../src/protocol';
 import { fixture } from './fixtures';
 
 describe('pairing URL', () => {
-  const payload = fixture<PairingPayload>('pairing-payload');
+  // The v1 spec example plus the v2 fields.
+  const pk = Buffer.alloc(32, 0xab).toString('base64url');
+  const payload: PairingPayload = { ...fixture<PairingPayload>('pairing-payload'), v: 2, pk };
+
+  it("parses the flockr server's v2 pairing fixture", () => {
+    // Copied from flockr's tests/fixtures/mobile-v2/pairing.payload.json.
+    const server = JSON.parse(
+      readFileSync(join(__dirname, '../fixtures/mobile-v2/pairing.payload.json'), 'utf8'),
+    ) as PairingPayload;
+    const b64 = Buffer.from(JSON.stringify(server), 'utf8').toString('base64url');
+    expect(parsePairingUrl(`flockr://pair?p=${b64}`)).toEqual(server);
+    expect(decodeServerKey(server.pk)).toHaveLength(32);
+  });
+
+  it('decodes pk to the 32-byte key', () => {
+    expect(pk).toHaveLength(43);
+    expect(Buffer.from(decodeServerKey(parsePairingUrl(encodePairingUrl(payload)).pk) ?? [])).toEqual(
+      Buffer.alloc(32, 0xab),
+    );
+  });
+
+  it('rejects v1 payloads with the update message', () => {
+    expect(() => parsePairingUrl(encodePairingUrl({ ...payload, v: 1 }))).toThrow(
+      'this QR is from an older flockr; update flockr and run `flockr mobile pair` again',
+    );
+    expect(() => parsePairingUrl(encodePairingUrl({ ...payload, v: 3 }))).toThrow(/older flockr/);
+  });
+
+  it('rejects a missing or malformed pk', () => {
+    const { pk: _pk, ...noPk } = payload;
+    const b64 = (o: unknown) => Buffer.from(JSON.stringify(o), 'utf8').toString('base64url');
+    expect(() => parsePairingUrl(b64(noPk))).toThrow(/pk/);
+    expect(() => parsePairingUrl(encodePairingUrl({ ...payload, pk: pk.slice(1) }))).toThrow(/pk/);
+    expect(() => parsePairingUrl(encodePairingUrl({ ...payload, pk: `${pk.slice(0, 42)}!` }))).toThrow(/pk/);
+    expect(() => parsePairingUrl(encodePairingUrl({ ...payload, pk: Buffer.alloc(31).toString('base64url') }))).toThrow(
+      /pk/,
+    );
+  });
 
   it('round-trips the spec payload', () => {
     const url = encodePairingUrl(payload);
@@ -36,7 +76,6 @@ describe('pairing URL', () => {
 
   it('rejects expired, wrong version, and junk', () => {
     expect(() => parsePairingUrl(encodePairingUrl(payload), payload.exp + 1)).toThrow(/expired/);
-    expect(() => parsePairingUrl(encodePairingUrl({ ...payload, v: 2 }))).toThrow(/version/);
     expect(() => parsePairingUrl('https://example.com')).toThrow();
     expect(() => parsePairingUrl('flockr://pair?q=1')).toThrow(/p=/);
     expect(() => parsePairingUrl(encodePairingUrl({ ...payload, hosts: [] }))).toThrow(/hosts/);
@@ -72,7 +111,7 @@ describe('hosts', () => {
   });
 
   it('builds ws URLs', () => {
-    expect(wsUrl({ host: '100.92.14.3', port: 47390 })).toBe('ws://100.92.14.3:47390/mobile/v1');
-    expect(wsUrl({ host: 'fd00::1', port: 1 })).toBe('ws://[fd00::1]:1/mobile/v1');
+    expect(wsUrl({ host: '100.92.14.3', port: 47390 })).toBe('ws://100.92.14.3:47390/mobile/v2');
+    expect(wsUrl({ host: 'fd00::1', port: 1 })).toBe('ws://[fd00::1]:1/mobile/v2');
   });
 });

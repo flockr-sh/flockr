@@ -43,7 +43,7 @@ export function PerfOverlay({ client, sub, view }: Props) {
   const lines = [
     `draw ${f0(view.draws.ratePerSec())}/s  js ${f0(jsFrames.current.ratePerSec())}fps (max gap ${f0(jsLongest.current.max())}ms)`,
     `recv ${f0(s?.updatesPerSec)}/s (full ${f0(s?.framesPerSec)})  ${f1((s?.bytesPerSec ?? 0) / 1024)} KB/s  rows ${f0(s?.rowsPerSec)}/s`,
-    `parse ${f1(s?.parseMs)}  apply ${f1(s?.applyMs)}  record ${f1(s?.recordMs)}  compose ${f1(view.compose.avg())} ms`,
+    `decrypt+parse ${f1(s?.parseMs)}  apply ${f1(s?.applyMs)}  record ${f1(s?.recordMs)}  compose ${f1(view.compose.avg())} ms`,
     `worst parse+apply+record ${f1(s?.worstMs)} ms  resyncs ${s?.resyncs ?? 0}`,
     `rtt ping ${f1(client?.rtt.last)} (avg ${f1(client?.rtt.avg())})  input.ok ${f1(client?.inputRtt.last)}  echo ${f1(sub?.echo.last)} ms`,
     `grid ${g?.cols ?? 0}x${g?.rows ?? 0}  seq ${g?.seq ?? 0}  styles ${g?.styles.length ?? 0}  link ${f1((client?.bytesIn.ratePerSec() ?? 0) / 1024)} KB/s`,

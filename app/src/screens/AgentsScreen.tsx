@@ -5,6 +5,7 @@ import { connections } from '../state/connections';
 import { statusText, useAgents, useClientStatus, useServers, useTerminals } from '../state/hooks';
 import type { Nav } from '../state/nav';
 import { colors, statusColor, ui } from '../state/ui';
+import { repairMessage, repairReason, repairShort } from '../state/storage';
 import type { AgentRow, TerminalRow } from '../protocol';
 
 interface Props {
@@ -15,7 +16,8 @@ interface Props {
 export function AgentsScreen({ nav, serverId }: Props) {
   const servers = useServers();
   const server = servers.find((s) => s.server_id === serverId);
-  const client = server && !server.needsRepair ? connections.client(serverId) : null;
+  const repair = server ? repairReason(server) : null;
+  const client = server && !repair ? connections.client(serverId) : null;
   const status = useClientStatus(client);
   const { rows, loaded, msg } = useAgents(client);
   const terminals = useTerminals(client, msg);
@@ -59,15 +61,15 @@ export function AgentsScreen({ nav, serverId }: Props) {
           <Text style={ui.title} numberOfLines={1}>
             {server?.name ?? 'Server'}
           </Text>
-          <Text style={ui.sub}>{server?.needsRepair ? 'token rejected: pair again' : statusText(status)}</Text>
+          <Text style={ui.sub}>{repair ? repairShort(repair) : statusText(status)}</Text>
         </View>
         <Pressable accessibilityRole="button" onPress={remove} style={ui.button}>
           <Text style={[ui.buttonText, { color: colors.danger }]}>Remove</Text>
         </Pressable>
       </View>
-      {server?.needsRepair ? (
+      {repair ? (
         <View style={styles.empty}>
-          <Text style={ui.text}>This phone was revoked or its token is no longer valid.</Text>
+          <Text style={ui.text}>{repairMessage(repair)}</Text>
           <Pressable
             accessibilityRole="button"
             style={[ui.button, ui.primary, { marginTop: 12 }]}

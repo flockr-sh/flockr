@@ -2,8 +2,17 @@
 import Constants from 'expo-constants';
 import * as Device from 'expo-device';
 import { Platform } from 'react-native';
-import { ConnStatus, GatewayClient, NotifyMessage, PairingPayload, parseHostEntry, WebSocketLike } from '../protocol';
-import { deleteServer, loadServers, saveServer, StoredServer } from './storage';
+import {
+  ConnStatus,
+  decodeServerKey,
+  GatewayClient,
+  HANDSHAKE_FAILED,
+  NotifyMessage,
+  PairingPayload,
+  parseHostEntry,
+  WebSocketLike,
+} from '../protocol';
+import { deleteServer, loadServers, repairReason, saveServer, StoredServer } from './storage';
 
 const createSocket = (url: string, protocols: string[]) => new WebSocket(url, protocols) as unknown as WebSocketLike;
 
@@ -77,10 +86,13 @@ class Connections {
     const existing = this.clients.get(serverId);
     if (existing) return existing;
     const s = this.server(serverId);
-    if (!s || s.needsRepair) return null;
+    if (!s || repairReason(s)) return null;
+    const serverKey = decodeServerKey(s.pk);
+    if (!serverKey) return null;
     const client = new GatewayClient({
       hosts: s.hosts.map((h) => parseHostEntry(h, s.port)),
       sid: s.server_id,
+      serverKey,
       credentials: { kind: 'auth', device_id: s.device_id, token: s.token },
       app: appInfo(),
       createSocket,
@@ -95,6 +107,8 @@ class Connections {
     });
     client.on('fatal', (f) => {
       if (f.tokenDead) void this.update(serverId, { needsRepair: true });
+      // Keep the token: the user may fix the address instead of re-pairing.
+      else if (f.error === HANDSHAKE_FAILED) void this.update(serverId, { keyMismatch: true });
       this.clients.delete(serverId);
       this.changed();
     });
@@ -150,9 +164,12 @@ class Connections {
 
   /** Pair with a scanned/pasted payload. Resolves with the stored server. */
   async pair(payload: PairingPayload): Promise<StoredServer> {
+    const serverKey = decodeServerKey(payload.pk);
+    if (!serverKey) throw new Error('pairing payload has no valid server key');
     const client = new GatewayClient({
       hosts: payload.hosts.map((h) => parseHostEntry(h, payload.port)),
       sid: payload.sid,
+      serverKey,
       credentials: { kind: 'pair', code: payload.code, device_name: deviceName() },
       app: appInfo(),
       createSocket,
@@ -173,6 +190,7 @@ class Connections {
         name: welcome.server.name || payload.name,
         hosts: payload.hosts,
         port: payload.port,
+        pk: payload.pk,
         device_id: got.device_id,
         token: got.token,
         lastHost: client.currentHostIndex,

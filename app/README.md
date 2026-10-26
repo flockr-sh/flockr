@@ -5,14 +5,22 @@ into them from an iPhone. Expo SDK 57 + TypeScript. Android uses the same
 code; desktop web is not set up yet.
 
 Status: **prototype**. Its job is to show whether drawing the terminal on the
-phone is fast enough. The wire contract is
-`flockr/docs/mobile/protocol-v1.md` (`mobile.v1`).
+phone is fast enough. The wire contract is `mobile.v2`: the messages in
+`flockr/docs/mobile/protocol-v1.md`, carried inside a
+`Noise_NK_25519_ChaChaPoly_SHA256` channel pinned to the server key from the
+pairing QR (path `/mobile/v2`, subprotocol `flockr.mobile.v2`, binary frames
+only). Phones paired under v1 must pair again.
 
 ## How it works
 
 - The flockr server renders each pane into a cell grid and sends it over a
   WebSocket as JSON: a full frame, then deltas (changed rows, optional
   whole-grid shift). The phone runs no terminal emulator and no SSH.
+- Every WebSocket frame is a Noise transport message (`src/protocol/noise.ts`,
+  pure JS on `@noble`). The phone is the NK initiator: it knows the server's
+  static key from the QR, so only that machine can finish the handshake. The
+  device token and pair code travel inside the channel. A failed handshake
+  stops reconnecting and asks the user to pair again; the token is kept.
 - The app draws the grid with `@shopify/react-native-skia`: one recorded
   picture per row, re-recorded only when that row changes, plus a cheap
   composite picture per drawn frame.
@@ -24,14 +32,17 @@ phone is fast enough. The wire contract is
 
 ```
 App.tsx                  screen stack, push wiring, in-app alert banner
-src/protocol/            mobile.v1 client; no React imports, runs under Node
+src/protocol/            mobile.v2 client; no React imports, runs under Node
   types.ts               message types, close codes
   pairing.ts             flockr://pair URL decode, host parsing, utf8/base64url
+  noise.ts               Noise NK initiator (+ responder for the mock), v2
+                         framing (flag byte + chunks of at most 65518 bytes)
   grid.ts                cell grid reducer (frame/delta/shift), colors, styles
   client.ts              GatewayClient: handshake, reconnect, API, agents,
                          surfaces, input, push, ping; Subscription
   stats.ts               rolling windows for the perf overlay
   agents.ts              agent sorting and labels
+src/polyfills.ts         crypto.getRandomValues from expo-crypto for Hermes
 src/state/               connections (one client per server), secure storage,
                          push (guarded), hooks, UI tokens
 src/screens/             Servers, Pair, Agents, Terminal
@@ -42,8 +53,10 @@ mock/                    mock gateway (Node + ws) with a fake terminal and a
 scripts/mock-gateway.ts  run the mock for the phone
 scripts/smoke.ts         drive the protocol client from Node
 tests/fixtures/mobile-v1 one JSON file per example in the spec
+__tests__/fixtures/      Noise NK test vectors (cacophony, snow); the flockr
+                         server's mobile-v2/noise-nk.json goes here too
 __tests__/protocol/      jest: pairing, grid, agents, encoder round trip,
-                         client against the mock
+                         Noise vectors and framing, client against the mock
 ```
 
 ## Commands
@@ -101,7 +114,8 @@ needs no build. Push does not work in Expo Go (see below).
 npm run mock-gateway -- --host 100.92.14.3      # your NetBird or LAN IP
 ```
 
-It prints a pairing QR and link. Panes: `Claude` (static TUI with colors,
+It prints a pairing QR and link (a new Noise key each run, so pair again
+after restarting it). Panes: `Claude` (static TUI with colors,
 wide chars, emoji), `Codex` (log at `--log-rate` lines/s), `shell` (echoes
 what you type), `stress` (120x50 full-screen redraw at `--stress-fps`, default
 30). Type `b`, `d`, `w` + Enter in the mock's terminal to flip Codex to
@@ -125,9 +139,11 @@ blocked/done/working (shows the in-app alert when the app is open).
 4. `flockr mobile devices` lists paired phones; `flockr mobile devices revoke
    <id>` cuts one off (the app then asks to pair again).
 
-The connection is plain `ws://` (no TLS in v1). Only list addresses on an
-encrypted private network such as NetBird/WireGuard. The pairing screen says
-so too.
+The WebSocket is plain `ws://`, but every message inside it is end-to-end
+encrypted with Noise and pinned to the server key in the QR. If the server's
+key changes (or the address now points at another machine) the app shows
+"This server's key changed or the address is a different machine. Pair
+again." and stops reconnecting.
 
 You can pair several servers; each one gets its own row on the first screen.
 
@@ -205,14 +221,15 @@ Tapping a notification opens that agent's pane. Profiles in `eas.json`:
 the development variant); change it in `app.config.js` if needed.
 
 `app.config.js` turns on the iOS ATS exception and Android cleartext traffic
-for every variant because v1 uses plain `ws://`.
+for every variant because the socket is plain `ws://` (the payload is Noise
+encrypted).
 
 ## What is stubbed or missing
 
 - Desktop web: not set up (no `react-dom`/`react-native-web`, no Skia web
   loader).
 - Text selection, copy and link tapping in the grid.
-- Mouse input (not in mobile.v1).
+- Mouse input (not in the protocol).
 - Glyphs missing from JetBrains Mono fall back to system fonts only for
   non-Latin text; colored emoji depend on the system font match.
 - Underline styles: curly/dotted/dashed draw as a single line.

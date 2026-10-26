@@ -2,19 +2,56 @@
 // One item per server plus an index of server ids.
 import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
+import { decodeServerKey } from '../protocol/pairing';
 
 export interface StoredServer {
   server_id: string;
   name: string;
   hosts: string[];
   port: number;
+  /** Server Noise public key from the QR (base64url, 43 chars). Missing on records paired under v1. */
+  pk?: string;
   device_id: string;
   token: string;
   /** Index into hosts of the last host that completed a handshake. */
   lastHost?: number;
   /** Token was rejected (revoked or unknown); the user must pair again. */
   needsRepair?: boolean;
+  /** The Noise handshake failed: the server key changed or the address is another machine. The token is kept. */
+  keyMismatch?: boolean;
   pairedAt: number;
+}
+
+export type RepairReason = 'token' | 'key' | 'legacy';
+
+/** Why this server cannot connect until the phone pairs again, or null if it can. */
+export function repairReason(s: StoredServer): RepairReason | null {
+  if (s.needsRepair) return 'token';
+  if (!decodeServerKey(s.pk)) return 'legacy';
+  if (s.keyMismatch) return 'key';
+  return null;
+}
+
+export function repairMessage(reason: RepairReason): string {
+  switch (reason) {
+    case 'token':
+      return 'This phone was revoked or its token is no longer valid.';
+    case 'key':
+      return "This server's key changed or the address is a different machine. Pair again.";
+    case 'legacy':
+      return 'This server was paired with an older flockr without encryption. Pair again.';
+  }
+}
+
+export function repairShort(reason: RepairReason): string {
+  switch (reason) {
+    case 'token':
+      return 'token rejected: pair again';
+    case 'key':
+      return 'server key changed: pair again';
+    case 'legacy':
+      return 'needs re-pair';
+  }
 }
 
 const INDEX_KEY = 'flockr.servers';

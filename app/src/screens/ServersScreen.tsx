@@ -5,7 +5,7 @@ import { connections } from '../state/connections';
 import { statusText, useClientStatus, useServers } from '../state/hooks';
 import type { Nav } from '../state/nav';
 import { isExpoGo } from '../state/push';
-import type { StoredServer } from '../state/storage';
+import { repairReason, repairShort, StoredServer } from '../state/storage';
 import { colors, ui } from '../state/ui';
 
 export function ServersScreen({ nav, pushNote }: { nav: Nav; pushNote: string | null }) {
@@ -44,7 +44,8 @@ export function ServersScreen({ nav, pushNote }: { nav: Nav; pushNote: string | 
 }
 
 function ServerCard({ server, onPress }: { server: StoredServer; onPress: () => void }) {
-  const client = server.needsRepair ? null : connections.client(server.server_id);
+  const repair = repairReason(server);
+  const client = repair ? null : connections.client(server.server_id);
   const status = useClientStatus(client);
   const host = server.hosts[server.lastHost ?? 0] ?? server.hosts[0];
   return (
@@ -55,7 +56,7 @@ function ServerCard({ server, onPress }: { server: StoredServer; onPress: () => 
     >
       <Text style={styles.name}>{server.name}</Text>
       <Text style={ui.sub}>
-        {host}:{server.port} · {server.needsRepair ? 'needs re-pair' : statusText(status)}
+        {host}:{server.port} · {repair ? repairShort(repair) : statusText(status)}
       </Text>
     </Pressable>
   );
