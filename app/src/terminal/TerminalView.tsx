@@ -218,96 +218,128 @@ export function TerminalView({ sub, fitWidth, zoom, onZoom, onLayout, stats, deb
     moved: false,
     held: false,
     holdTimer: null as ReturnType<typeof setTimeout> | null,
+    // Scroll acceleration and momentum: finger cell for wheel steps, and the
+    // running fling after release.
+    lastX: 0,
+    lastY: 0,
+    fling: null as ReturnType<typeof setInterval> | null,
   });
+  useEffect(() => {
+    const st = gesture.current;
+    return () => {
+      if (st.fling) clearInterval(st.fling);
+    };
+  }, []);
   const tapRef = useRef({ onTapCell, onLongPress });
   tapRef.current = { onTapCell, onLongPress };
-  const responder = useMemo(
-    () =>
-      PanResponder.create({
-        // Claim every touch so taps and holds reach us, not only drags.
-        onStartShouldSetPanResponder: () => true,
-        onMoveShouldSetPanResponder: () => true,
-        onPanResponderGrant: (e) => {
-          const st = gesture.current;
-          st.downX = e.nativeEvent.locationX;
-          st.downY = e.nativeEvent.locationY;
-          st.downAt = Date.now();
-          st.moved = false;
-          st.held = false;
-          if (st.holdTimer) clearTimeout(st.holdTimer);
-          st.holdTimer = setTimeout(() => {
-            if (!st.moved) {
-              st.held = true;
-              tapRef.current.onLongPress?.();
-            }
-          }, 500);
-          st.axis = '';
-          st.accY = 0;
-          st.lastDy = 0;
-          st.startX = view.current.offsetX;
-          st.startZoom = view.current.zoom;
-          st.startDist = 0;
-        },
-        onPanResponderMove: (e, g) => {
-          const st = gesture.current;
-          if (!st.moved && (Math.abs(g.dx) > 6 || Math.abs(g.dy) > 6 || g.numberActiveTouches === 2)) {
-            st.moved = true;
-            if (st.holdTimer) clearTimeout(st.holdTimer);
+  const responder = useMemo(() => {
+    // Scroll `px` of drag (positive = down = back into history), as wheel
+    // steps at the finger's cell so full-screen apps that draw their own
+    // scrolling move too.
+    const scrollBy = (px: number) => {
+      const st = gesture.current;
+      const s = subRef.current;
+      if (!s || !renderer) return;
+      st.accY += px;
+      const v = view.current;
+      const lineH = renderer.metrics.cellH * v.zoom;
+      const lines = Math.trunc(st.accY / lineH);
+      if (lines === 0) return;
+      st.accY -= lines * lineH;
+      const col = Math.floor((st.lastX + v.offsetX) / (renderer.metrics.cellW * v.zoom));
+      const row = Math.floor((st.lastY + v.offsetY) / lineH);
+      s.wheel(
+        lines,
+        Math.min(Math.max(0, col), Math.max(0, s.grid.cols - 1)),
+        Math.min(Math.max(0, row), Math.max(0, s.grid.rows - 1)),
+      );
+    };
+    const stopFling = () => {
+      const st = gesture.current;
+      if (st.fling) clearInterval(st.fling);
+      st.fling = null;
+    };
+    return PanResponder.create({
+      // Claim every touch so taps and holds reach us, not only drags.
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: () => true,
+      onPanResponderGrant: (e) => {
+        stopFling();
+        const st = gesture.current;
+        st.downX = e.nativeEvent.locationX;
+        st.downY = e.nativeEvent.locationY;
+        st.downAt = Date.now();
+        st.moved = false;
+        st.held = false;
+        if (st.holdTimer) clearTimeout(st.holdTimer);
+        st.holdTimer = setTimeout(() => {
+          if (!st.moved) {
+            st.held = true;
+            tapRef.current.onLongPress?.();
           }
-          if (!st.moved) return;
-          const touches = e.nativeEvent.touches;
-          if (touches.length === 2) {
-            const dx = touches[0].pageX - touches[1].pageX;
-            const dy = touches[0].pageY - touches[1].pageY;
-            const dist = Math.hypot(dx, dy);
-            if (st.startDist === 0) st.startDist = dist;
-            else onZoom?.(Math.min(4, Math.max(0.2, (st.startZoom * dist) / st.startDist)));
-            return;
-          }
-          if (!st.axis) st.axis = Math.abs(g.dx) > Math.abs(g.dy) ? 'x' : 'y';
-          const s = subRef.current;
-          if (!s || !renderer) return;
-          if (st.axis === 'x') {
-            view.current.offsetX = st.startX - g.dx;
-            schedule();
-          } else {
-            st.accY += g.dy - st.lastDy;
-            st.lastDy = g.dy;
-            const lineH = renderer.metrics.cellH * view.current.zoom;
-            const lines = Math.trunc(st.accY / lineH);
-            if (lines !== 0) {
-              st.accY -= lines * lineH;
-              // Drag down = scroll up into history = positive lines. Sent as
-              // wheel steps at the finger's cell, so full-screen apps that
-              // draw their own scrolling move too.
-              const v = view.current;
-              const cellW = renderer.metrics.cellW * v.zoom;
-              const col = Math.floor((e.nativeEvent.locationX + v.offsetX) / cellW);
-              const row = Math.floor((e.nativeEvent.locationY + v.offsetY) / lineH);
-              s.wheel(
-                lines,
-                Math.min(Math.max(0, col), Math.max(0, s.grid.cols - 1)),
-                Math.min(Math.max(0, row), Math.max(0, s.grid.rows - 1)),
-              );
-            }
-          }
-        },
-        onPanResponderRelease: () => {
-          const st = gesture.current;
+        }, 500);
+        st.axis = '';
+        st.accY = 0;
+        st.lastDy = 0;
+        st.startX = view.current.offsetX;
+        st.startZoom = view.current.zoom;
+        st.startDist = 0;
+      },
+      onPanResponderMove: (e, g) => {
+        const st = gesture.current;
+        if (!st.moved && (Math.abs(g.dx) > 6 || Math.abs(g.dy) > 6 || g.numberActiveTouches === 2)) {
+          st.moved = true;
           if (st.holdTimer) clearTimeout(st.holdTimer);
-          if (st.moved || st.held || Date.now() - st.downAt > 400 || !renderer) return;
-          const v = view.current;
-          const col = Math.floor((st.downX + v.offsetX) / (renderer.metrics.cellW * v.zoom));
-          const row = Math.floor((st.downY + v.offsetY) / (renderer.metrics.cellH * v.zoom));
-          tapRef.current.onTapCell?.(col, row);
-        },
-        onPanResponderTerminate: () => {
-          const st = gesture.current;
-          if (st.holdTimer) clearTimeout(st.holdTimer);
-        },
-      }),
-    [renderer, onZoom, schedule],
-  );
+        }
+        if (!st.moved) return;
+        const touches = e.nativeEvent.touches;
+        if (touches.length === 2) {
+          const dx = touches[0].pageX - touches[1].pageX;
+          const dy = touches[0].pageY - touches[1].pageY;
+          const dist = Math.hypot(dx, dy);
+          if (st.startDist === 0) st.startDist = dist;
+          else onZoom?.(Math.min(4, Math.max(0.2, (st.startZoom * dist) / st.startDist)));
+          return;
+        }
+        if (!st.axis) st.axis = Math.abs(g.dx) > Math.abs(g.dy) ? 'x' : 'y';
+        const s = subRef.current;
+        if (!s || !renderer) return;
+        if (st.axis === 'x') {
+          view.current.offsetX = st.startX - g.dx;
+          schedule();
+        } else {
+          const delta = g.dy - st.lastDy;
+          st.lastDy = g.dy;
+          st.lastX = e.nativeEvent.locationX;
+          st.lastY = e.nativeEvent.locationY;
+          scrollBy(delta * scrollAccel(g.vy));
+        }
+      },
+      onPanResponderRelease: (_e, g) => {
+        const st = gesture.current;
+        if (st.holdTimer) clearTimeout(st.holdTimer);
+        if (st.moved && st.axis === 'y' && Math.abs(g.vy) > FLING_MIN_VELOCITY) {
+          // Keep scrolling after a flick and slow to a stop.
+          let velocity = g.vy * scrollAccel(g.vy);
+          st.fling = setInterval(() => {
+            scrollBy(velocity * FLING_TICK_MS);
+            velocity *= FLING_DECAY;
+            if (Math.abs(velocity) < FLING_STOP_VELOCITY) stopFling();
+          }, FLING_TICK_MS);
+          return;
+        }
+        if (st.moved || st.held || Date.now() - st.downAt > 400 || !renderer) return;
+        const v = view.current;
+        const col = Math.floor((st.downX + v.offsetX) / (renderer.metrics.cellW * v.zoom));
+        const row = Math.floor((st.downY + v.offsetY) / (renderer.metrics.cellH * v.zoom));
+        tapRef.current.onTapCell?.(col, row);
+      },
+      onPanResponderTerminate: () => {
+        const st = gesture.current;
+        if (st.holdTimer) clearTimeout(st.holdTimer);
+      },
+    });
+  }, [renderer, onZoom, schedule]);
 
   if (!renderer) {
     return (
@@ -331,6 +363,20 @@ export function TerminalView({ sub, fitWidth, zoom, onZoom, onLayout, stats, deb
       ) : null}
     </View>
   );
+}
+
+// Scroll feel: a drag moves content 1:1 when slow and up to MAX_SCROLL_ACCEL
+// times faster when fast (velocity in px/ms). A release faster than
+// FLING_MIN_VELOCITY keeps scrolling, slowing by FLING_DECAY per tick.
+const SCROLL_ACCEL = 1.5;
+const MAX_SCROLL_ACCEL = 6;
+const FLING_MIN_VELOCITY = 0.3;
+const FLING_STOP_VELOCITY = 0.03;
+const FLING_DECAY = 0.95;
+const FLING_TICK_MS = 16;
+
+function scrollAccel(vy: number): number {
+  return Math.min(MAX_SCROLL_ACCEL, 1 + SCROLL_ACCEL * Math.abs(vy));
 }
 
 const styles = StyleSheet.create({
