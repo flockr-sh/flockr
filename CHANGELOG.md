@@ -21,6 +21,10 @@
 - `flockr server live-handoff` with no `--import-exe` works after a rebuild
   replaced the running binary. It used to fail with
   "failed to spawn handoff import server at .../flockr (deleted)".
+- An agent that finished in the visible tab counted as read even with no
+  one looking (no client attached, or the terminal window not focused), so
+  it never showed done and sent no alert. It now stays done until a
+  focused client shows it or someone opens it.
 
 ## [1.1.0] - 2026-10-26
 
