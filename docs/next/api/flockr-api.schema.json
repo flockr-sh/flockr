@@ -6719,6 +6719,13 @@
             "agent_status": {
               "$ref": "#/schemas/success_response/$defs/AgentStatus"
             },
+            "branch": {
+              "description": "Git branch of the checkout the agent's newest command runs in.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "completion_seq": {
               "description": "The current idle transition completed work, independently of who has viewed it.",
               "format": "uint64",
@@ -6770,6 +6777,10 @@
               "type": "integer"
             },
             "screen_detection_skipped": {
+              "type": "boolean"
+            },
+            "session_empty": {
+              "description": "The agent's fresh session has not been used yet.",
               "type": "boolean"
             },
             "state_change_seq": {

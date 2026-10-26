@@ -248,6 +248,12 @@ pub struct AgentInfo {
     pub cwd: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub foreground_cwd: Option<String>,
+    /// Git branch of the checkout the agent's newest command runs in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    /// The agent's fresh session has not been used yet.
+    #[serde(default, skip_serializing_if = "super::is_false")]
+    pub session_empty: bool,
     pub revision: u64,
 }
 

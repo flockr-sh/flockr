@@ -926,6 +926,57 @@ mod tests {
     }
 
     #[test]
+    fn agent_list_reports_branch_and_empty_session() {
+        let mut app = app_with_agent();
+        let pane_id = app.state.workspaces[0].tabs[0].root_pane;
+        let terminal_id = app.state.workspaces[0].tabs[0].panes[&pane_id]
+            .attached_terminal_id
+            .clone();
+        app.state
+            .terminals
+            .get_mut(&terminal_id)
+            .unwrap()
+            .set_detected_state(Some(Agent::Claude), AgentState::Idle);
+        let list = |app: &mut App| {
+            let success: SuccessResponse =
+                serde_json::from_str(&app.handle_agent_list("req".into())).unwrap();
+            let ResponseResult::AgentList { mut agents } = success.result else {
+                panic!("expected agent list response");
+            };
+            agents.remove(0)
+        };
+
+        let agent = list(&mut app);
+        assert_eq!(agent.branch, None);
+        assert!(!agent.session_empty);
+        let json = serde_json::to_value(&agent).unwrap();
+        assert!(json.get("branch").is_none());
+        assert!(json.get("session_empty").is_none());
+
+        app.agent_work_branches.insert(
+            terminal_id.as_str().to_owned(),
+            crate::workspace::AgentWorkBranch {
+                checkout: Some("/repo".into()),
+                branch: Some("worktree/fix-login".into()),
+                seen_start: 0,
+            },
+        );
+        app.state.workspaces[0].tabs[0]
+            .panes
+            .get_mut(&pane_id)
+            .unwrap()
+            .fresh_session = Some(crate::pane::FreshSession {
+            order: 1,
+            session_ref: None,
+            used: false,
+        });
+
+        let agent = list(&mut app);
+        assert_eq!(agent.branch.as_deref(), Some("worktree/fix-login"));
+        assert!(agent.session_empty);
+    }
+
+    #[test]
     fn agent_rename_does_not_replace_the_pane_label() {
         let mut app = app_with_agent();
         let pane_id = app.state.workspaces[0].tabs[0].root_pane;

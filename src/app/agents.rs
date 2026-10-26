@@ -415,6 +415,11 @@ impl App {
             completion_seq: terminal.last_agent_completion_seq,
             cwd: pane.cwd,
             foreground_cwd: pane.foreground_cwd,
+            branch: self
+                .agent_work_branches
+                .get(pane_state.attached_terminal_id.as_str())
+                .and_then(|work| work.branch.clone()),
+            session_empty: pane_state.session_empty(),
             revision: pane.revision,
         })
     }

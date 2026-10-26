@@ -642,7 +642,7 @@ Server replies at once, and again after every relevant change, with:
   "t": "agents",
   "id": "w1",
   "rev": 14,
-  "agents": [ { "terminal_id": "t_5", "pane_id": "p_3", "workspace_id": "w_1", "tab_id": "tab_2", "agent": "claude", "display_agent": "Claude", "agent_status": "blocked", "state_change_seq": 41, "revision": 88, "focused": false } ],
+  "agents": [ { "terminal_id": "t_5", "pane_id": "p_3", "workspace_id": "w_1", "tab_id": "tab_2", "agent": "claude", "display_agent": "Claude", "agent_status": "blocked", "state_change_seq": 41, "revision": 88, "focused": false, "branch": "worktree/mobile-agents" } ],
   "workspaces": [ { "workspace_id": "w_1", "number": 1, "label": "flockr", "focused": true, "agent_status": "blocked", "active_tab_id": "tab_2", "pane_count": 3, "tab_count": 2 } ],
   "tabs": [ { "tab_id": "tab_2", "workspace_id": "w_1", "number": 2, "label": "mobile", "focused": true, "pane_count": 2, "agent_status": "blocked" } ]
 }
@@ -652,6 +652,12 @@ Server replies at once, and again after every relevant change, with:
   results of `agent.list`, `workspace.list`, `tab.list` (`AgentInfo`,
   `WorkspaceInfo`, `TabInfo` in `src/api/schema/`). Every field those types
   have is passed through; the example is trimmed.
+- Agent fields for the agent list row, both optional and omitted when
+  unset: `branch` is the git branch of the checkout the agent's newest
+  command runs in (full name; the desktop sidebar drops a leading
+  `worktree/`), and `session_empty: true` means the agent is on a fresh
+  session it has not worked in yet (the sidebar draws an idle one as a
+  dotted ring).
 - `agent_status`: `"idle" | "working" | "blocked" | "done" | "unknown"`.
   Unknown future values map to `unknown`.
 - `rev`: increments per message on this watch.
