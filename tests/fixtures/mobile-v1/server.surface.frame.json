@@ -1,0 +1,72 @@
+{
+  "t": "surface.frame",
+  "sub": 1,
+  "seq": 1,
+  "cols": 20,
+  "rows": 3,
+  "styles": [
+    [
+      -1,
+      -1,
+      0
+    ],
+    [
+      2,
+      -1,
+      1
+    ],
+    [
+      -1,
+      1,
+      0
+    ]
+  ],
+  "links": [
+    "https://github.com/flockr-sh/flockr"
+  ],
+  "lines": [
+    [
+      [
+        0,
+        0,
+        "$ ls"
+      ],
+      [
+        5,
+        1,
+        "main.rs"
+      ],
+      [
+        13,
+        0,
+        "漢",
+        2
+      ],
+      [
+        15,
+        2,
+        "     "
+      ]
+    ],
+    [],
+    [
+      [
+        0,
+        0,
+        "ok"
+      ]
+    ]
+  ],
+  "cursor": {
+    "x": 2,
+    "y": 2,
+    "visible": true,
+    "shape": 0
+  },
+  "scroll": {
+    "offset": 0,
+    "max": 1834,
+    "viewport": 3
+  },
+  "alt": false
+}

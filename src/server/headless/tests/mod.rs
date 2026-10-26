@@ -123,6 +123,7 @@ fn test_headless_server_with_event_hub(event_hub: api::EventHub) -> HeadlessServ
         server_config_diagnostic: None,
         server_config_diagnostic_without_keybindings: None,
         terminal_attach_owners: HashMap::new(),
+        mobile_surface_devices: HashMap::new(),
         pending_alt_screen_reads: Vec::new(),
         deferred_alt_screen_reads: Vec::new(),
         next_activity_stamp: 1,
@@ -4533,6 +4534,55 @@ fn terminal_control_resolves_public_pane_id_and_takes_ownership() {
             .state
             .direct_attach_resize_locks
             .contains(&terminal_id));
+    });
+}
+
+#[test]
+fn mobile_fit_surface_takes_over_only_from_the_same_device() {
+    with_terminal_session_test_server(|server, _, terminal_id_string, public_pane_id| {
+        let open = |server: &mut HeadlessServer, client_id: u64, device: &str| {
+            let (writer, _reader) = crate::server::client_transport::ClientWriter::in_process();
+            server.open_mobile_surface(
+                client_id,
+                device.to_owned(),
+                public_pane_id.clone(),
+                true,
+                40,
+                20,
+                writer,
+            )
+        };
+        let base = 1u64 << 52;
+        assert!(open(server, base + 1, "d_a").is_ok());
+        assert_eq!(
+            server.terminal_attach_owners.get(&terminal_id_string),
+            Some(&(base + 1))
+        );
+        assert_eq!(
+            open(server, base + 2, "d_b"),
+            Err(crate::server::mobile::SurfaceOpenError::Busy)
+        );
+        assert!(open(server, base + 3, "d_a").is_ok());
+        assert_eq!(
+            server.terminal_attach_owners.get(&terminal_id_string),
+            Some(&(base + 3))
+        );
+        assert!(!server.clients.contains_key(&(base + 1)));
+
+        // A desktop attach owner is never taken over from the phone.
+        server.remove_client_and_resize_if_needed(base + 3);
+        connect_pending_terminal_client(server, 7);
+        assert!(
+            server.handle_server_event(ServerEvent::ClientAttachTerminal {
+                client_id: 7,
+                terminal_id: terminal_id_string.clone(),
+                takeover: false,
+            })
+        );
+        assert_eq!(
+            open(server, base + 4, "d_a"),
+            Err(crate::server::mobile::SurfaceOpenError::Busy)
+        );
     });
 }
 

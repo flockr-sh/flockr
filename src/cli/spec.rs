@@ -4,6 +4,7 @@ use clap::{Arg, ArgAction, Command, ValueHint};
 
 mod completion;
 mod machine;
+mod mobile;
 
 pub(super) fn command() -> Command {
     let command = Command::new("flockr")
@@ -35,6 +36,7 @@ pub(super) fn command() -> Command {
         .subcommand(config_command())
         .subcommand(channel_command())
         .subcommand(machine::command())
+        .subcommand(mobile::command())
         .subcommand(server_command())
         .subcommand(api_command())
         .subcommand(workspace_command())

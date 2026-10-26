@@ -33,6 +33,7 @@ mod kitty_graphics;
 mod layout;
 mod logging;
 mod metadata_tokens;
+mod mobile;
 mod noninteractive_process;
 mod pane;
 use ghostty_vt::pane_graphics_files;
@@ -516,6 +517,37 @@ const DEFAULT_CONFIG: &str = r##"# flockr configuration
 # Maximum scrollback buffer size in bytes retained per pane terminal.
 # Matches Ghostty's default scrollback-limit behavior.
 # scrollback_limit_bytes = 10000000
+
+[mobile]
+# Mobile gateway for the flockr phone app. Off by default. Pair a phone with
+# `flockr mobile pair`; list and revoke devices with `flockr mobile devices`.
+# Binds only to the listed IP addresses (for example a NetBird or WireGuard
+# address). v1 has no TLS: tokens and terminal content travel in clear inside
+# that network, so only list addresses on an encrypted private network.
+# 0.0.0.0 and :: are rejected. All keys need a server restart.
+# enabled = false
+# Literal IP addresses, optionally with a port: ["100.92.14.3", "[fd00::1]:47390"].
+# listen = []
+# port = 47390
+# Hosts shown in the pairing QR, in try order (IPs or DNS names).
+# Empty means the listen addresses.
+# advertise = []
+# Name shown in the app and in push notifications. Default: host name.
+# name = ""
+# max_devices = 8
+# Pairing code lifetime in seconds (60..=3600).
+# pairing_ttl_secs = 600
+
+[mobile.push]
+# Expo push notifications when an agent becomes Blocked or Done. While the app
+# is open the alert is shown in the app instead.
+# enabled = true
+# blocked = true
+# done = true
+# Re-check delay before sending; drops alerts for status flicker (0..=60000).
+# confirm_delay_ms = 5000
+# Optional Expo access token ("enhanced push security"), sent as a Bearer token.
+# expo_access_token = ""
 "##;
 
 // Bundled at build time so the printed skill always matches this binary's release.
@@ -894,6 +926,25 @@ mod tests {
         let sidebar = DEFAULT_CONFIG.find("# [ui.sidebar.agents]").unwrap();
 
         assert!(accent < sidebar);
+    }
+
+    #[test]
+    fn default_config_parses_and_documents_mobile_keys() {
+        let config: config::Config = toml::from_str(DEFAULT_CONFIG).unwrap();
+        assert!(!config.mobile.enabled);
+        for key in [
+            "# enabled = false",
+            "# listen = []",
+            "# port = 47390",
+            "# advertise = []",
+            "# max_devices = 8",
+            "# pairing_ttl_secs = 600",
+            "[mobile.push]",
+            "# confirm_delay_ms = 5000",
+            "# expo_access_token = \"\"",
+        ] {
+            assert!(DEFAULT_CONFIG.contains(key), "{key}");
+        }
     }
 
     #[test]

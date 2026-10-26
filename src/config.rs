@@ -22,10 +22,11 @@ pub use self::{
     },
     model::{
         validated_sidebar_bounds, Config, ConfigReloadReport, ConfigReloadStatus,
-        HostCursorModeConfig, NewTerminalCwdConfig, PaneBordersConfig, SeenScopeConfig,
-        ShellModeConfig, SidebarCollapsedModeConfig, SidebarPositionConfig, StatusIndicatorStyle,
-        TabBarPositionConfig, ToastClipboardPosition, ToastConfig, ToastDelivery,
-        ToastFlockrPosition, UpdateChannelConfig, MAX_TOAST_DELAY_SECONDS,
+        HostCursorModeConfig, MobileConfig, MobilePushConfig, NewTerminalCwdConfig,
+        PaneBordersConfig, SeenScopeConfig, ShellModeConfig, SidebarCollapsedModeConfig,
+        SidebarPositionConfig, StatusIndicatorStyle, TabBarPositionConfig, ToastClipboardPosition,
+        ToastConfig, ToastDelivery, ToastFlockrPosition, UpdateChannelConfig,
+        MAX_TOAST_DELAY_SECONDS,
     },
     sidebar::{
         AgentSidebarToken, AgentsSidebarConfig, SidebarBorder, SidebarButtonStyle, SidebarChrome,

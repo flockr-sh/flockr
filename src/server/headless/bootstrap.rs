@@ -90,6 +90,7 @@ pub fn run_server() -> io::Result<()> {
             Err(err) => return Err(err),
         };
 
+        let _mobile_gateway = start_mobile_gateway(&loaded_config.config, &server);
         info!(
             api_socket = %api::socket_path().display(),
             client_socket = %client_socket_path().display(),
@@ -104,6 +105,21 @@ pub fn run_server() -> io::Result<()> {
     rt.shutdown_timeout(Duration::from_millis(100));
     crate::logging::shutdown("server");
     result
+}
+
+/// Starts the opt-in mobile gateway; dropping the handle stops it.
+fn start_mobile_gateway(
+    config: &config::Config,
+    server: &HeadlessServer,
+) -> Option<crate::server::mobile::MobileGatewayHandle> {
+    crate::server::mobile::start(
+        &config.mobile,
+        crate::server::mobile::GatewayDeps {
+            server_event_tx: server.server_event_tx.clone(),
+            event_hub: server.app.event_hub.clone(),
+            api_socket: api::socket_path(),
+        },
+    )
 }
 
 fn seed_startup_workspace_if_empty(app: &mut app::App) {
@@ -209,6 +225,7 @@ fn run_handoff_import_server(socket_path: &Path, token: &str) -> io::Result<()> 
         if let Err(err) = crate::server::handoff::report_owned(&mut received.stream) {
             warn!(err = %err, "failed to report handoff ownership; continuing as owner");
         }
+        let _mobile_gateway = start_mobile_gateway(&loaded_config.config, &server);
         info!("handoff import server started");
         print_ready_message(&api::socket_path(), &client_socket_path());
         server.app.run_plugin_startup_hooks();

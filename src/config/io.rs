@@ -8,6 +8,7 @@ const KNOWN_TOP_LEVEL_CONFIG_KEYS: &[&str] = &[
     "advanced",
     "experimental",
     "keys",
+    "mobile",
     "onboarding",
     "remote",
     "server",
@@ -375,8 +376,17 @@ fn load_live_config_from_str(content: &str) -> Result<LoadedConfig, Vec<String>>
         &mut invalid_sections,
         |section| config.remote = section,
     );
+    load_live_section(
+        table,
+        "mobile",
+        "mobile config",
+        &mut diagnostics,
+        &mut invalid_sections,
+        |section| config.mobile = section,
+    );
 
     diagnostics.extend(config.theme.diagnostics());
+    diagnostics.extend(config.mobile.diagnostics());
 
     Ok(LoadedConfig {
         config,

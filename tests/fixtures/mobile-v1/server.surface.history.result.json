@@ -1,0 +1,9 @@
+{
+  "t": "surface.history.result",
+  "id": "h1",
+  "sub": 1,
+  "lines": [
+    "$ cargo test",
+    "ok"
+  ]
+}

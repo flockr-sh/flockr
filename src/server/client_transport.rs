@@ -193,6 +193,50 @@ impl ClientWriter {
     }
 }
 
+/// Item taken from an in-process client writer.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum InProcessClientItem {
+    /// Reliable control-lane frame.
+    Control(Vec<u8>),
+    /// Render-lane frame; the render slot is free again.
+    Render(Vec<u8>),
+}
+
+/// Reader side of [`ClientWriter::in_process`]: drained by a gateway thread
+/// instead of a socket writer.
+pub(crate) struct InProcessClientReader {
+    queue: Arc<ClientWriterQueue>,
+}
+
+impl InProcessClientReader {
+    /// Blocks until a frame is queued. `None` once every writer handle is gone.
+    pub(crate) fn recv(&self) -> Option<InProcessClientItem> {
+        self.queue.recv().map(|item| match item {
+            ClientWriteItem::Control(data) => InProcessClientItem::Control(data),
+            ClientWriteItem::Render(data) => InProcessClientItem::Render(data),
+        })
+    }
+}
+
+impl Drop for InProcessClientReader {
+    fn drop(&mut self) {
+        self.queue.close_writer();
+    }
+}
+
+impl ClientWriter {
+    /// A writer whose frames stay in this process (mobile gateway surfaces).
+    /// Same queue as socket clients: render lane capacity one, latest wins.
+    pub(crate) fn in_process() -> (Self, InProcessClientReader) {
+        let queue = ClientWriterQueue::new();
+        let writer = Self {
+            control: ClientControlWriter::queue(queue.clone()),
+            render: ClientRenderWriter::queue(queue.clone()),
+        };
+        (writer, InProcessClientReader { queue })
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct ClientControlWriter {
     queue: Arc<ClientWriterQueue>,
@@ -553,6 +597,28 @@ pub(crate) enum ServerEvent {
     ClientDisconnected { client_id: u64 },
     /// A client writer drained its render slot and can accept another render.
     ClientWriterDrained { client_id: u64 },
+    /// The mobile gateway opened a cell-surface subscription to one terminal.
+    /// Internal only; never on the wire.
+    MobileSurfaceOpen {
+        client_id: u64,
+        /// Paired device that owns the subscription; a fit subscribe may take
+        /// over an attach held by another surface of the same device.
+        device_id: String,
+        target: String,
+        fit: bool,
+        cols: u16,
+        rows: u16,
+        writer: ClientWriter,
+        reply: tokio::sync::oneshot::Sender<
+            Result<crate::server::mobile::SurfaceOpened, crate::server::mobile::SurfaceOpenError>,
+        >,
+    },
+    /// The mobile gateway typed text into one terminal (no paste brackets).
+    MobilePaneInput {
+        target: String,
+        events: Vec<ClientPaneInputEvent>,
+        reply: tokio::sync::oneshot::Sender<Result<(), String>>,
+    },
     /// Ctrl+C or external shutdown signal received.
     QuitSignal,
 }

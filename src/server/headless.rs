@@ -78,6 +78,7 @@ mod bootstrap;
 mod client_views;
 mod endpoint_requests;
 mod lifecycle;
+mod mobile;
 mod native_graphics;
 mod notifications;
 mod render;
@@ -230,6 +231,8 @@ pub struct HeadlessServer {
     server_config_diagnostic_without_keybindings: Option<String>,
     /// Writable direct attach owner per terminal id string.
     terminal_attach_owners: HashMap<String, u64>,
+    /// Paired device per open mobile surface client id.
+    mobile_surface_devices: HashMap<u64, String>,
     /// Deferred application-history reads currently driving alternate-screen viewports.
     pending_alt_screen_reads: Vec<crate::server::alt_screen_read::PendingAltScreenRead>,
     /// Reads waiting for an alternate-screen traversal of the same terminal to finish.
@@ -402,6 +405,7 @@ impl HeadlessServer {
             server_config_diagnostic,
             server_config_diagnostic_without_keybindings,
             terminal_attach_owners: HashMap::new(),
+            mobile_surface_devices: HashMap::new(),
             pending_alt_screen_reads: Vec::new(),
             deferred_alt_screen_reads: Vec::new(),
             next_activity_stamp: 1,
@@ -2667,6 +2671,32 @@ impl HeadlessServer {
                 info!(client_id, "client disconnected");
                 self.remove_client_and_resize_if_needed(client_id);
                 true
+            }
+            ServerEvent::MobileSurfaceOpen {
+                client_id,
+                device_id,
+                target,
+                fit,
+                cols,
+                rows,
+                writer,
+                reply,
+            } => {
+                let result =
+                    self.open_mobile_surface(client_id, device_id, target, fit, cols, rows, writer);
+                let opened = result.is_ok();
+                let _ = reply.send(result);
+                opened
+            }
+            ServerEvent::MobilePaneInput {
+                target,
+                events,
+                reply,
+            } => {
+                let result = self.apply_mobile_pane_input(&target, &events);
+                let applied = result.is_ok();
+                let _ = reply.send(result);
+                applied
             }
             ServerEvent::ClientWriterDrained { client_id } => {
                 let Some(client) = self.clients.get_mut(&client_id) else {

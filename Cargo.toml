@@ -49,7 +49,18 @@ serde_ignored = "0.1.14"
 serde_json = "1"
 sha2 = "0.10"
 time = { version = "0.3.47", features = ["formatting"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "process", "io-util", "signal"] }
+# `net`: TCP listener for the opt-in mobile gateway.
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "process", "io-util", "signal", "net"] }
+# WebSocket handshake and framing for the mobile gateway. No TLS (see docs/mobile/protocol-v1.md).
+tokio-tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
+# StreamExt/SinkExt for the mobile gateway WebSocket.
+futures-util = { version = "0.3", default-features = false, features = ["std", "sink"] }
+# Terminal QR code for `flockr mobile pair`.
+qrcode = { version = "0.14", default-features = false }
+# Random pairing codes and device tokens for the mobile gateway.
+getrandom = "0.3"
+# Blocking HTTPS client for Expo push notifications, on its own thread.
+ureq = { version = "3.5", default-features = false, features = ["rustls"] }
 toml = "0.8"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
@@ -63,7 +74,6 @@ portable-pty = { path = "vendor/portable-pty" }
 [target.'cfg(target_os = "linux")'.dependencies]
 # logind's delay inhibitor lets the server save before host shutdown kills panes.
 zbus = { version = "5.19", default-features = false, features = ["tokio"] }
-futures-util = { version = "0.3", default-features = false, features = ["std"] }
 
 [target.'cfg(windows)'.dependencies]
 # UTF-16 SDDL input for interprocess security descriptors.

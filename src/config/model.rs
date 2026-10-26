@@ -328,6 +328,7 @@ pub struct Config {
     pub advanced: AdvancedConfig,
     pub experimental: ExperimentalConfig,
     pub remote: RemoteConfig,
+    pub mobile: MobileConfig,
 }
 
 #[derive(Debug)]
@@ -1299,6 +1300,196 @@ impl Default for RemoteConfig {
     }
 }
 
+/// Default TCP port of the mobile gateway.
+pub const DEFAULT_MOBILE_PORT: u16 = 47390;
+
+/// `[mobile]`: opt-in WebSocket gateway for the flockr phone app. Every key
+/// needs a server restart.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct MobileConfig {
+    /// Start the gateway. Default: false.
+    pub enabled: bool,
+    /// Literal IP addresses to bind, optionally with `:port` (`[v6]:port`).
+    /// Unspecified addresses (`0.0.0.0`, `::`) and host names are rejected.
+    pub listen: Vec<String>,
+    /// Port for `listen` entries without one. Default: 47390.
+    pub port: u16,
+    /// Hosts put in the pairing QR, in try order. Empty means the `listen` hosts.
+    pub advertise: Vec<String>,
+    /// Display name of this server in the app and in pushes. Default: host name.
+    pub name: Option<String>,
+    /// Paired device limit. Default: 8.
+    pub max_devices: u32,
+    /// Lifetime of a pairing code in seconds, clamped to 60..=3600. Default: 600.
+    pub pairing_ttl_secs: u64,
+    pub push: MobilePushConfig,
+}
+
+impl Default for MobileConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            listen: Vec::new(),
+            port: DEFAULT_MOBILE_PORT,
+            advertise: Vec::new(),
+            name: None,
+            max_devices: 8,
+            pairing_ttl_secs: 600,
+            push: MobilePushConfig::default(),
+        }
+    }
+}
+
+impl MobileConfig {
+    /// Parsed `listen` addresses plus one diagnostic per rejected entry.
+    pub fn listen_addrs(&self) -> (Vec<std::net::SocketAddr>, Vec<String>) {
+        let mut addrs = Vec::new();
+        let mut diagnostics = Vec::new();
+        for entry in &self.listen {
+            match parse_mobile_listen_entry(entry, self.port) {
+                Ok(addr) => {
+                    if !addrs.contains(&addr) {
+                        addrs.push(addr);
+                    }
+                }
+                Err(reason) => diagnostics.push(format!("mobile.listen entry {entry:?} {reason}")),
+            }
+        }
+        (addrs, diagnostics)
+    }
+
+    /// Config warnings for `[mobile]`.
+    pub fn diagnostics(&self) -> Vec<String> {
+        let (addrs, mut diagnostics) = self.listen_addrs();
+        if self.enabled && addrs.is_empty() {
+            diagnostics.push(
+                "mobile.enabled is true but mobile.listen has no usable address; the mobile gateway will not listen"
+                    .to_owned(),
+            );
+        }
+        diagnostics
+    }
+
+    /// Server name shown in the app and in push notifications.
+    pub fn display_name(&self) -> String {
+        self.name
+            .as_deref()
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .map(str::to_owned)
+            .or_else(crate::platform::hostname)
+            .unwrap_or_else(|| "flockr".to_owned())
+    }
+
+    pub fn pairing_ttl_secs(&self) -> u64 {
+        self.pairing_ttl_secs.clamp(60, 3600)
+    }
+
+    /// Hosts for the pairing QR: `advertise`, else the bound `listen` hosts.
+    pub fn advertised_hosts(&self) -> Vec<String> {
+        let advertised = self
+            .advertise
+            .iter()
+            .map(|host| host.trim())
+            .filter(|host| !host.is_empty())
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        if !advertised.is_empty() {
+            return advertised;
+        }
+        let (addrs, _) = self.listen_addrs();
+        addrs
+            .into_iter()
+            .map(|addr| {
+                if addr.port() == self.port {
+                    addr.ip().to_string()
+                } else {
+                    addr.to_string()
+                }
+            })
+            .collect()
+    }
+}
+
+fn parse_mobile_listen_entry(
+    entry: &str,
+    default_port: u16,
+) -> Result<std::net::SocketAddr, &'static str> {
+    let entry = entry.trim();
+    let addr = if let Ok(addr) = entry.parse::<std::net::SocketAddr>() {
+        addr
+    } else if let Ok(ip) = entry.parse::<std::net::IpAddr>() {
+        std::net::SocketAddr::new(ip, default_port)
+    } else {
+        return Err("is not a literal IP address (host names are not allowed)");
+    };
+    if addr.ip().is_unspecified() {
+        return Err("is an unspecified address; list a specific interface address");
+    }
+    if addr.port() == 0 {
+        return Err("has port 0");
+    }
+    Ok(addr)
+}
+
+/// `[mobile.push]`: Expo push notifications for Blocked and Done agents.
+#[derive(Clone, Deserialize)]
+#[serde(default)]
+pub struct MobilePushConfig {
+    /// Send Expo pushes. Default: true.
+    pub enabled: bool,
+    /// Push when an agent becomes Blocked. Default: true.
+    pub blocked: bool,
+    /// Push when an agent becomes Done. Default: true.
+    pub done: bool,
+    /// Re-check delay before sending, clamped to 0..=60000. Default: 5000.
+    pub confirm_delay_ms: u64,
+    /// Optional Expo access token sent as `Authorization: Bearer`.
+    pub expo_access_token: Option<String>,
+}
+
+impl Default for MobilePushConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            blocked: true,
+            done: true,
+            confirm_delay_ms: 5000,
+            expo_access_token: None,
+        }
+    }
+}
+
+impl MobilePushConfig {
+    pub fn confirm_delay(&self) -> std::time::Duration {
+        std::time::Duration::from_millis(self.confirm_delay_ms.min(60_000))
+    }
+
+    pub fn access_token(&self) -> Option<&str> {
+        self.expo_access_token
+            .as_deref()
+            .map(str::trim)
+            .filter(|token| !token.is_empty())
+    }
+}
+
+// Manual Debug so the Expo access token never reaches logs.
+impl std::fmt::Debug for MobilePushConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MobilePushConfig")
+            .field("enabled", &self.enabled)
+            .field("blocked", &self.blocked)
+            .field("done", &self.done)
+            .field("confirm_delay_ms", &self.confirm_delay_ms)
+            .field(
+                "expo_access_token",
+                &self.access_token().map(|_| "<redacted>"),
+            )
+            .finish()
+    }
+}
+
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 pub struct ExperimentalConfig {
@@ -1595,6 +1786,82 @@ impl Default for AdvancedConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mobile_config_defaults_and_parses() {
+        let default_config = Config::default();
+        assert!(!default_config.mobile.enabled);
+        assert!(default_config.mobile.listen.is_empty());
+        assert_eq!(default_config.mobile.port, 47390);
+        assert_eq!(default_config.mobile.max_devices, 8);
+        assert_eq!(default_config.mobile.pairing_ttl_secs(), 600);
+        assert!(default_config.mobile.push.enabled);
+        assert!(default_config.mobile.push.blocked);
+        assert!(default_config.mobile.push.done);
+        assert_eq!(
+            default_config.mobile.push.confirm_delay(),
+            std::time::Duration::from_secs(5)
+        );
+        assert!(default_config.mobile.diagnostics().is_empty());
+
+        let config: Config = toml::from_str(
+            r#"
+[mobile]
+enabled = true
+listen = ["100.92.14.3", "127.0.0.1:5000", "[::1]:6000", "0.0.0.0", "::", "example.com"]
+port = 47391
+advertise = ["dk.netbird.cloud"]
+name = "desk"
+max_devices = 2
+pairing_ttl_secs = 5
+[mobile.push]
+enabled = false
+blocked = false
+done = true
+confirm_delay_ms = 999999
+expo_access_token = "secret"
+"#,
+        )
+        .unwrap();
+        let mobile = &config.mobile;
+        assert!(mobile.enabled);
+        let (addrs, diagnostics) = mobile.listen_addrs();
+        assert_eq!(
+            addrs,
+            vec![
+                "100.92.14.3:47391".parse().unwrap(),
+                "127.0.0.1:5000".parse().unwrap(),
+                "[::1]:6000".parse().unwrap(),
+            ]
+        );
+        assert_eq!(diagnostics.len(), 3, "{diagnostics:?}");
+        assert_eq!(mobile.display_name(), "desk");
+        assert_eq!(mobile.max_devices, 2);
+        assert_eq!(mobile.pairing_ttl_secs(), 60);
+        assert_eq!(mobile.advertised_hosts(), vec!["dk.netbird.cloud"]);
+        assert!(!mobile.push.enabled);
+        assert!(!mobile.push.blocked);
+        assert_eq!(
+            mobile.push.confirm_delay(),
+            std::time::Duration::from_secs(60)
+        );
+        assert_eq!(mobile.push.access_token(), Some("secret"));
+        assert!(!format!("{:?}", mobile.push).contains("secret"));
+    }
+
+    #[test]
+    fn mobile_config_without_usable_listen_reports_a_diagnostic() {
+        let config: Config = toml::from_str("[mobile]\nenabled = true\n").unwrap();
+        assert_eq!(config.mobile.diagnostics().len(), 1);
+        let config: Config =
+            toml::from_str("[mobile]\nlisten = [\"10.0.0.1\", \"10.0.0.2:9\"]\n").unwrap();
+        assert_eq!(
+            config.mobile.advertised_hosts(),
+            vec!["10.0.0.1".to_owned(), "10.0.0.2:9".to_owned()]
+        );
+        let config: Config = toml::from_str("[mobile.push]\nexpo_access_token = \"\"\n").unwrap();
+        assert_eq!(config.mobile.push.access_token(), None);
+    }
 
     #[test]
     fn update_config_defaults_and_parses() {

@@ -28,6 +28,9 @@ pub(crate) enum ClientRenderState {
         seq: u64,
         repaint_pending: bool,
     },
+    /// In-process mobile gateway surfaces: whole cell frames, skipped when
+    /// unchanged. The gateway diffs and encodes them off the server loop.
+    Cells { last: Option<Box<PaneSurfaceFrame>> },
 }
 
 impl ClientRenderState {
@@ -90,9 +93,15 @@ impl ClientRenderState {
         )
     }
 
+    /// Render state for an in-process mobile gateway surface.
+    pub(crate) fn cells() -> Self {
+        Self::Cells { last: None }
+    }
+
     pub(crate) fn reset_baseline(&mut self) {
         match self {
             Self::Semantic { last_surface, .. } => *last_surface = None,
+            Self::Cells { last } => *last = None,
             Self::TerminalAnsi {
                 blit_encoder,
                 repaint_pending,
@@ -107,6 +116,7 @@ impl ClientRenderState {
     pub(crate) fn request_repaint(&mut self) {
         match self {
             Self::Semantic { last_surface, .. } => *last_surface = None,
+            Self::Cells { last } => *last = None,
             Self::TerminalAnsi {
                 repaint_pending, ..
             } => *repaint_pending = true,
@@ -115,7 +125,7 @@ impl ClientRenderState {
 
     pub(crate) fn prepare_frame(&mut self, frame: FrameData) -> Option<PreparedRender> {
         match self {
-            Self::Semantic { .. } => None,
+            Self::Semantic { .. } | Self::Cells { .. } => None,
             Self::TerminalAnsi {
                 blit_encoder,
                 seq,
@@ -156,8 +166,39 @@ impl ClientRenderState {
     pub(crate) fn last_pane_surface(&self) -> Option<&PaneSurfaceFrame> {
         match self {
             Self::Semantic { last_surface, .. } => last_surface.as_deref(),
-            Self::TerminalAnsi { .. } => None,
+            Self::TerminalAnsi { .. } | Self::Cells { .. } => None,
         }
+    }
+
+    /// Prepares one whole-terminal cell frame for an in-process mobile surface.
+    /// Returns `None` when frame and pane metadata equal the last sent ones.
+    pub(crate) fn prepare_cells(
+        &mut self,
+        frame: FrameData,
+        pane: crate::protocol::PaneSurfacePane,
+    ) -> Option<PreparedRender> {
+        let Self::Cells { last } = self else {
+            return None;
+        };
+        if last
+            .as_deref()
+            .is_some_and(|last| last.frame == frame && last.panes.first() == Some(&pane))
+        {
+            crate::render_prof::event("prepare_frame.cells.skip_current");
+            return None;
+        }
+        Some(PreparedRender::Cells {
+            message: ServerMessage::PaneSurface(PaneSurfaceFrame {
+                boot_id: String::new(),
+                projection_revision: 0,
+                surface_revision: 0,
+                frame,
+                panes: vec![pane],
+                splits: Vec::new(),
+                popup: None,
+                graphics: SurfaceGraphicsScene::default(),
+            }),
+        })
     }
 
     #[cfg(test)]
@@ -318,6 +359,14 @@ impl ClientRenderState {
                 *surface_revision = patch.surface_revision;
             }
             (
+                Self::Cells { last },
+                PreparedRender::Cells {
+                    message: ServerMessage::PaneSurface(surface),
+                },
+            ) => {
+                *last = Some(Box::new(surface));
+            }
+            (
                 Self::TerminalAnsi {
                     blit_encoder,
                     seq,
@@ -389,6 +438,8 @@ pub(crate) enum PreparedRender {
         frame: FrameData,
         encoded: Option<EncodedBlit>,
     },
+    /// One mobile gateway cell frame (`ServerMessage::PaneSurface`).
+    Cells { message: ServerMessage },
 }
 
 impl PreparedRender {
@@ -396,7 +447,8 @@ impl PreparedRender {
         match self {
             Self::Semantic { message, .. }
             | Self::SemanticPatch { message, .. }
-            | Self::TerminalAnsi { message, .. } => message,
+            | Self::TerminalAnsi { message, .. }
+            | Self::Cells { message } => message,
         }
     }
 
@@ -412,7 +464,7 @@ impl PreparedRender {
                 queued_graphics_assets,
                 ..
             } => Some((&committed_surface.graphics, queued_graphics_assets)),
-            Self::SemanticPatch { .. } | Self::TerminalAnsi { .. } => None,
+            Self::SemanticPatch { .. } | Self::TerminalAnsi { .. } | Self::Cells { .. } => None,
         }
     }
 

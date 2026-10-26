@@ -1,0 +1,42 @@
+{
+  "t": "agents",
+  "id": "w1",
+  "rev": 14,
+  "agents": [
+    {
+      "terminal_id": "t_5",
+      "pane_id": "p_3",
+      "workspace_id": "w_1",
+      "tab_id": "tab_2",
+      "agent": "claude",
+      "display_agent": "Claude",
+      "agent_status": "blocked",
+      "state_change_seq": 41,
+      "revision": 88,
+      "focused": false
+    }
+  ],
+  "workspaces": [
+    {
+      "workspace_id": "w_1",
+      "number": 1,
+      "label": "flockr",
+      "focused": true,
+      "agent_status": "blocked",
+      "active_tab_id": "tab_2",
+      "pane_count": 3,
+      "tab_count": 2
+    }
+  ],
+  "tabs": [
+    {
+      "tab_id": "tab_2",
+      "workspace_id": "w_1",
+      "number": 2,
+      "label": "mobile",
+      "focused": true,
+      "pane_count": 2,
+      "agent_status": "blocked"
+    }
+  ]
+}

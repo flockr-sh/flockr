@@ -1,0 +1,16 @@
+{
+  "t": "hello",
+  "versions": [
+    1
+  ],
+  "app": {
+    "version": "0.1.0",
+    "platform": "ios",
+    "build": "12"
+  },
+  "auth": {
+    "device_id": "d_q8Zt3mVfR1xKp0aB",
+    "token": "fmd1_3mVfR1xKp0aBq8Zt3mVfR1xKp0aBq8Zt3mVfR1xKp0a"
+  },
+  "max_in_flight": 2
+}

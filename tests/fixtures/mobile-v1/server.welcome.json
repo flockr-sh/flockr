@@ -1,0 +1,36 @@
+{
+  "t": "welcome",
+  "version": 1,
+  "server": {
+    "name": "dk-desktop",
+    "server_id": "Xb3k9QmT0aLz7Rwe2YvN1c",
+    "flockr_version": "1.2.0",
+    "boot_id": "b-7f3a"
+  },
+  "device": {
+    "device_id": "d_q8Zt3mVfR1xKp0aB",
+    "name": "Dylan's iPhone",
+    "token": "fmd1_3mVfR1xKp0aBq8Zt3mVfR1xKp0aBq8Zt3mVfR1xKp0a"
+  },
+  "features": [
+    "api",
+    "agents.watch",
+    "surface",
+    "surface.history",
+    "input",
+    "push.expo",
+    "surface.shift"
+  ],
+  "methods": [
+    "agent.list",
+    "agent.get"
+  ],
+  "limits": {
+    "max_in_flight": 2,
+    "max_subscriptions": 4,
+    "max_message_bytes": 65536,
+    "max_input_bytes": 1048576,
+    "max_cols": 500,
+    "max_rows": 200
+  }
+}

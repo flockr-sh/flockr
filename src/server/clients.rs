@@ -263,6 +263,11 @@ impl ClientConnection {
         self.render_state.request_repaint();
     }
 
+    /// Whether this is an in-process mobile gateway surface.
+    pub(crate) fn is_mobile_surface(&self) -> bool {
+        matches!(self.render_state, ClientRenderState::Cells { .. })
+    }
+
     pub(crate) fn request_recompute(&mut self) {
         self.render_state.request_recompute();
     }

@@ -735,6 +735,8 @@ impl HeadlessServer {
                 }
             }
             let mut surface_parts = None;
+            let mut mobile_pane = None;
+            let observe = matches!(mode, ClientConnectionMode::TerminalObserve { .. });
             let frame = match mode {
                 ClientConnectionMode::ClientShell => {
                     let crate::server::client_shell::RenderedPaneSurface {
@@ -778,6 +780,17 @@ impl HeadlessServer {
                         }
                         continue;
                     }
+                    let mobile = self
+                        .clients
+                        .get(&client_id)
+                        .is_some_and(ClientConnection::is_mobile_surface);
+                    // A mobile observer always gets the whole grid at the pane's real size.
+                    let area = if mobile && observe {
+                        let (rows, cols) = runtime.current_size();
+                        Rect::new(0, 0, cols, rows)
+                    } else {
+                        area
+                    };
                     let render_started = crate::render_prof::timer();
                     let (buffer, cursor) =
                         crate::server::render_stream::render_terminal_virtual(runtime, area);
@@ -808,6 +821,9 @@ impl HeadlessServer {
                         &hyperlinks,
                     );
                     crate::render_prof::duration_since("full_render.frame_build", frame_started);
+                    if mobile {
+                        mobile_pane = Some(mobile_surface_pane(runtime, area));
+                    }
                     frame
                 }
             };
@@ -857,6 +873,8 @@ impl HeadlessServer {
                         },
                         native_upload.is_some(),
                     )
+                } else if let Some(pane) = mobile_pane {
+                    client.render_state.prepare_cells(frame, pane)
                 } else {
                     client.render_state.prepare_frame(frame)
                 };
@@ -1007,5 +1025,38 @@ impl HeadlessServer {
         self.app.full_redraw_pending = false;
         crate::render_prof::duration_since("full_render.total", full_started);
         debug!(cols, rows, foreground_client_id = ?self.foreground_client_id, "rendered virtual frame(s)");
+    }
+}
+
+/// Pane metadata the mobile gateway needs beside the cells.
+fn mobile_surface_pane(
+    runtime: &crate::terminal::TerminalRuntime,
+    area: Rect,
+) -> protocol::PaneSurfacePane {
+    let rect = protocol::SurfaceRect {
+        x: area.x,
+        y: area.y,
+        width: area.width,
+        height: area.height,
+    };
+    protocol::PaneSurfacePane {
+        pane_id: String::new(),
+        content_revision: 0,
+        rect,
+        inner_rect: rect,
+        scrollbar_rect: None,
+        scroll: runtime
+            .scroll_metrics()
+            .map(|metrics| protocol::PaneSurfaceScrollMetrics {
+                offset_from_bottom: metrics.offset_from_bottom as u64,
+                max_offset_from_bottom: metrics.max_offset_from_bottom as u64,
+                viewport_rows: metrics.viewport_rows as u64,
+            }),
+        focused: false,
+        mouse_reporting: runtime.mouse_reporting_enabled(),
+        sgr_pixel_mouse: false,
+        alternate_screen_active: runtime.alternate_screen_active(),
+        pixel_width: 0,
+        pixel_height: 0,
     }
 }

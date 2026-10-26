@@ -1,0 +1,49 @@
+{
+  "t": "surface.delta",
+  "sub": 1,
+  "seq": 2,
+  "base": 1,
+  "shift": 1,
+  "styles_add": [
+    [
+      1,
+      -1,
+      0
+    ]
+  ],
+  "links_add": [],
+  "lines": [
+    [
+      1,
+      [
+        [
+          0,
+          3,
+          "test result: ok"
+        ]
+      ]
+    ],
+    [
+      2,
+      [
+        [
+          0,
+          0,
+          "$"
+        ]
+      ]
+    ]
+  ],
+  "cursor": {
+    "x": 2,
+    "y": 2,
+    "visible": true,
+    "shape": 0
+  },
+  "scroll": {
+    "offset": 0,
+    "max": 1835,
+    "viewport": 3
+  },
+  "alt": false
+}
