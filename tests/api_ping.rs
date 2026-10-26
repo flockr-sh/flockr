@@ -2636,10 +2636,32 @@ fn pane_info_and_subscriptions_expose_done_agent_status() {
     );
     assert_eq!(tab_focus["result"]["type"], "tab_info");
 
-    let pane_after_focus = send_request(
+    // No desktop client is looking, so showing the tab does not read it.
+    let pane_after_tab_focus = send_request(
         &socket_path,
         &format!(
             r#"{{"id":"req_status_7","method":"pane.get","params":{{"pane_id":"{}"}}}}"#,
+            background_pane_id
+        ),
+    );
+    assert_eq!(
+        pane_after_tab_focus["result"]["pane"]["agent_status"],
+        "done"
+    );
+
+    // Focusing the pane itself is an explicit read.
+    let pane_focus = send_request(
+        &socket_path,
+        &format!(
+            r#"{{"id":"req_status_8","method":"pane.focus","params":{{"pane_id":"{}"}}}}"#,
+            background_pane_id
+        ),
+    );
+    assert_eq!(pane_focus["result"]["type"], "pane_info");
+    let pane_after_focus = send_request(
+        &socket_path,
+        &format!(
+            r#"{{"id":"req_status_9","method":"pane.get","params":{{"pane_id":"{}"}}}}"#,
             background_pane_id
         ),
     );

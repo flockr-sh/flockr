@@ -8728,3 +8728,86 @@ async fn mark_read_clears_done_for_every_client_without_moving_focus() {
     );
     shutdown_test_runtimes(&mut server);
 }
+
+/// Reports a working → idle turn for `pane_id` through the public API.
+fn finish_reported_turn(server: &mut HeadlessServer, pane_id: &str, seq: u64) {
+    for (state, seq) in [
+        (api::schema::PaneAgentState::Working, seq),
+        (api::schema::PaneAgentState::Idle, seq + 1),
+    ] {
+        completion_guard_api_report(
+            server,
+            api::schema::Method::PaneReportAgent(api::schema::PaneReportAgentParams {
+                pane_id: pane_id.to_owned(),
+                source: "custom:test".into(),
+                agent: "pi".into(),
+                state,
+                message: None,
+                seq: Some(seq),
+                agent_session_id: None,
+                agent_session_path: None,
+                resume_argv: None,
+            }),
+        );
+    }
+}
+
+#[tokio::test]
+async fn visible_completion_stays_done_until_a_focused_client_looks() {
+    use crate::server::mobile::push::{AlertKind, PushTrigger};
+
+    let mut server = test_headless_server();
+    let workspace = crate::workspace::Workspace::test_new("only");
+    let agent_pane = workspace.tabs[0].root_pane;
+    server.app.state.workspaces = vec![workspace];
+    server.app.state.ensure_test_terminals();
+    server.app.state.active = Some(0);
+    server.app.state.selected = 0;
+    server.app.state.mode = crate::app::Mode::Terminal;
+    let pane_id = server.app.public_pane_id(0, agent_pane).unwrap();
+    let status = |server: &mut HeadlessServer| api_agent_status(server, &pane_id);
+    let push_confirms = |status| PushTrigger::confirms(AlertKind::Done, status);
+
+    // No desktop client: the agent finished in the shown tab, but nobody saw it.
+    finish_reported_turn(&mut server, &pane_id, 1);
+    assert_eq!(status(&mut server), api::schema::AgentStatus::Done);
+    assert!(push_confirms(status(&mut server)));
+
+    // An attached client whose terminal is not focused is not looking either.
+    let (control, _render) = connect_test_shell(&mut server, 51, 80, 24);
+    assert_eq!(status(&mut server), api::schema::AgentStatus::Done);
+    server.handle_server_event(ServerEvent::ClientShellFocus {
+        client_id: 51,
+        focused: false,
+    });
+    finish_reported_turn(&mut server, &pane_id, 3);
+    assert_eq!(status(&mut server), api::schema::AgentStatus::Done);
+    assert!(push_confirms(status(&mut server)));
+    server.render_and_stream();
+    let completions = latest_agent_completions(&control).expect("completions");
+    assert!(completions.completions.contains_key(&pane_id));
+    assert!(completions.unread.unwrap().contains(&pane_id));
+
+    // Coming back to the terminal reads what it shows, for every client.
+    server.handle_server_event(ServerEvent::ClientShellFocus {
+        client_id: 51,
+        focused: true,
+    });
+    assert_eq!(status(&mut server), api::schema::AgentStatus::Idle);
+    assert!(!push_confirms(status(&mut server)));
+    server.render_and_stream();
+    let completions = latest_agent_completions(&control).expect("completions");
+    assert!(completions.unread.unwrap().is_empty());
+
+    // While focused and shown, a new completion is read at once: no push.
+    finish_reported_turn(&mut server, &pane_id, 5);
+    assert_eq!(status(&mut server), api::schema::AgentStatus::Idle);
+    assert!(!push_confirms(status(&mut server)));
+
+    // Detaching the client leaves nobody looking again.
+    server.remove_client(51);
+    finish_reported_turn(&mut server, &pane_id, 7);
+    assert_eq!(status(&mut server), api::schema::AgentStatus::Done);
+    assert!(push_confirms(status(&mut server)));
+    shutdown_test_runtimes(&mut server);
+}
