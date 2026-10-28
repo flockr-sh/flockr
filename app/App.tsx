@@ -123,7 +123,7 @@ export default function App() {
     <SafeAreaProvider>
       <StatusBar style="light" />
       {screen}
-      {banner ? (
+      {banner && !desktop ? (
         <SafeAreaView edges={['top']} style={styles.bannerWrap} pointerEvents="box-none">
           <Pressable
             accessibilityRole="button"

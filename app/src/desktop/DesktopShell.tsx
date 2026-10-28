@@ -1,8 +1,8 @@
 // The wide web layout: machines and their agents in a sidebar, the chosen
 // agent's terminal in the main panel, like a chat app with a conversation list.
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { connections } from '../state/connections';
+import { connections, InbandNotify } from '../state/connections';
 import { statusText, useAgents, useClientStatus, useServers, useTerminals } from '../state/hooks';
 import type { Nav } from '../state/nav';
 import { repairReason, repairShort, StoredServer } from '../state/storage';
@@ -38,6 +38,8 @@ export function DesktopShell() {
     setPairing(false);
     setSelected(s);
   };
+  const toasts = useToasts();
+  const [menu, setMenu] = useState<MenuState | null>(null);
 
   let main: React.ReactNode;
   if (pairing) {
@@ -86,7 +88,32 @@ export function DesktopShell() {
         <ScrollView style={{ flex: 1 }} contentContainerStyle={side.list}>
           {servers.length === 0 ? <Text style={side.empty}>No servers yet. Pair one with ＋.</Text> : null}
           {servers.map((server) => (
-            <MachineGroup key={server.server_id} server={server} selected={selected} onSelect={choose} />
+            <MachineGroup
+              key={server.server_id}
+              server={server}
+              selected={selected}
+              onSelect={choose}
+              onMenu={(x, y) =>
+                setMenu({
+                  x,
+                  y,
+                  items: [
+                    {
+                      label: `Remove ${server.name}`,
+                      danger: true,
+                      onPress: () => {
+                        if (
+                          selected?.serverId === server.server_id ||
+                          selected?.serverId.startsWith(`${server.server_id}~`)
+                        )
+                          setSelected(null);
+                        void connections.remove(server.server_id);
+                      },
+                    },
+                  ],
+                })
+              }
+            />
           ))}
         </ScrollView>
         <Text style={side.footer}>
@@ -94,7 +121,157 @@ export function DesktopShell() {
         </Text>
       </View>
       <View style={{ flex: 1 }}>{main}</View>
+      {menu ? <ContextMenu menu={menu} onClose={() => setMenu(null)} /> : null}
+      <View style={toast.stack} pointerEvents="box-none">
+        {toasts.list.map((n) => (
+          <Toast
+            key={n.key}
+            notify={n}
+            onClose={() => toasts.dismiss(n.key)}
+            onOpen={() => {
+              toasts.dismiss(n.key);
+              choose({ serverId: n.server_id, paneId: n.pane_id, title: n.title, crumb: n.body });
+            }}
+          />
+        ))}
+      </View>
     </View>
+  );
+}
+
+interface MenuItem {
+  label: string;
+  danger?: boolean;
+  onPress: () => void;
+}
+
+interface MenuState {
+  x: number;
+  y: number;
+  items: MenuItem[];
+}
+
+/** Calls `onMenu` with the pointer position on a right click, instead of the browser's menu. */
+function useContextMenu(onMenu: (x: number, y: number) => void) {
+  const ref = useRef<unknown>(null);
+  const handler = useRef(onMenu);
+  handler.current = onMenu;
+  useEffect(() => {
+    const element = ref.current as HTMLElement | null;
+    if (!element?.addEventListener) return;
+    const listener = (e: MouseEvent) => {
+      e.preventDefault();
+      handler.current(e.clientX, e.clientY);
+    };
+    element.addEventListener('contextmenu', listener);
+    return () => element.removeEventListener('contextmenu', listener);
+  }, []);
+  return ref;
+}
+
+function ContextMenu({ menu, onClose }: { menu: MenuState; onClose: () => void }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  return (
+    <Pressable style={StyleSheet.absoluteFill} onPress={onClose}>
+      <View style={[menuStyle.card, { left: menu.x, top: menu.y }]}>
+        {menu.items.map((item) => (
+          <Pressable
+            key={item.label}
+            accessibilityRole="menuitem"
+            onPress={() => {
+              onClose();
+              item.onPress();
+            }}
+            style={(state) => [menuStyle.item, (state as { hovered?: boolean }).hovered && menuStyle.itemHover]}
+          >
+            <Text style={[menuStyle.label, item.danger && { color: colors.danger }]}>{item.label}</Text>
+          </Pressable>
+        ))}
+      </View>
+    </Pressable>
+  );
+}
+
+const menuStyle = StyleSheet.create({
+  card: {
+    position: 'absolute',
+    minWidth: 190,
+    padding: 4,
+    borderRadius: 8,
+    backgroundColor: '#1b1d24',
+    borderWidth: 1,
+    borderColor: '#2a2d37',
+    shadowColor: '#000',
+    shadowOpacity: 0.45,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 6 },
+  },
+  item: { paddingHorizontal: 10, paddingVertical: 7, borderRadius: 5 },
+  itemHover: { backgroundColor: '#262933' },
+  label: { color: colors.text, fontSize: 13 },
+});
+
+type KeyedNotify = InbandNotify & { key: number };
+
+const TOAST_MS = 7000;
+const MAX_TOASTS = 3;
+
+/** In-band alerts as toasts in the corner; each closes itself after a while. */
+function useToasts() {
+  const [list, setList] = useState<KeyedNotify[]>([]);
+  const next = useRef(0);
+  const timers = useRef(new Map<number, ReturnType<typeof setTimeout>>());
+  const dismiss = (key: number) => {
+    clearTimeout(timers.current.get(key));
+    timers.current.delete(key);
+    setList((l) => l.filter((n) => n.key !== key));
+  };
+  useEffect(
+    () =>
+      connections.onNotify((n) => {
+        const key = next.current++;
+        setList((l) => [...l, { ...n, key }].slice(-MAX_TOASTS));
+        timers.current.set(
+          key,
+          setTimeout(() => dismiss(key), TOAST_MS),
+        );
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
+  return { list, dismiss };
+}
+
+function Toast({ notify, onOpen, onClose }: { notify: KeyedNotify; onOpen: () => void; onClose: () => void }) {
+  const blocked = notify.kind === 'blocked';
+  return (
+    <Pressable
+      accessibilityRole="button"
+      onPress={onOpen}
+      style={(state) => [toast.card, (state as { hovered?: boolean }).hovered && toast.cardHover]}
+    >
+      <View style={[toast.dot, { backgroundColor: blocked ? statusColor.blocked : statusColor.done }]} />
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <Text style={toast.title} numberOfLines={1}>
+          {notify.title}
+        </Text>
+        <Text style={toast.body} numberOfLines={1}>
+          {notify.body}
+        </Text>
+      </View>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Dismiss"
+        onPress={onClose}
+        style={(state) => [toast.close, (state as { hovered?: boolean }).hovered && toast.closeHover]}
+      >
+        <Text style={toast.closeText}>×</Text>
+      </Pressable>
+    </Pressable>
   );
 }
 
@@ -113,11 +290,14 @@ function MachineGroup({
   server,
   selected,
   onSelect,
+  onMenu,
 }: {
   server: StoredServer;
   selected: Selection | null;
   onSelect: (s: Selection) => void;
+  onMenu: (x: number, y: number) => void;
 }) {
+  const row = useContextMenu(onMenu);
   const repair = repairReason(server);
   const client = repair ? null : connections.client(server.server_id);
   const status = useClientStatus(client);
@@ -131,21 +311,40 @@ function MachineGroup({
   return (
     <View style={side.group}>
       <Pressable
+        ref={row as never}
         accessibilityRole="button"
         onPress={() => setOpen(!open)}
         style={(state) => [side.machine, (state as { hovered?: boolean }).hovered && side.rowHover]}
       >
-        <Text style={[side.chevron, open && side.chevronOpen]}>›</Text>
-        <View style={[side.connDot, { backgroundColor: repair ? colors.danger : connColor(status) }]} />
-        <View style={{ flex: 1, minWidth: 0 }}>
-          <Text style={side.machineName} numberOfLines={1}>
-            {server.name}
-          </Text>
-          <Text style={side.machineSub} numberOfLines={1}>
-            {repair ? repairShort(repair) : status.state === 'open' ? machineLabel(server) : statusText(status)}
-          </Text>
-        </View>
-        {rows.length > 0 ? <Text style={side.count}>{rows.length}</Text> : null}
+        {(state) => (
+          <>
+            <Text style={[side.chevron, open && side.chevronOpen]}>›</Text>
+            <View style={[side.connDot, { backgroundColor: repair ? colors.danger : connColor(status) }]} />
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text style={side.machineName} numberOfLines={1}>
+                {server.name}
+              </Text>
+              <Text style={side.machineSub} numberOfLines={1}>
+                {repair ? repairShort(repair) : status.state === 'open' ? machineLabel(server) : statusText(status)}
+              </Text>
+            </View>
+            {(state as { hovered?: boolean }).hovered ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`More for ${server.name}`}
+                onPress={(e) => {
+                  const ev = e.nativeEvent as unknown as { pageX: number; pageY: number };
+                  onMenu(ev.pageX, ev.pageY);
+                }}
+                style={side.more}
+              >
+                <Text style={side.moreText}>⋯</Text>
+              </Pressable>
+            ) : rows.length > 0 ? (
+              <Text style={side.count}>{rows.length}</Text>
+            ) : null}
+          </>
+        )}
       </Pressable>
       {open && !repair ? (
         <View style={side.children}>
@@ -311,6 +510,34 @@ function MachineCard({ server, onSelect }: { server: StoredServer; onSelect: (s:
   );
 }
 
+const toast = StyleSheet.create({
+  stack: { position: 'absolute', right: 20, bottom: 20, gap: 8, alignItems: 'flex-end' },
+  card: {
+    width: 340,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingLeft: 14,
+    paddingRight: 8,
+    paddingVertical: 11,
+    borderRadius: 10,
+    backgroundColor: '#1b1d24',
+    borderWidth: 1,
+    borderColor: '#2a2d37',
+    shadowColor: '#000',
+    shadowOpacity: 0.45,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 8 },
+  },
+  cardHover: { backgroundColor: '#20232b' },
+  dot: { width: 8, height: 8, borderRadius: 4 },
+  title: { color: colors.text, fontSize: 13.5, fontWeight: '600' },
+  body: { color: '#7d8394', fontSize: 12.5, marginTop: 2 },
+  close: { width: 26, height: 26, borderRadius: 6, alignItems: 'center', justifyContent: 'center' },
+  closeHover: { backgroundColor: '#2a2d37' },
+  closeText: { color: '#7d8394', fontSize: 17, lineHeight: 18 },
+});
+
 const shell = StyleSheet.create({
   root: { flex: 1, flexDirection: 'row', backgroundColor: colors.bg },
   pairWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 },
@@ -358,6 +585,8 @@ const side = StyleSheet.create({
   connDot: { width: 7, height: 7, borderRadius: 4 },
   machineName: { color: '#d6d9e2', fontSize: 13.5, fontWeight: '600' },
   machineSub: { color: SIDEBAR.dim, fontSize: 11.5, marginTop: 1 },
+  more: { width: 24, height: 22, borderRadius: 6, alignItems: 'center', justifyContent: 'center' },
+  moreText: { color: '#aab0c0', fontSize: 15, lineHeight: 16 },
   count: {
     color: SIDEBAR.dim,
     fontSize: 11,

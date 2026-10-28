@@ -26,7 +26,32 @@ export function appInfo() {
 }
 
 export function deviceName(): string {
+  if (Platform.OS === 'web') return browserName();
   return (Device.deviceName || Device.modelName || `${Platform.OS} device`).slice(0, 64);
+}
+
+/** "Chrome on Linux" and the like, from the user agent. */
+function browserName(): string {
+  const ua = globalThis.navigator?.userAgent ?? '';
+  const browser = /Edg\//.test(ua)
+    ? 'Edge'
+    : /Firefox\//.test(ua)
+      ? 'Firefox'
+      : /Chrome\//.test(ua)
+        ? 'Chrome'
+        : /Safari\//.test(ua)
+          ? 'Safari'
+          : 'Browser';
+  const os = /Windows/.test(ua)
+    ? 'Windows'
+    : /Mac OS X/.test(ua)
+      ? 'macOS'
+      : /Android/.test(ua)
+        ? 'Android'
+        : /Linux/.test(ua)
+          ? 'Linux'
+          : '';
+  return os ? `${browser} on ${os}` : browser;
 }
 
 export interface InbandNotify extends NotifyMessage {
