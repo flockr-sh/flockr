@@ -20,6 +20,10 @@ export interface StoredServer {
   /** The Noise handshake failed: the server key changed or the address is another machine. The token is kept. */
   keyMismatch?: boolean;
   pairedAt: number;
+  /** A flock machine reached through the server `via`, using that server's pairing. */
+  machine?: string;
+  /** The paired server whose flock this machine belongs to. */
+  via?: string;
 }
 
 export type RepairReason = 'token' | 'key' | 'legacy';
