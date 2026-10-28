@@ -30,6 +30,8 @@ pub(crate) const API_SERVICE: &str = "api";
 pub(crate) const FLOCK_SERVICE: &str = "flock";
 /// The TUI client protocol, piped to the member's client socket.
 pub(crate) const CLIENT_SERVICE: &str = "client";
+/// A phone session relayed by the server the phone connected to.
+pub(crate) const MOBILE_SERVICE: &str = "mobile";
 
 pub(crate) fn data_message(stream: u64, bytes: &[u8]) -> Value {
     json!({
@@ -411,4 +413,82 @@ async fn call_streams(
         .into_iter()
         .map(|result| result.unwrap_or_else(|| Err("no answer in time".to_owned())))
         .collect())
+}
+
+/// What arrives on a stream opened with [`open_stream`].
+#[derive(Debug)]
+pub(crate) enum StreamEvent {
+    Data(Vec<u8>),
+    /// The stream ended, with the reason when it didn't end normally.
+    Closed(Option<String>),
+}
+
+/// Opens one long-lived stream to a member's `service` over its own hub
+/// connection. Bytes sent on the returned sender go to the member; dropping
+/// it closes the stream. Events end with `Closed`.
+pub(crate) async fn open_stream(
+    dir: &Path,
+    member: &str,
+    service: &str,
+) -> io::Result<(
+    mpsc::UnboundedSender<Vec<u8>>,
+    mpsc::UnboundedReceiver<StreamEvent>,
+)> {
+    const STREAM: u64 = 1;
+    let mut channel = connect(dir).await?;
+    channel
+        .send(&json!({ "t": "open", "s": STREAM, "to": member, "service": service }))
+        .await?;
+    let (tx, mut outgoing) = mpsc::unbounded_channel::<Vec<u8>>();
+    let (events_tx, events) = mpsc::unbounded_channel();
+    tokio::spawn(async move {
+        let mut ping = tokio::time::interval(PING_INTERVAL);
+        let reason = loop {
+            tokio::select! {
+                bytes = outgoing.recv() => match bytes {
+                    Some(bytes) => {
+                        if channel.send(&data_message(STREAM, &bytes)).await.is_err() {
+                            break Some("lost the connection to the hub".to_owned());
+                        }
+                    }
+                    None => {
+                        let _ = channel.send(&json!({ "t": "close", "s": STREAM })).await;
+                        break None;
+                    }
+                },
+                message = channel.recv() => {
+                    let Ok(Some(message)) = message else {
+                        break Some("lost the connection to the hub".to_owned());
+                    };
+                    match message["t"].as_str() {
+                        Some("data") if message["s"] == STREAM => {
+                            if let Some(bytes) = data_bytes(&message) {
+                                let _ = events_tx.send(StreamEvent::Data(bytes));
+                            }
+                        }
+                        Some("close") if message["s"] == STREAM => {
+                            break message["error"].as_str().map(str::to_owned);
+                        }
+                        Some("ping") => {
+                            if channel.send(&json!({ "t": "pong" })).await.is_err() {
+                                break Some("lost the connection to the hub".to_owned());
+                            }
+                        }
+                        Some("error") => {
+                            break Some(message["reason"].as_str().unwrap_or("refused").to_owned());
+                        }
+                        _ => {}
+                    }
+                }
+                _ = ping.tick() => {
+                    if channel.send(&json!({ "t": "ping" })).await.is_err() {
+                        break Some("lost the connection to the hub".to_owned());
+                    }
+                }
+            }
+        };
+        let _ = events_tx.send(StreamEvent::Closed(reason));
+        channel.close().await;
+    });
+    Ok((tx, events))
 }

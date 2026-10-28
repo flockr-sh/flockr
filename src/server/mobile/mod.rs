@@ -29,7 +29,9 @@ use crate::config::MobileConfig;
 use crate::mobile::store::{self, DevicesFile};
 use crate::server::client_transport::ServerEvent;
 
-pub(crate) const MAX_CONNECTIONS_PER_DEVICE: usize = 4;
+/// A phone opens one connection per flock machine it shows, all through one
+/// server, so this leaves room for several machines.
+pub(crate) const MAX_CONNECTIONS_PER_DEVICE: usize = 8;
 pub(crate) const MAX_CONNECTIONS: usize = 16;
 pub(crate) const MAX_UNAUTHENTICATED: usize = 8;
 pub(crate) const MAX_UNAUTHENTICATED_PER_IP: usize = 3;
@@ -193,6 +195,9 @@ impl Outbound {
 
 pub(crate) struct ConnEntry {
     pub device_id: String,
+    /// A phone session the flock hub relays here; its device is paired with
+    /// the hub, not with this server.
+    pub relayed: bool,
     pub out: Outbound,
     pub foreground: bool,
     /// Last time the phone sent anything on this connection.
@@ -345,7 +350,7 @@ impl Gateway {
     pub(crate) fn close_revoked(&self) {
         let state = self.state();
         for conn in state.conns.values() {
-            if state.devices.find(&conn.device_id).is_none() {
+            if !conn.relayed && state.devices.find(&conn.device_id).is_none() {
                 conn.out.close(
                     protocol::close::REVOKED,
                     Some(protocol::error(
@@ -376,31 +381,43 @@ impl Drop for MobileGatewayHandle {
 
 /// Starts the gateway when `[mobile]` enables it. Must run inside the tokio
 /// runtime.
-pub(crate) fn start(config: &MobileConfig, deps: GatewayDeps) -> Option<MobileGatewayHandle> {
-    if !config.enabled {
-        return None;
-    }
-    let (addrs, diagnostics) = config.listen_addrs();
+/// Starts the gateway. With `[mobile]` enabled it listens for phones; with
+/// `relay` set (this server is in a flock) it also serves phone sessions the
+/// hub relays here, even when it doesn't listen itself. Returns the handle
+/// that keeps it running and the gateway for the flock node.
+pub(crate) fn start(
+    config: &MobileConfig,
+    deps: GatewayDeps,
+    relay: bool,
+) -> (Option<MobileGatewayHandle>, Option<Arc<Gateway>>) {
+    let (addrs, diagnostics) = if config.enabled {
+        config.listen_addrs()
+    } else {
+        (Vec::new(), Vec::new())
+    };
     for diagnostic in &diagnostics {
         warn!("{diagnostic}");
     }
-    if addrs.is_empty() {
+    if config.enabled && addrs.is_empty() {
         warn!("mobile gateway enabled but no usable listen address; not listening");
-        return None;
+    }
+    let listening = !addrs.is_empty();
+    if !listening && !relay {
+        return (None, None);
     }
     let dir = store::mobile_dir();
     let server_id = match store::load_or_create_server_fingerprint(&dir) {
         Ok(server_id) => server_id,
         Err(err) => {
             warn!(err = %err, "mobile gateway could not create its server id; not listening");
-            return None;
+            return (None, None);
         }
     };
     let noise_key = match store::load_or_create_noise_key(&dir) {
         Ok(key) => key,
         Err(err) => {
             warn!(err = %err, "mobile gateway could not load its noise key; not listening");
-            return None;
+            return (None, None);
         }
     };
     let boot_id = store::random_bytes::<8>()
@@ -409,7 +426,7 @@ pub(crate) fn start(config: &MobileConfig, deps: GatewayDeps) -> Option<MobileGa
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let stopped = Arc::new(AtomicBool::new(false));
     let api = api_proxy::ApiCaller::new(deps.api_socket);
-    let push_queue = config.push.enabled.then(|| {
+    let push_queue = (listening && config.push.enabled).then(|| {
         push::ExpoQueue::start(config.push.access_token().map(str::to_owned), dir.clone())
     });
     let gateway = Arc::new(Gateway {
@@ -432,6 +449,15 @@ pub(crate) fn start(config: &MobileConfig, deps: GatewayDeps) -> Option<MobileGa
         bound: Mutex::new(Vec::new()),
         push_queue,
     });
+    let handle = MobileGatewayHandle {
+        shutdown: shutdown_tx,
+        stopped,
+        dir: dir.clone(),
+    };
+    if !listening {
+        info!("mobile gateway serving relayed flock sessions only");
+        return (Some(handle), Some(gateway));
+    }
     gateway.refresh_devices();
     // Record the process even before a bind succeeds so the CLI can tell
     // "not running" from "still binding".
@@ -452,11 +478,7 @@ pub(crate) fn start(config: &MobileConfig, deps: GatewayDeps) -> Option<MobileGa
     tokio::spawn(revocation_loop(gateway.clone()));
     push::start_worker(gateway.clone());
     info!(name = %gateway.name, "mobile gateway started");
-    Some(MobileGatewayHandle {
-        shutdown: shutdown_tx,
-        stopped,
-        dir,
-    })
+    (Some(handle), Some(gateway))
 }
 
 async fn revocation_loop(gateway: Arc<Gateway>) {
@@ -564,7 +586,21 @@ mod tests {
             1,
             ConnEntry {
                 device_id: "d_gone".to_owned(),
+                relayed: false,
                 out,
+                foreground: false,
+                last_inbound: Instant::now(),
+            },
+        );
+        // A session the flock hub relays here belongs to a phone paired with
+        // the hub, so it isn't in this server's devices and stays open.
+        let (relayed_out, relayed_rx) = Outbound::new();
+        gateway.state().conns.insert(
+            2,
+            ConnEntry {
+                device_id: "m_hub/d_phone".to_owned(),
+                relayed: true,
+                out: relayed_out,
                 foreground: false,
                 last_inbound: Instant::now(),
             },
@@ -578,6 +614,7 @@ mod tests {
             *rx.close.borrow_and_update(),
             Some((protocol::close::REVOKED, _))
         ));
+        assert!(relayed_rx.close.borrow().is_none());
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -588,6 +625,7 @@ mod tests {
         let (out, _rx) = Outbound::new();
         let entry = |last_inbound| ConnEntry {
             device_id: "d_a".to_owned(),
+            relayed: false,
             out: out.clone(),
             foreground: true,
             last_inbound,

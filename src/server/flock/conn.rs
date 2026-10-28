@@ -298,7 +298,7 @@ fn open_target(
             member.to_owned(),
             role,
             service,
-            node.messages(),
+            node,
             tx.clone(),
         )));
     }
@@ -417,7 +417,7 @@ async fn run_hub_link(node: &Node, channel: &mut Channel) -> Option<String> {
                                 continue;
                             };
                             let service = message["service"].as_str().unwrap_or(API_SERVICE);
-                            let input = serve_stream(stream, from, role, service, node.messages(), tx.clone());
+                            let input = serve_stream(stream, from, role, service, node, tx.clone());
                             served.insert(stream, input);
                         }
                         Some("data") => {

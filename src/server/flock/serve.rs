@@ -10,11 +10,16 @@ use tracing::debug;
 
 use std::sync::Arc;
 
-use super::messages::{Caller, LineBuffer, Messages};
+use super::messages::{Caller, Messages};
+use super::Node;
 use crate::flock::access::RequestFilter;
-use crate::flock::client::{data_message, error_line, CLIENT_SERVICE, FLOCK_SERVICE};
+use crate::flock::client::{
+    data_message, error_line, CLIENT_SERVICE, FLOCK_SERVICE, MOBILE_SERVICE,
+};
 use crate::flock::pipe;
+use crate::flock::pipe::LineBuffer;
 use crate::flock::store::Role;
+use crate::server::mobile::connection::{serve_relayed, RelayOut, RelayedDevice};
 
 /// Starts serving stream `stream` for `from`. Returns where to send the
 /// caller's bytes; dropping it closes the stream. Answers go to `out` as
@@ -24,22 +29,34 @@ pub(super) fn serve_stream(
     from: String,
     role: Role,
     service: &str,
-    messages: &Arc<Messages>,
+    node: &Node,
     out: mpsc::UnboundedSender<Value>,
 ) -> mpsc::UnboundedSender<Vec<u8>> {
     let (input_tx, input) = mpsc::unbounded_channel();
+    let refuse = |reason: &str| {
+        let _ = out.send(json!({ "t": "close", "s": stream, "error": reason }));
+    };
     match service {
         FLOCK_SERVICE => {
-            tokio::spawn(run_flock(stream, from, role, messages.clone(), input, out));
+            let messages = node.messages().clone();
+            tokio::spawn(run_flock(stream, from, role, messages, input, out));
         }
+        // A phone session can type into panes; viewers don't get one yet.
+        MOBILE_SERVICE if role == Role::Viewer => {
+            refuse("a viewer may not open a phone session");
+        }
+        MOBILE_SERVICE => match node.mobile() {
+            Some(gateway) => {
+                let gateway = gateway.clone();
+                let name = node.name().to_owned();
+                tokio::spawn(run_mobile(stream, from, gateway, name, input, out));
+            }
+            None => refuse("this machine's server can't serve phone sessions"),
+        },
         // The client protocol carries keystrokes; its frames can't be
         // checked per request, so viewers don't get it.
         CLIENT_SERVICE if role == Role::Viewer => {
-            let _ = out.send(json!({
-                "t": "close",
-                "s": stream,
-                "error": "a viewer may not open a terminal client",
-            }));
+            refuse("a viewer may not open a terminal client");
         }
         CLIENT_SERVICE => {
             let socket = crate::server::socket_paths::client_socket_path();
@@ -123,6 +140,84 @@ async fn run(
                     if out.send(data_message(stream, &bytes)).is_err() {
                         return;
                     }
+                }
+                None => {
+                    let _ = out.send(json!({ "t": "close", "s": stream }));
+                    return;
+                }
+            },
+        }
+    }
+}
+
+/// Serves a phone session the hub relays here. The first line names the
+/// phone; every later line is one of its messages.
+async fn run_mobile(
+    stream: u64,
+    from: String,
+    gateway: Arc<crate::server::mobile::Gateway>,
+    name: String,
+    mut input: mpsc::UnboundedReceiver<Vec<u8>>,
+    out: mpsc::UnboundedSender<Value>,
+) {
+    let mut lines = LineBuffer::default();
+    let mut pending = Vec::new();
+    let first = loop {
+        let Some(bytes) = input.recv().await else {
+            return;
+        };
+        let mut received = lines.push(&bytes).into_iter();
+        if let Some(first) = received.next() {
+            pending.extend(received);
+            break first;
+        }
+    };
+    let first: Value = serde_json::from_slice(&first).unwrap_or(Value::Null);
+    let device = RelayedDevice {
+        // The hub's device ID, kept apart from devices paired here.
+        device_id: format!("{from}/{}", first["device_id"].as_str().unwrap_or("phone")),
+        name: first["name"].as_str().unwrap_or("phone").to_owned(),
+        max_in_flight: first["max_in_flight"]
+            .as_u64()
+            .and_then(|value| u32::try_from(value).ok())
+            .unwrap_or(2)
+            .clamp(1, 8),
+        server_name: name,
+    };
+    let (to_session, from_phone) = mpsc::unbounded_channel::<String>();
+    let (to_phone, mut from_session) = mpsc::unbounded_channel::<RelayOut>();
+    tokio::spawn(serve_relayed(gateway, device, from_phone, to_phone));
+    let deliver = |line: Vec<u8>| {
+        let text = String::from_utf8_lossy(&line).trim_end().to_owned();
+        to_session.send(text).is_ok()
+    };
+    for line in pending {
+        if !deliver(line) {
+            return;
+        }
+    }
+    loop {
+        tokio::select! {
+            bytes = input.recv() => {
+                let Some(bytes) = bytes else {
+                    return;
+                };
+                for line in lines.push(&bytes) {
+                    if !deliver(line) {
+                        return;
+                    }
+                }
+            }
+            sent = from_session.recv() => match sent {
+                Some(RelayOut::Text(text)) => {
+                    if out.send(data_message(stream, &RelayOut::Text(text).into_line())).is_err() {
+                        return;
+                    }
+                }
+                Some(close @ RelayOut::Close(..)) => {
+                    let _ = out.send(data_message(stream, &close.into_line()));
+                    let _ = out.send(json!({ "t": "close", "s": stream }));
+                    return;
                 }
                 None => {
                     let _ = out.send(json!({ "t": "close", "s": stream }));

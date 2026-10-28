@@ -106,3 +106,21 @@ fn write_all_polling(stream: &mut LocalStream, mut bytes: &[u8]) -> io::Result<(
     }
     stream.flush()
 }
+
+/// Splits a byte stream into lines.
+#[derive(Default)]
+pub(crate) struct LineBuffer {
+    partial: Vec<u8>,
+}
+
+impl LineBuffer {
+    pub(crate) fn push(&mut self, bytes: &[u8]) -> Vec<Vec<u8>> {
+        self.partial.extend_from_slice(bytes);
+        let mut lines = Vec::new();
+        while let Some(end) = self.partial.iter().position(|byte| *byte == b'\n') {
+            let line: Vec<u8> = self.partial.drain(..=end).collect();
+            lines.push(line);
+        }
+        lines
+    }
+}

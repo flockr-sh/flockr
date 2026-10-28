@@ -23,6 +23,7 @@ use crate::flock::keys;
 use crate::flock::message::{
     self, InboxEntry, InboxState, Message, Party, MAX_QUEUED, RATE_PER_MINUTE, TTL_SECS,
 };
+use crate::flock::pipe::LineBuffer;
 use crate::flock::store::Role;
 use crate::mobile::store::now_unix;
 use crate::server::mobile::api_proxy::ApiCaller;
@@ -772,24 +773,6 @@ pub(super) fn serve_local(messages: Arc<Messages>, shutdown: tokio::sync::watch:
             }
         }
     });
-}
-
-/// Splits a byte stream into lines.
-#[derive(Default)]
-pub(super) struct LineBuffer {
-    partial: Vec<u8>,
-}
-
-impl LineBuffer {
-    pub(super) fn push(&mut self, bytes: &[u8]) -> Vec<Vec<u8>> {
-        self.partial.extend_from_slice(bytes);
-        let mut lines = Vec::new();
-        while let Some(end) = self.partial.iter().position(|byte| *byte == b'\n') {
-            let line: Vec<u8> = self.partial.drain(..=end).collect();
-            lines.push(line);
-        }
-        lines
-    }
 }
 
 #[cfg(test)]

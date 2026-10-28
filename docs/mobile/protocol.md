@@ -427,6 +427,10 @@ First connect from a QR:
   `server_id`, fail with `pairing_failed` (the QR was for another host).
 - `max_in_flight`: surface flow-control window (section 10.6), 1..=8,
   default 2.
+- `machine` (optional): a flock member ID from `welcome.machines`. The
+  server authenticates the phone as usual, then relays the session to that
+  machine (section 8.7). Unknown machine, or a server in no flock: close
+  `4000`. The server's own member ID serves the session locally.
 
 ### 8.3 Version negotiation
 
@@ -506,6 +510,31 @@ Auth path:
   server". The cryptographic check is the Noise handshake against `pk`;
   this one only gives a clearer message.
 - `methods`: the API allowlist (section 9.2) as sent by this server.
+- `machines` (optional): present when the server is in a flock. One entry
+  per computer: `{ "id", "name", "this", "online" }`; `this` marks the
+  server itself.
+- `machine` (optional): on a relayed session, the machine it reached.
+  `server.name` is that machine's name; `server.server_id` stays the
+  paired server's.
+
+### 8.7 Relayed sessions (flock)
+
+With `hello.machine` set, the paired server keeps the Noise channel and
+relays every message, decrypted, to the machine through the flock hub
+(the `mobile` stream service, one JSON message per line). The machine runs
+the session as if the phone were connected to it: same messages, methods
+and features, with `welcome` sent by the machine. Differences:
+
+- `push.register` and `push.unregister` answer `push.ok` and do nothing;
+  push is registered on the paired server's own session.
+- `device.forget` fails `bad_request`; remove the phone on the paired
+  server.
+- The paired server's own notices (in-band alerts) are not sent on a
+  relayed session.
+- If the machine is unreachable or goes away, the server closes `4009`
+  with `server_unavailable`; the app retries as for a restart.
+- Revoking the device on the paired server closes its relayed sessions
+  too. A phone may hold up to 8 connections to one server.
 
 ### 8.6 Revocation
 
@@ -1249,7 +1278,7 @@ Limits (constants in `src/server/mobile/mod.rs`):
 | Limit | Value |
 |---|---|
 | Paired devices | `mobile.max_devices` (8) |
-| Connections per device | 4 |
+| Connections per device | 8 (one per flock machine shown) |
 | Connections total | 16 |
 | Unauthenticated connections | 8 at once, 3 per remote IP; refused (socket dropped, no upgrade) when full; upgrade, handshake, and `hello` within 10 s; a timeout or a failed handshake counts as an auth failure |
 | Outbound writes | one frame may take 30 s to write, then the connection closes |

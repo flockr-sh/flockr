@@ -86,6 +86,10 @@ pub(crate) struct Node {
     dir: PathBuf,
     keys: MemberKeys,
     messages: Arc<messages::Messages>,
+    /// Serves phone sessions the hub relays to this machine.
+    mobile: Option<Arc<crate::server::mobile::Gateway>>,
+    /// This machine's name in the flock.
+    name: String,
     shared: Mutex<Shared>,
     /// Bumped when the member list or the connected set changes, so hub
     /// connections recheck their peer and resend the list.
@@ -105,6 +109,8 @@ impl Node {
     fn new(dir: PathBuf, keys: MemberKeys, shutdown: watch::Receiver<bool>) -> Self {
         Self {
             messages: messages::Messages::new(dir.clone()),
+            mobile: None,
+            name: String::new(),
             dir,
             keys,
             shared: Mutex::new(Shared {
@@ -146,6 +152,14 @@ impl Node {
 
     pub(super) fn messages(&self) -> &Arc<messages::Messages> {
         &self.messages
+    }
+
+    pub(super) fn mobile(&self) -> Option<&Arc<crate::server::mobile::Gateway>> {
+        self.mobile.as_ref()
+    }
+
+    pub(super) fn name(&self) -> &str {
+        &self.name
     }
 
     pub(super) fn roster(&self) -> watch::Receiver<u64> {
@@ -464,7 +478,10 @@ impl Drop for FlockNodeHandle {
 
 /// Starts the node when `[flock]` enables it. Must run inside the tokio
 /// runtime.
-pub(crate) fn start(config: &FlockConfig) -> Option<FlockNodeHandle> {
+pub(crate) fn start(
+    config: &FlockConfig,
+    mobile: Option<Arc<crate::server::mobile::Gateway>>,
+) -> Option<FlockNodeHandle> {
     if !config.enabled {
         return None;
     }
@@ -481,7 +498,10 @@ pub(crate) fn start(config: &FlockConfig) -> Option<FlockNodeHandle> {
         }
     };
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
-    let node = Arc::new(Node::new(dir.clone(), keys, shutdown_rx));
+    let mut node = Node::new(dir.clone(), keys, shutdown_rx);
+    node.mobile = mobile;
+    node.name = config.display_name();
+    let node = Arc::new(node);
     node.poll();
     for addr in addrs {
         tokio::spawn(listen(node.clone(), addr));
