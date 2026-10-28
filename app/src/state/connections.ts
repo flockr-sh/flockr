@@ -5,6 +5,7 @@ import { Platform } from 'react-native';
 import {
   ConnStatus,
   decodeServerKey,
+  FlockMachine,
   GatewayClient,
   HANDSHAKE_FAILED,
   NotifyMessage,
@@ -91,7 +92,9 @@ class Connections {
     if (!serverKey) return null;
     const client = new GatewayClient({
       hosts: s.hosts.map((h) => parseHostEntry(h, s.port)),
-      sid: s.server_id,
+      // A flock machine answers through the paired server, with its ID.
+      sid: s.via ?? s.server_id,
+      machine: s.machine,
       serverKey,
       credentials: { kind: 'auth', device_id: s.device_id, token: s.token },
       app: appInfo(),
@@ -103,6 +106,7 @@ class Connections {
       const idx = client.currentHostIndex;
       const name = w.server.name || s.name;
       if (idx !== s.lastHost || name !== s.name) void this.update(serverId, { lastHost: idx, name });
+      if (!s.via) void this.syncMachines(serverId, w.machines ?? []);
       void this.registerPush(serverId, client);
     });
     client.on('fatal', (f) => {
@@ -162,6 +166,58 @@ class Connections {
     }
   }
 
+  /**
+   * Keeps one entry per other machine in a paired server's flock. They share
+   * the server's pairing and connect through it.
+   */
+  private async syncMachines(serverId: string, machines: FlockMachine[]): Promise<void> {
+    const hub = this.server(serverId);
+    if (!hub) return;
+    const wanted: StoredServer[] = machines
+      .filter((m) => !m.this)
+      .map((m) => {
+        const id = `${hub.server_id}~${m.id}`;
+        const existing = this.server(id);
+        return {
+          server_id: id,
+          name: m.name,
+          hosts: hub.hosts,
+          port: hub.port,
+          pk: hub.pk,
+          device_id: hub.device_id,
+          token: hub.token,
+          lastHost: existing?.lastHost ?? hub.lastHost,
+          pairedAt: existing?.pairedAt ?? Date.now(),
+          machine: m.id,
+          via: hub.server_id,
+        };
+      });
+    const wantedIds = new Set(wanted.map((s) => s.server_id));
+    const stale = this.servers.filter((s) => s.via === hub.server_id && !wantedIds.has(s.server_id));
+    const changed = wanted.filter((w) => {
+      const existing = this.server(w.server_id);
+      return !existing || JSON.stringify(existing) !== JSON.stringify(w);
+    });
+    if (stale.length === 0 && changed.length === 0) return;
+    for (const s of stale) {
+      this.clients.get(s.server_id)?.close();
+      this.clients.delete(s.server_id);
+      await deleteServer(s.server_id);
+    }
+    for (const s of changed) {
+      this.clients.get(s.server_id)?.close();
+      this.clients.delete(s.server_id);
+      await saveServer(s);
+    }
+    const byId = new Map(changed.map((s) => [s.server_id, s]));
+    const staleIds = new Set(stale.map((s) => s.server_id));
+    this.servers = [
+      ...this.servers.filter((s) => !staleIds.has(s.server_id)).map((s) => byId.get(s.server_id) ?? s),
+      ...changed.filter((s) => !this.servers.some((e) => e.server_id === s.server_id)),
+    ];
+    this.changed();
+  }
+
   /** Pair with a scanned/pasted payload. Resolves with the stored server. */
   async pair(payload: PairingPayload): Promise<StoredServer> {
     const serverKey = decodeServerKey(payload.pk);
@@ -207,10 +263,18 @@ class Connections {
     }
   }
 
-  /** Forget this phone on the server (if reachable) and locally. */
+  /** Forget this phone on the server (if reachable) and locally, with its flock machines. */
   async remove(serverId: string): Promise<void> {
+    for (const machine of this.servers.filter((s) => s.via === serverId)) {
+      this.clients.get(machine.server_id)?.close();
+      this.clients.delete(machine.server_id);
+      await deleteServer(machine.server_id);
+    }
+    this.servers = this.servers.filter((s) => s.via !== serverId);
     const c = this.clients.get(serverId);
-    if (c?.ready) {
+    // A flock machine shares its server's pairing; removing it only hides it
+    // until the server lists it again.
+    if (c?.ready && !this.server(serverId)?.via) {
       try {
         await c.forget();
       } catch {

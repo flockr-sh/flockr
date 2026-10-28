@@ -48,6 +48,8 @@ function ServerCard({ server, onPress }: { server: StoredServer; onPress: () => 
   const client = repair ? null : connections.client(server.server_id);
   const status = useClientStatus(client);
   const host = server.hosts[server.lastHost ?? 0] ?? server.hosts[0];
+  const via = server.via ? connections.server(server.via) : undefined;
+  const where = server.via ? `via ${via?.name ?? 'flock'}` : `${host}:${server.port}`;
   return (
     <Pressable
       accessibilityRole="button"
@@ -56,7 +58,7 @@ function ServerCard({ server, onPress }: { server: StoredServer; onPress: () => 
     >
       <Text style={styles.name}>{server.name}</Text>
       <Text style={ui.sub}>
-        {host}:{server.port} · {repair ? repairShort(repair) : statusText(status)}
+        {where} · {repair ? repairShort(repair) : statusText(status)}
       </Text>
     </Pressable>
   );
