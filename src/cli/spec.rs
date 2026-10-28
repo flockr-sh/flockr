@@ -5,6 +5,7 @@ use clap::{Arg, ArgAction, Command, ValueHint};
 mod completion;
 mod flock;
 mod machine;
+mod message;
 mod mobile;
 
 pub(super) fn command() -> Command {
@@ -39,6 +40,7 @@ pub(super) fn command() -> Command {
         .subcommand(machine::command())
         .subcommand(mobile::command())
         .subcommand(flock::command())
+        .subcommand(message::command())
         .subcommand(server_command())
         .subcommand(api_command())
         .subcommand(workspace_command())

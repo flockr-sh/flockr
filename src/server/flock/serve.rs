@@ -1,14 +1,18 @@
-//! Serving another member's API stream from this server's own API socket.
+//! Serving another member's stream: the `api` service from this server's own
+//! API socket, the `flock` service (messages) from the flock node.
 //!
 //! The hub stamps who opened the stream and that member's role; each request
-//! is checked against the role before it reaches the socket.
+//! is checked against the role.
 
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
 use tracing::debug;
 
+use std::sync::Arc;
+
+use super::messages::{Caller, LineBuffer, Messages};
 use crate::flock::access::RequestFilter;
-use crate::flock::client::{data_message, error_line};
+use crate::flock::client::{data_message, error_line, FLOCK_SERVICE};
 use crate::flock::pipe;
 use crate::flock::store::Role;
 
@@ -19,11 +23,40 @@ pub(super) fn serve_stream(
     stream: u64,
     from: String,
     role: Role,
+    service: &str,
+    messages: &Arc<Messages>,
     out: mpsc::UnboundedSender<Value>,
 ) -> mpsc::UnboundedSender<Vec<u8>> {
     let (input_tx, input) = mpsc::unbounded_channel();
-    tokio::spawn(run(stream, from, role, input, out));
+    if service == FLOCK_SERVICE {
+        tokio::spawn(run_flock(stream, from, role, messages.clone(), input, out));
+    } else {
+        tokio::spawn(run(stream, from, role, input, out));
+    }
     input_tx
+}
+
+async fn run_flock(
+    stream: u64,
+    from: String,
+    role: Role,
+    messages: Arc<Messages>,
+    mut input: mpsc::UnboundedReceiver<Vec<u8>>,
+    out: mpsc::UnboundedSender<Value>,
+) {
+    let mut lines = LineBuffer::default();
+    while let Some(bytes) = input.recv().await {
+        for line in lines.push(&bytes) {
+            let caller = Caller::Remote {
+                member: from.clone(),
+                role,
+            };
+            let answer = messages.handle_line(&line, caller).await;
+            if out.send(data_message(stream, &answer)).is_err() {
+                return;
+            }
+        }
+    }
 }
 
 async fn run(

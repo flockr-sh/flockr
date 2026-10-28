@@ -11,5 +11,6 @@ pub(crate) mod channel;
 pub(crate) mod client;
 pub(crate) mod invite;
 pub(crate) mod keys;
+pub(crate) mod message;
 pub(crate) mod pipe;
 pub(crate) mod store;

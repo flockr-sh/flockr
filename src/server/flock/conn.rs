@@ -24,7 +24,7 @@ use tracing::{debug, info, warn};
 use super::serve::serve_stream;
 use super::{roster_message, Node, Route};
 use crate::flock::channel::{self, Channel};
-use crate::flock::client::{data_bytes, data_message};
+use crate::flock::client::{data_bytes, data_message, API_SERVICE};
 use crate::flock::invite::{self, Decision, JoinRequest};
 use crate::flock::keys::{decode_key, encode_key};
 use crate::flock::store::{self, GroupFile, Kind, Member, MembersCache, Role};
@@ -245,7 +245,8 @@ fn client_message(
                 return;
             }
             let to = message["to"].as_str().unwrap_or_default();
-            match open_target(node, member, stream, to, tx) {
+            let service = message["service"].as_str().unwrap_or(API_SERVICE);
+            match open_target(node, member, stream, to, service, tx) {
                 Ok(target) => {
                     targets.insert(stream, target);
                 }
@@ -283,6 +284,7 @@ fn open_target(
     member: &str,
     stream: u64,
     to: &str,
+    service: &str,
     tx: &mpsc::UnboundedSender<Value>,
 ) -> Result<Target, String> {
     let hub = node.hub().ok_or("this machine is no longer the hub")?;
@@ -295,6 +297,8 @@ fn open_target(
             stream,
             member.to_owned(),
             role,
+            service,
+            node.messages(),
             tx.clone(),
         )));
     }
@@ -306,7 +310,13 @@ fn open_target(
         client_stream: stream,
         link_conn,
     });
-    let _ = link.send(json!({ "t": "open", "s": route, "from": member, "role": role }));
+    let _ = link.send(json!({
+        "t": "open",
+        "s": route,
+        "from": member,
+        "role": role,
+        "service": service,
+    }));
     Ok(Target::Relay { route, link })
 }
 
@@ -406,7 +416,9 @@ async fn run_hub_link(node: &Node, channel: &mut Channel) -> Option<String> {
                                 let _ = tx.send(close(stream, Some("unknown role")));
                                 continue;
                             };
-                            served.insert(stream, serve_stream(stream, from, role, tx.clone()));
+                            let service = message["service"].as_str().unwrap_or(API_SERVICE);
+                            let input = serve_stream(stream, from, role, service, node.messages(), tx.clone());
+                            served.insert(stream, input);
                         }
                         Some("data") => {
                             if let (Some(input), Some(bytes)) = (served.get(&stream), data_bytes(&message)) {

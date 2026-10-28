@@ -7,6 +7,7 @@
 //! notices them on its poll tick, as the mobile gateway does for devices.
 
 mod conn;
+mod messages;
 mod serve;
 
 use std::collections::HashMap;
@@ -84,6 +85,7 @@ struct Shared {
 pub(crate) struct Node {
     dir: PathBuf,
     keys: MemberKeys,
+    messages: Arc<messages::Messages>,
     shared: Mutex<Shared>,
     /// Bumped when the member list or the connected set changes, so hub
     /// connections recheck their peer and resend the list.
@@ -102,6 +104,7 @@ fn file_stamp(path: PathBuf) -> Option<SystemTime> {
 impl Node {
     fn new(dir: PathBuf, keys: MemberKeys, shutdown: watch::Receiver<bool>) -> Self {
         Self {
+            messages: messages::Messages::new(dir.clone()),
             dir,
             keys,
             shared: Mutex::new(Shared {
@@ -139,6 +142,10 @@ impl Node {
 
     pub(super) fn keys(&self) -> &MemberKeys {
         &self.keys
+    }
+
+    pub(super) fn messages(&self) -> &Arc<messages::Messages> {
+        &self.messages
     }
 
     pub(super) fn roster(&self) -> watch::Receiver<u64> {
@@ -481,6 +488,8 @@ pub(crate) fn start(config: &FlockConfig) -> Option<FlockNodeHandle> {
     }
     tokio::spawn(poll_loop(node.clone()));
     tokio::spawn(dial_loop(node.clone()));
+    tokio::spawn(delivery_loop(node.clone()));
+    messages::serve_local(node.messages.clone(), node.shutdown());
     info!("flock node started");
     Some(FlockNodeHandle {
         shutdown: shutdown_tx,
@@ -533,6 +542,18 @@ async fn poll_loop(node: Arc<Node>) {
     loop {
         tokio::select! {
             _ = tick.tick() => node.poll(),
+            _ = shutdown.changed() => return,
+        }
+    }
+}
+
+/// Tells idle agents about their unread messages.
+async fn delivery_loop(node: Arc<Node>) {
+    let mut shutdown = node.shutdown();
+    let mut tick = tokio::time::interval(POLL);
+    loop {
+        tokio::select! {
+            _ = tick.tick() => node.messages.deliver_due().await,
             _ = shutdown.changed() => return,
         }
     }

@@ -2,9 +2,10 @@
 //!
 //! The CLI dials the hub with this machine's key and says `client`, so the
 //! hub doesn't treat it as the server's link. Each API connection becomes a
-//! stream: `open {s, to}`, then `data {s, d}` both ways (base64), then
-//! `close {s}`. The hub relays the stream to the member `to`, which pipes it
-//! to its own API socket.
+//! stream: `open {s, to, service?}`, then `data {s, d}` both ways (base64),
+//! then `close {s}`. The hub relays the stream to the member `to`, which
+//! serves it: the `api` service (the default) from its API socket, the
+//! `flock` service (messages) from its flock node.
 
 use std::collections::HashMap;
 use std::io;
@@ -25,6 +26,8 @@ use super::store::{self, Member};
 const HELLO_TIMEOUT: Duration = Duration::from_secs(10);
 const CALL_TIMEOUT: Duration = Duration::from_secs(15);
 const PING_INTERVAL: Duration = Duration::from_secs(20);
+pub(crate) const API_SERVICE: &str = "api";
+pub(crate) const FLOCK_SERVICE: &str = "flock";
 
 pub(crate) fn data_message(stream: u64, bytes: &[u8]) -> Value {
     json!({
@@ -301,59 +304,84 @@ pub(crate) fn call_each(
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
-    runtime.block_on(async {
-        let mut channel = connect(&store::flock_dir()).await?;
-        let mut line = request.to_string().into_bytes();
-        line.push(b'\n');
-        for (index, member) in members.iter().enumerate() {
-            let stream = index as u64 + 1;
-            channel
-                .send(&json!({ "t": "open", "s": stream, "to": member }))
-                .await?;
-            channel.send(&data_message(stream, &line)).await?;
-        }
-        let mut buffers: Vec<Vec<u8>> = vec![Vec::new(); members.len()];
-        let mut results: Vec<Option<Result<Value, String>>> = vec![None; members.len()];
-        let deadline = tokio::time::Instant::now() + CALL_TIMEOUT;
-        while results.iter().any(Option::is_none) {
-            let message = match tokio::time::timeout_at(deadline, channel.recv()).await {
-                Ok(Ok(Some(message))) => message,
-                Ok(Ok(None) | Err(_)) => break,
-                Err(_) => break,
-            };
-            let Some(index) = message["s"]
-                .as_u64()
-                .and_then(|stream| usize::try_from(stream).ok()?.checked_sub(1))
-                .filter(|index| *index < members.len())
-            else {
-                continue;
-            };
-            match message["t"].as_str() {
-                Some("data") => {
-                    buffers[index].extend(data_bytes(&message).unwrap_or_default());
-                    if let Some(end) = buffers[index].iter().position(|byte| *byte == b'\n') {
-                        results[index] = Some(
-                            serde_json::from_slice(&buffers[index][..end])
-                                .map_err(|err| format!("bad answer: {err}")),
-                        );
-                        let _ = channel
-                            .send(&json!({ "t": "close", "s": index as u64 + 1 }))
-                            .await;
-                    }
+    runtime.block_on(call_streams(
+        &store::flock_dir(),
+        members,
+        API_SERVICE,
+        request,
+    ))
+}
+
+/// Sends one request to one member's `service` and returns its answer.
+pub(crate) async fn call_one(
+    dir: &Path,
+    member: &str,
+    service: &str,
+    request: &Value,
+) -> Result<Value, String> {
+    call_streams(dir, &[member.to_owned()], service, request)
+        .await
+        .map_err(|err| err.to_string())?
+        .pop()
+        .unwrap_or_else(|| Err("no answer".to_owned()))
+}
+
+async fn call_streams(
+    dir: &Path,
+    members: &[String],
+    service: &str,
+    request: &Value,
+) -> io::Result<Vec<Result<Value, String>>> {
+    let mut channel = connect(dir).await?;
+    let mut line = request.to_string().into_bytes();
+    line.push(b'\n');
+    for (index, member) in members.iter().enumerate() {
+        let stream = index as u64 + 1;
+        channel
+            .send(&json!({ "t": "open", "s": stream, "to": member, "service": service }))
+            .await?;
+        channel.send(&data_message(stream, &line)).await?;
+    }
+    let mut buffers: Vec<Vec<u8>> = vec![Vec::new(); members.len()];
+    let mut results: Vec<Option<Result<Value, String>>> = vec![None; members.len()];
+    let deadline = tokio::time::Instant::now() + CALL_TIMEOUT;
+    while results.iter().any(Option::is_none) {
+        let message = match tokio::time::timeout_at(deadline, channel.recv()).await {
+            Ok(Ok(Some(message))) => message,
+            Ok(Ok(None) | Err(_)) | Err(_) => break,
+        };
+        let Some(index) = message["s"]
+            .as_u64()
+            .and_then(|stream| usize::try_from(stream).ok()?.checked_sub(1))
+            .filter(|index| *index < members.len())
+        else {
+            continue;
+        };
+        match message["t"].as_str() {
+            Some("data") => {
+                buffers[index].extend(data_bytes(&message).unwrap_or_default());
+                if let Some(end) = buffers[index].iter().position(|byte| *byte == b'\n') {
+                    results[index] = Some(
+                        serde_json::from_slice(&buffers[index][..end])
+                            .map_err(|err| format!("bad answer: {err}")),
+                    );
+                    let _ = channel
+                        .send(&json!({ "t": "close", "s": index as u64 + 1 }))
+                        .await;
                 }
-                Some("close") if results[index].is_none() => {
-                    results[index] = Some(Err(message["error"]
-                        .as_str()
-                        .unwrap_or("closed without an answer")
-                        .to_owned()));
-                }
-                _ => {}
             }
+            Some("close") if results[index].is_none() => {
+                results[index] = Some(Err(message["error"]
+                    .as_str()
+                    .unwrap_or("closed without an answer")
+                    .to_owned()));
+            }
+            _ => {}
         }
-        channel.close().await;
-        Ok(results
-            .into_iter()
-            .map(|result| result.unwrap_or_else(|| Err("no answer in time".to_owned())))
-            .collect())
-    })
+    }
+    channel.close().await;
+    Ok(results
+        .into_iter()
+        .map(|result| result.unwrap_or_else(|| Err("no answer in time".to_owned())))
+        .collect())
 }
