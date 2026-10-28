@@ -949,13 +949,25 @@ mod tests {
             .get("person_input_idle_ms")
             .is_none());
 
+        let now = std::time::Instant::now();
+        let terminal = app.state.terminals.get_mut(&terminal_id).unwrap();
+        terminal.last_agent_state_change_at = Some(now - Duration::from_secs(10));
+        terminal.last_person_input_at = Some(now - Duration::from_secs(5));
+        let agent = list(&mut app);
+        let idle = agent.person_input_idle_ms.unwrap();
+        assert!((5_000..60_000).contains(&idle), "{idle}");
+        assert!(
+            agent.person_input_pending,
+            "typed after the last state change"
+        );
+
+        // Submitting starts the agent, which changes its state.
         app.state
             .terminals
             .get_mut(&terminal_id)
             .unwrap()
-            .last_person_input_at = Some(std::time::Instant::now() - Duration::from_secs(5));
-        let idle = list(&mut app).person_input_idle_ms.unwrap();
-        assert!((5_000..60_000).contains(&idle), "{idle}");
+            .last_agent_state_change_at = Some(now);
+        assert!(!list(&mut app).person_input_pending);
     }
 
     #[test]

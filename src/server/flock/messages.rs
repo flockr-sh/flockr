@@ -30,9 +30,9 @@ use crate::server::mobile::RateWindow;
 
 /// How long a notified agent has before it is reminded.
 const RENOTIFY_SECS: u64 = 300;
-/// A person who typed into the agent's pane this recently may have a draft
-/// in its prompt; the notice waits.
-const PERSON_TYPING_MS: u64 = 60_000;
+/// A person typed into the agent's pane since it last changed state, so its
+/// prompt may hold their draft; the notice waits this long at most.
+const PERSON_DRAFT_HOLD_MS: u64 = 600_000;
 const DEFAULT_WAIT_MS: u64 = 600_000;
 const MAX_WAIT_MS: u64 = 3_600_000;
 
@@ -647,11 +647,17 @@ impl Messages {
                 senders.dedup();
                 senders
             };
+            let from_agent = due.iter().any(|entry| entry.message.from.agent.is_some());
             let notice = format!(
-                "[flockr] {} unread message{} from {} (another agent, not your user). Read with: flockr message read",
+                "[flockr] {} unread message{} from {}{}. Read with: flockr message read",
                 due.len(),
                 if due.len() == 1 { "" } else { "s" },
-                senders.join(", ")
+                senders.join(", "),
+                if from_agent {
+                    " (not from your user)"
+                } else {
+                    ""
+                }
             );
             match self
                 .api("agent.prompt", json!({ "target": target, "text": notice }))
@@ -672,15 +678,16 @@ impl Messages {
     }
 
     /// Whether the agent is cleanly idle: idle or done, in the same terminal
-    /// the messages were sent to, and nobody typed into it lately.
+    /// the messages were sent to, and without a person's unsent draft.
     async fn idle(&self, target: &str, terminal: &str) -> bool {
         let Ok(response) = self.api("agent.get", json!({ "target": target })).await else {
             return false;
         };
         let agent = &response["result"]["agent"];
-        let person_typing = agent["person_input_idle_ms"]
-            .as_u64()
-            .is_some_and(|idle| idle < PERSON_TYPING_MS);
+        let person_typing = agent["person_input_pending"] == true
+            && agent["person_input_idle_ms"]
+                .as_u64()
+                .is_some_and(|idle| idle < PERSON_DRAFT_HOLD_MS);
         agent["terminal_id"] == terminal
             && matches!(agent["agent_status"].as_str(), Some("idle" | "done"))
             && !person_typing

@@ -168,6 +168,9 @@ pub struct TerminalState {
     /// When a person last typed into this terminal from a client, an attached
     /// terminal or the phone. Agent messages wait while someone is typing.
     pub last_person_input_at: Option<Instant>,
+    /// When the agent's state last changed; a person's input after it may be
+    /// an unsent draft in the agent's prompt.
+    pub last_agent_state_change_at: Option<Instant>,
 }
 
 /// The options an agent process was started with, kept per agent so a resume
@@ -219,6 +222,7 @@ impl TerminalState {
             agent_launch_args: None,
             foreground_process: None,
             last_person_input_at: None,
+            last_agent_state_change_at: None,
         }
     }
 

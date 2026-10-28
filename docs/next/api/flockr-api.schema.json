@@ -6817,6 +6817,10 @@
                 "null"
               ]
             },
+            "person_input_pending": {
+              "description": "A person typed into the agent's terminal since its state last\nchanged, so its prompt may hold their unsent draft.",
+              "type": "boolean"
+            },
             "revision": {
               "format": "uint64",
               "minimum": 0,

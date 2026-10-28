@@ -571,6 +571,7 @@ impl AppState {
         // A new completion makes clients project the agent as done again.
         self.next_agent_state_change_seq += 1;
         terminal.last_agent_state_change_seq = Some(self.next_agent_state_change_seq);
+        terminal.last_agent_state_change_at = Some(Instant::now());
         terminal.last_agent_completion_seq = Some(self.next_agent_state_change_seq);
         if self.pane_is_in_active_tab(ws_idx, pane_id) {
             self.view_active_tab(Instant::now());
@@ -2250,6 +2251,7 @@ impl AppState {
                 .clone();
             if let Some(terminal) = self.terminals.get_mut(&terminal_id) {
                 terminal.last_agent_state_change_seq = Some(seq);
+                terminal.last_agent_state_change_at = Some(Instant::now());
                 terminal.last_agent_completion_seq = completion.then_some(seq);
             }
         }

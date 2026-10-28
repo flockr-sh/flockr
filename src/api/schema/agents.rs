@@ -258,6 +258,10 @@ pub struct AgentInfo {
     /// absent when nobody has since the server started.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub person_input_idle_ms: Option<u64>,
+    /// A person typed into the agent's terminal since its state last
+    /// changed, so its prompt may hold their unsent draft.
+    #[serde(default, skip_serializing_if = "super::is_false")]
+    pub person_input_pending: bool,
     pub revision: u64,
 }
 
