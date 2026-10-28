@@ -313,6 +313,11 @@ export class Subscription {
     return this.client.input(kind, { sub: this.sub }, value);
   }
 
+  /** Attach an image (base64 bytes): the server saves it and pastes its path. */
+  image(format: string, data: string): Promise<number> {
+    return this.client.image({ sub: this.sub }, format, data);
+  }
+
   unsubscribe(): void {
     this.client.unsubscribe(this);
   }
@@ -795,6 +800,13 @@ export class GatewayClient {
     const ms = this.clock() - t0;
     this.inputRtt.add(ms);
     return ms;
+  }
+
+  /** `input.image`; needs the `input.image` feature. */
+  async image(where: { sub: number } | { target: string }, format: string, data: string): Promise<number> {
+    const t0 = this.clock();
+    await this.call({ t: 'input.image', ...where, format, data }, 'input.ok', 30000);
+    return this.clock() - t0;
   }
 
   // --- push, app state, device (9.7-9.9) ---
