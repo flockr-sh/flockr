@@ -14,3 +14,4 @@ android/
 .env*.local
 coverage/
 .DS_Store
+public/canvaskit.wasm

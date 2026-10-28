@@ -1,7 +1,7 @@
 // Draws a Subscription's grid with Skia and handles touch scroll, pan and pinch.
 import { SkiaPictureView, SkPicture, useFont } from '@shopify/react-native-skia';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { LayoutChangeEvent, PanResponder, Pressable, StyleSheet, Text, View } from 'react-native';
+import { LayoutChangeEvent, PanResponder, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Subscription, Window } from '../protocol';
 import { colors } from '../state/ui';
 import { Metrics, TerminalRenderer } from './renderer';
@@ -121,7 +121,11 @@ export function TerminalView({ sub, fitWidth, zoom, onZoom, onLayout, stats, deb
     });
     const api = (globalThis as unknown as { SkiaViewApi?: SkiaViewApiT }).SkiaViewApi;
     const native = viewRef.current;
-    if (api && native) {
+    const web = native as unknown as { setPicture?: (picture: SkPicture) => void } | null;
+    if (Platform.OS === 'web' && web?.setPicture) {
+      // The web view has no native id; it takes the picture directly.
+      web.setPicture(pic);
+    } else if (api && native) {
       // Skip a React render: hand the picture straight to the native view.
       api.setJsiProperty(native.nativeId, 'picture', pic);
       native.redraw();
@@ -200,6 +204,20 @@ export function TerminalView({ sub, fitWidth, zoom, onZoom, onLayout, stats, deb
   useEffect(() => {
     if (renderer && size.width > 0) onLayout?.({ width: size.width, height: size.height, metrics: renderer.metrics });
   }, [renderer, size, onLayout]);
+
+  // On the web, onLayout doesn't fire for this view; watch its element instead.
+  const container = useRef<unknown>(null);
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !renderer || typeof ResizeObserver === 'undefined') return;
+    const element = container.current as unknown as Element | null;
+    if (!element) return;
+    const observer = new ResizeObserver(([entry]) => {
+      const { width, height } = entry.contentRect;
+      handleLayout({ nativeEvent: { layout: { x: 0, y: 0, width, height } } } as LayoutChangeEvent);
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [renderer, handleLayout]);
 
   // Gestures: one finger vertical = wheel scroll (the app's own scrolling or
   // the server viewport's scrollback), horizontal =
@@ -350,7 +368,7 @@ export function TerminalView({ sub, fitWidth, zoom, onZoom, onLayout, stats, deb
   }
 
   return (
-    <View style={styles.fill} onLayout={handleLayout}>
+    <View ref={container as never} style={styles.fill} onLayout={handleLayout}>
       <View style={styles.fill} {...responder.panHandlers}>
         <SkiaPictureView ref={viewRef} style={styles.fill} picture={fallbackPicture} debug={debug} opaque />
       </View>
