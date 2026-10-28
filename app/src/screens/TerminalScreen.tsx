@@ -17,7 +17,8 @@ import { completionToMarkRead, isTransportError, MARK_READ_DELAY_MS } from '../s
 import type { Nav } from '../state/nav';
 import { colors, ui } from '../state/ui';
 import { GatewayClient, GatewayError, gridText, InputKind, linkAt, Subscription, SurfaceMode } from '../protocol';
-import { Composer } from '../terminal/Composer';
+import { canAttachImages, pickImage } from '../terminal/attachImage';
+import { Composer, ComposerHandle } from '../terminal/Composer';
 import { PerfOverlay } from '../terminal/PerfOverlay';
 import { TextSheet } from '../terminal/TextSheet';
 import { BASE_FONT_SIZE, makeViewStats, TerminalLayout, TerminalView } from '../terminal/TerminalView';
@@ -49,6 +50,7 @@ export function TerminalScreen({ nav, serverId, paneId, title }: Props) {
   const viewStats = useRef(makeViewStats()).current;
   const insets = useSafeAreaInsets();
   const [keyboardOpen, setKeyboardOpen] = useState(false);
+  const composer = useRef<ComposerHandle>(null);
 
   // Viewing a done agent marks it read on every device, once per completion.
   const { msg: agentsMsg } = useAgents(client);
@@ -147,8 +149,23 @@ export function TerminalScreen({ nav, serverId, paneId, title }: Props) {
     }
   };
 
+  const attachImage = useCallback(async () => {
+    if (!sub) return;
+    try {
+      const image = await pickImage();
+      if (!image) return;
+      setNotice('Attaching image…');
+      await sub.image(image.format, image.data);
+      setNotice('Image attached');
+    } catch (e) {
+      setNotice(null);
+      setLastError(String((e as Error).message ?? e));
+    }
+  }, [sub]);
+
   const onTapCell = useCallback(
     (col: number, row: number) => {
+      composer.current?.tapTerminal();
       const url = sub ? linkAt(sub.grid, col, row) : null;
       if (!url) return;
       Alert.alert('Open link?', url, [
@@ -239,11 +256,15 @@ export function TerminalScreen({ nav, serverId, paneId, title }: Props) {
             />
           </View>
           <Composer
+            ref={composer}
             disabled={!sub || !!ended}
             onSubmit={(t) => send('submit', t)}
             onPaste={(t) => send('paste', t)}
+            onText={(t) => send('text', t)}
             onKeys={(k) => send('key', k)}
             bottomInset={keyboardOpen ? 0 : insets.bottom}
+            keyboardOpen={keyboardOpen}
+            onAttach={client?.hasFeature('input.image') && canAttachImages() ? attachImage : undefined}
           />
         </View>
         <TextSheet title={sheet?.title ?? ''} lines={sheet?.lines ?? null} onClose={() => setSheet(null)} />
