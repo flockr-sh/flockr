@@ -14,6 +14,8 @@
   client or phone now clears its done badge everywhere.
 - `agent.list` and `agent.get` report the agent's `branch` and whether its
   session is still empty (`session_empty`).
+- The phone app can attach images. The gateway saves each one like a
+  desktop clipboard image paste and pastes its path into the pane.
 
 ### Fixed
 - The TUI client stays attached across `flockr server live-handoff`. It

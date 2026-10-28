@@ -345,7 +345,7 @@ Size limits:
 
 | Direction | Message | Max |
 |---|---|---|
-| client → server | `input.paste`, `input.submit`, `input.text` | 1 MiB (matches `MAX_INPUT_PAYLOAD`) |
+| client → server | `input.paste`, `input.submit`, `input.text`, `input.image` | 1 MiB (matches `MAX_INPUT_PAYLOAD`) |
 | client → server | anything else | 64 KiB |
 | server → client | any message | 4 MiB |
 
@@ -443,6 +443,8 @@ MUST NOT depend on a feature the server did not list. v2 servers list:
   The app MUST still handle `shift` whenever it is present.
 - `"surface.wheel"` if the server takes `surface.wheel` (section 9.4).
   Without it the app scrolls with `surface.scroll` only.
+- `"input.image"` if the server takes `input.image` (section 9.6).
+  Without it the app hides image attach.
 
 ### 8.4 Server checks
 
@@ -483,7 +485,7 @@ Auth path:
     "boot_id": "b-7f3a..."
   },
   "device": { "device_id": "d_q8Zt3mVfR1xKp0aB", "name": "Dylan's iPhone", "token": "fmd1_..." },
-  "features": ["api", "agents.watch", "surface", "surface.history", "input", "push.expo", "surface.shift", "surface.wheel"],
+  "features": ["api", "agents.watch", "surface", "surface.history", "input", "push.expo", "surface.shift", "surface.wheel", "input.image"],
   "methods": ["agent.list", "agent.get", "..."],
   "limits": {
     "max_in_flight": 2,
@@ -759,6 +761,7 @@ like `surface.subscribe`).
 { "t": "input.key",    "id": "i2", "sub": 1, "keys": ["ctrl+c"] }
 { "t": "input.paste",  "id": "i3", "sub": 1, "text": "multi\nline" }
 { "t": "input.submit", "id": "i4", "sub": 1, "text": "fix the failing test" }
+{ "t": "input.image",  "id": "i5", "sub": 1, "format": "jpg", "data": "ZmxvY2ty" }
 ```
 
 `id` is optional; when present the server replies
@@ -770,6 +773,7 @@ only.
 | `input.text` | Typed text, no paste brackets (each soft-keyboard commit). | `ClientPaneInputEvent::TextCommit` through `apply_client_pane_input_events` (`src/server/pane_input.rs`). |
 | `input.key` | Named keys, in order. | `pane.send_keys` (same key grammar as `flockr pane send-keys`, encoded by `encode_api_keys` so kitty keyboard mode is honored). |
 | `input.paste` | Paste; wrapped in paste brackets when the program in the pane enabled bracketed paste. | `pane.send_text`. |
+| `input.image` | Attached image: `data` is base64 image bytes, `format` the file extension (`png`, `jpg`, `gif`, `webp`, `bmp`; anything else is saved as `png`). The 1 MiB limit applies to the whole message, so the app downsizes photos first. | Staged like a desktop clipboard image paste (`src/server/clipboard_image.rs`, removed after 24 h), then the file path goes in as a paste (`ClientPaneInputEvent::Paste`), so agents that take image paths attach it. |
 | `input.submit` | Composer "send": text as paste, then Enter. | `pane.send_input` with `keys: ["Enter"]` set explicitly (the JSON default for `keys` is empty; only the CLI defaults to Enter). |
 
 Key names (`config::parse_key_combo` grammar, lower case): `enter`, `esc`,

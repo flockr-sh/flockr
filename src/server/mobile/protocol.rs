@@ -205,6 +205,11 @@ pub(crate) enum InputKind {
     Key(Vec<String>),
     Paste(String),
     Submit(String),
+    /// Image bytes to stage as a file whose path is pasted into the pane.
+    Image {
+        format: String,
+        data: Vec<u8>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -227,6 +232,10 @@ struct InputWire {
     text: Option<String>,
     #[serde(default)]
     keys: Option<Vec<String>>,
+    #[serde(default)]
+    format: Option<String>,
+    #[serde(default)]
+    data: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -343,7 +352,7 @@ impl ClientMessage {
             "surface.wheel" => Self::SurfaceWheel(typed(value)?),
             "surface.history" => Self::SurfaceHistory(typed(value)?),
             "surface.unsubscribe" => Self::SurfaceUnsubscribe(typed(value)?),
-            "input.text" | "input.key" | "input.paste" | "input.submit" => {
+            "input.text" | "input.key" | "input.paste" | "input.submit" | "input.image" => {
                 let id = id_of(&value);
                 let wire: InputWire = typed(value)?;
                 let bad = |message: &str| DecodeError::BadRequest {
@@ -360,6 +369,18 @@ impl ClientMessage {
                             return Err(bad("`keys` is empty"));
                         }
                         InputKind::Key(keys)
+                    }
+                    "input.image" => {
+                        use base64::Engine as _;
+                        let format = wire.format.ok_or_else(|| bad("`format` is required"))?;
+                        let data = wire.data.ok_or_else(|| bad("`data` is required"))?;
+                        let data = base64::engine::general_purpose::STANDARD
+                            .decode(data)
+                            .map_err(|_| bad("`data` is not base64"))?;
+                        if data.is_empty() {
+                            return Err(bad("`data` is empty"));
+                        }
+                        InputKind::Image { format, data }
                     }
                     other => {
                         let text = wire.text.ok_or_else(|| bad("`text` is required"))?;
@@ -564,6 +585,36 @@ mod tests {
         };
         assert_eq!(subscribe.mode, SurfaceMode::Unknown);
         assert_eq!(subscribe.max_fps(), 60);
+    }
+
+    #[test]
+    fn input_image_decodes_base64_data() {
+        assert_eq!(
+            ClientMessage::decode(&fixture("client.input.image.json")).unwrap(),
+            ClientMessage::Input(Input {
+                id: Some("i5".into()),
+                sub: Some(1),
+                target: None,
+                kind: InputKind::Image {
+                    format: "jpg".into(),
+                    data: b"flockr".to_vec(),
+                },
+            })
+        );
+        for bad in [
+            r#"{"t":"input.image","id":"i1","sub":1,"data":"ZmxvY2ty"}"#,
+            r#"{"t":"input.image","id":"i1","sub":1,"format":"png"}"#,
+            r#"{"t":"input.image","id":"i1","sub":1,"format":"png","data":"not base64!"}"#,
+            r#"{"t":"input.image","id":"i1","sub":1,"format":"png","data":""}"#,
+        ] {
+            assert!(
+                matches!(
+                    ClientMessage::decode(bad),
+                    Err(DecodeError::BadRequest { id: Some(ref id), .. }) if id == "i1"
+                ),
+                "{bad}"
+            );
+        }
     }
 
     #[test]

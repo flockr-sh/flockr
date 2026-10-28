@@ -1235,6 +1235,38 @@ impl Conn {
         }
     }
 
+    /// Applies one input event to a terminal through the server loop.
+    async fn pane_input(
+        &self,
+        target: String,
+        event: ClientPaneInputEvent,
+    ) -> Result<(), (ErrorCode, String)> {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        let sent = self
+            .gateway
+            .server_event_tx
+            .send(ServerEvent::MobilePaneInput {
+                target,
+                events: vec![event],
+                reply: reply_tx,
+            })
+            .await;
+        if sent.is_err() {
+            return Err((
+                ErrorCode::ServerUnavailable,
+                "server loop is gone".to_owned(),
+            ));
+        }
+        match reply_rx.await {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(message)) => Err((ErrorCode::NotFound, message)),
+            Err(_) => Err((
+                ErrorCode::ServerUnavailable,
+                "server did not answer".to_owned(),
+            )),
+        }
+    }
+
     async fn input(&mut self, input: protocol::Input) {
         let id = input.id.as_deref();
         let (pane_target, terminal_target) = match (input.sub, &input.target) {
@@ -1253,31 +1285,32 @@ impl Conn {
         };
         let result = match input.kind {
             InputKind::Text(text) => {
-                let (reply_tx, reply_rx) = oneshot::channel();
-                let sent = self
-                    .gateway
-                    .server_event_tx
-                    .send(ServerEvent::MobilePaneInput {
-                        target: terminal_target,
-                        events: vec![ClientPaneInputEvent::TextCommit(text)],
-                        reply: reply_tx,
-                    })
-                    .await;
-                if sent.is_err() {
-                    self.error(id, ErrorCode::ServerUnavailable, "server loop is gone");
+                let event = ClientPaneInputEvent::TextCommit(text);
+                if let Err((code, message)) = self.pane_input(terminal_target, event).await {
+                    self.error(id, code, message);
                     return;
                 }
-                match reply_rx.await {
-                    Ok(Ok(())) => Ok(()),
-                    Ok(Err(message)) => {
-                        self.error(id, ErrorCode::NotFound, message);
+                Ok(())
+            }
+            InputKind::Image { format, data } => {
+                // Same staging as a desktop clipboard image paste: the agent
+                // in the pane gets the file path as a paste.
+                let staged = match crate::server::clipboard_image::stage(0, &format, &data) {
+                    Ok(staged) => staged,
+                    Err(err) => {
+                        warn!(err = %err, "failed to stage mobile image");
+                        self.error(id, ErrorCode::Internal, "could not save the image");
                         return;
                     }
-                    Err(_) => {
-                        self.error(id, ErrorCode::ServerUnavailable, "server did not answer");
-                        return;
-                    }
+                };
+                info!(bytes = data.len(), path = %staged.paste_text, "staged mobile image");
+                let event = ClientPaneInputEvent::Paste(staged.paste_text);
+                if let Err((code, message)) = self.pane_input(terminal_target, event).await {
+                    crate::server::clipboard_image::remove_files(vec![staged.path]);
+                    self.error(id, code, message);
+                    return;
                 }
+                Ok(())
             }
             InputKind::Key(keys) => self
                 .call(

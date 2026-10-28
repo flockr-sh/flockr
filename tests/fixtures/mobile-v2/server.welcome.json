@@ -20,7 +20,8 @@
     "input",
     "push.expo",
     "surface.shift",
-    "surface.wheel"
+    "surface.wheel",
+    "input.image"
   ],
   "methods": [
     "agent.list",

@@ -316,6 +316,7 @@ impl Gateway {
             "surface.shift",
             "surface.wheel",
             "input",
+            "input.image",
         ];
         if self.push.enabled {
             features.push("push.expo");
