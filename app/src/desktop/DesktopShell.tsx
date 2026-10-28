@@ -7,7 +7,14 @@ import { statusText, useAgents, useClientStatus, useServers, useTerminals } from
 import type { Nav } from '../state/nav';
 import { repairReason, repairShort, StoredServer } from '../state/storage';
 import { colors, statusColor } from '../state/ui';
-import { agentDetail, type AgentRow, type ConnStatus, type TerminalRow } from '../protocol';
+import {
+  agentDetail,
+  normalizeStatus,
+  type AgentRow,
+  type ConnStatus,
+  type TerminalRow,
+  type WorkspaceInfo,
+} from '../protocol';
 import { PairScreen } from '../screens/PairScreen';
 import { TerminalScreen } from '../screens/TerminalScreen';
 
@@ -348,28 +355,117 @@ function MachineGroup({
       </Pressable>
       {open && !repair ? (
         <View style={side.children}>
-          {rows.map((row) => (
-            <AgentItem
-              key={row.agent.pane_id}
-              row={row}
-              active={isSelected(row.agent.pane_id)}
-              onPress={() => select(row.agent.pane_id, row.name, row.workspaceLabel, row.tabLabel)}
-            />
-          ))}
-          {loaded && rows.length === 0 ? <Text style={side.none}>No agents</Text> : null}
-          {terminals.rows.length > 0 ? <Text style={side.sub}>Terminals</Text> : null}
-          {terminals.rows.map((row) => (
-            <TerminalItem
-              key={row.pane.pane_id}
-              row={row}
-              active={isSelected(row.pane.pane_id)}
-              onPress={() => select(row.pane.pane_id, row.title, row.workspaceLabel, row.tabLabel)}
-            />
-          ))}
+          {(msg?.workspaces ?? [])
+            .slice()
+            .sort((a, b) => a.number - b.number)
+            .map((ws) => (
+              <WorkspaceGroup
+                key={ws.workspace_id}
+                workspace={ws}
+                agents={rows.filter((r) => r.agent.workspace_id === ws.workspace_id)}
+                terminals={terminals.rows.filter((t) => t.pane.workspace_id === ws.workspace_id)}
+                isSelected={isSelected}
+                onSelect={select}
+              />
+            ))}
+          {loaded && (msg?.workspaces ?? []).length === 0 ? <Text style={side.none}>No workspaces</Text> : null}
         </View>
       ) : null}
     </View>
   );
+}
+
+function WorkspaceGroup({
+  workspace,
+  agents,
+  terminals,
+  isSelected,
+  onSelect,
+}: {
+  workspace: WorkspaceInfo;
+  agents: AgentRow[];
+  terminals: TerminalRow[];
+  isSelected: (paneId: string) => boolean;
+  onSelect: (paneId: string, title: string, workspace: string, tab: string) => void;
+}) {
+  const [open, setOpen] = useState(agents.length > 0);
+  const [shellsOpen, setShellsOpen] = useState(false);
+  const branch = agents.find((a) => a.branch)?.branch;
+  const hasSelected =
+    agents.some((a) => isSelected(a.agent.pane_id)) || terminals.some((t) => isSelected(t.pane.pane_id));
+  const status = normalizeStatus(workspace.agent_status);
+  return (
+    <View>
+      <Pressable
+        accessibilityRole="button"
+        onPress={() => setOpen(!open)}
+        style={(state) => [
+          side.workspace,
+          !open && hasSelected && side.itemActive,
+          (state as { hovered?: boolean }).hovered && side.rowHover,
+        ]}
+      >
+        <StatusDot status={status} />
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text style={side.workspaceName} numberOfLines={1}>
+            <Text style={side.workspaceNumber}>{workspace.number} </Text>
+            {workspace.label}
+          </Text>
+          {branch ? (
+            <Text style={side.branch} numberOfLines={1}>
+              {branch}
+            </Text>
+          ) : null}
+        </View>
+        {!open && agents.length + terminals.length > 0 ? (
+          <Text style={side.count}>{agents.length + terminals.length}</Text>
+        ) : null}
+      </Pressable>
+      {open ? (
+        <View style={side.wsChildren}>
+          {agents.map((row) => (
+            <AgentItem
+              key={row.agent.pane_id}
+              row={row}
+              active={isSelected(row.agent.pane_id)}
+              onPress={() => onSelect(row.agent.pane_id, row.name, row.workspaceLabel, row.tabLabel)}
+            />
+          ))}
+          {terminals.length > 0 ? (
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => setShellsOpen(!shellsOpen)}
+              style={(state) => [side.shellToggle, (state as { hovered?: boolean }).hovered && side.rowHover]}
+            >
+              <Text style={side.prompt}>›_</Text>
+              <Text style={side.shellToggleText}>
+                {terminals.length} {terminals.length === 1 ? 'terminal' : 'terminals'}
+              </Text>
+              <Text style={[side.chevron, shellsOpen && side.chevronOpen]}>›</Text>
+            </Pressable>
+          ) : null}
+          {shellsOpen || terminals.some((t) => isSelected(t.pane.pane_id))
+            ? terminals.map((row) => (
+                <TerminalItem
+                  key={row.pane.pane_id}
+                  row={row}
+                  active={isSelected(row.pane.pane_id)}
+                  onPress={() => onSelect(row.pane.pane_id, shellLabel(row), row.workspaceLabel, row.tabLabel)}
+                />
+              ))
+            : null}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+/** A shell by its folder (`~/Projects/x`), unless it set a title of its own. */
+function shellLabel(row: TerminalRow): string {
+  const title = row.title.trim();
+  const cwd = (row.pane.foreground_cwd || row.cwd || '').replace(/^\/home\/[^/]+/, '~');
+  if (title && title.toLowerCase() !== 'shell' && !title.includes('@')) return title;
+  return cwd || title || 'Shell';
 }
 
 function StatusDot({ status }: { status: AgentRow['status'] }) {
@@ -423,7 +519,7 @@ function TerminalItem({ row, active, onPress }: { row: TerminalRow; active: bool
     >
       <Text style={side.prompt}>›_</Text>
       <Text style={[side.itemName, side.terminalName, active && { color: colors.text }]} numberOfLines={1}>
-        {row.title}
+        {shellLabel(row)}
       </Text>
     </Pressable>
   );
@@ -452,7 +548,10 @@ function Overview({
   return (
     <ScrollView contentContainerStyle={over.page}>
       <Text style={over.hero}>Your agents</Text>
-      <Text style={over.lead}>Pick an agent to open its terminal. Blocked and finished ones come first.</Text>
+      <Text style={over.lead}>
+        Pick an agent to open its terminal. Each machine lists agents that need you first (blocked, then finished), then
+        working, then idle.
+      </Text>
       <View style={over.grid}>
         {servers.map((server) => (
           <MachineCard key={server.server_id} server={server} onSelect={onSelect} />
@@ -482,7 +581,7 @@ function MachineCard({ server, onSelect }: { server: StoredServer; onSelect: (s:
         </Text>
       </View>
       {sorted.length === 0 ? <Text style={over.cardEmpty}>{repair ? '' : 'No agents running.'}</Text> : null}
-      {sorted.slice(0, 6).map((row) => (
+      {sorted.map((row) => (
         <Pressable
           key={row.agent.pane_id}
           accessibilityRole="button"
@@ -498,10 +597,10 @@ function MachineCard({ server, onSelect }: { server: StoredServer; onSelect: (s:
         >
           <StatusDot status={row.status} />
           <Text style={over.agentName} numberOfLines={1}>
-            {row.name}
+            {row.workspaceLabel}
           </Text>
           <Text style={over.agentWhere} numberOfLines={1}>
-            {row.agent.terminal_title_stripped || row.workspaceLabel}
+            {row.agent.terminal_title_stripped || row.name}
           </Text>
           <Text style={[over.badge, { color: statusColor[row.status] }]}>{row.status}</Text>
         </Pressable>
@@ -595,7 +694,28 @@ const side = StyleSheet.create({
     borderRadius: 6,
     backgroundColor: '#161821',
   },
-  children: { paddingLeft: 14, gap: 1 },
+  children: { paddingLeft: 10, gap: 1 },
+  workspace: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  workspaceName: { color: '#c9cdd8', fontSize: 13.5, fontWeight: '600' },
+  workspaceNumber: { color: '#5d6375', fontWeight: '600' },
+  branch: { color: '#5d6375', fontSize: 11.5, marginTop: 1 },
+  wsChildren: { paddingLeft: 16, gap: 1, marginBottom: 4 },
+  shellToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+  },
+  shellToggleText: { flex: 1, color: '#6f7587', fontSize: 12.5 },
   item: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -656,7 +776,7 @@ const over = StyleSheet.create({
     borderRadius: 8,
   },
   agentHover: { backgroundColor: '#1b1e27' },
-  agentName: { color: '#d6d9e2', fontSize: 13.5, fontWeight: '600', width: 120 },
+  agentName: { color: '#d6d9e2', fontSize: 13.5, fontWeight: '600', width: 150 },
   agentWhere: { color: '#6f7587', fontSize: 12.5, flex: 1 },
   badge: { fontSize: 11.5, fontWeight: '600', textTransform: 'capitalize' },
 });
