@@ -165,6 +165,9 @@ pub struct TerminalState {
     pub agent_launch_args: Option<AgentLaunchArgs>,
     /// Process name of the foreground job's leader, e.g. "nvim".
     pub foreground_process: Option<String>,
+    /// When a person last typed into this terminal from a client, an attached
+    /// terminal or the phone. Agent messages wait while someone is typing.
+    pub last_person_input_at: Option<Instant>,
 }
 
 /// The options an agent process was started with, kept per agent so a resume
@@ -215,6 +218,7 @@ impl TerminalState {
             restore_error: None,
             agent_launch_args: None,
             foreground_process: None,
+            last_person_input_at: None,
         }
     }
 

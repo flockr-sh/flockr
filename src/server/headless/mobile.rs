@@ -103,7 +103,11 @@ impl HeadlessServer {
             .runtime_for_terminal_id_string(&terminal_id)
             .ok_or_else(|| format!("terminal {terminal_id} not found"))?;
         runtime.scroll_reset();
-        apply_client_pane_input_events(runtime, events).map(|_| ())
+        apply_client_pane_input_events(runtime, events)?;
+        if let Some(terminal_id) = self.terminal_id_by_string(&terminal_id) {
+            self.note_person_input(&terminal_id);
+        }
+        Ok(())
     }
 
     pub(super) fn apply_mobile_pane_wheel(

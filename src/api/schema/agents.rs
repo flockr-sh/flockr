@@ -254,6 +254,10 @@ pub struct AgentInfo {
     /// The agent's fresh session has not been used yet.
     #[serde(default, skip_serializing_if = "super::is_false")]
     pub session_empty: bool,
+    /// Milliseconds since a person last typed into the agent's terminal;
+    /// absent when nobody has since the server started.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub person_input_idle_ms: Option<u64>,
     pub revision: u64,
 }
 

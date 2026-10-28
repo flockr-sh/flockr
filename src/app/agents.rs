@@ -420,6 +420,9 @@ impl App {
                 .get(pane_state.attached_terminal_id.as_str())
                 .and_then(|work| work.branch.clone()),
             session_empty: pane_state.session_empty(),
+            person_input_idle_ms: terminal
+                .last_person_input_at
+                .map(|at| u64::try_from(at.elapsed().as_millis()).unwrap_or(u64::MAX)),
             revision: pane.revision,
         })
     }

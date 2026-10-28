@@ -6808,6 +6808,15 @@
             "pane_id": {
               "type": "string"
             },
+            "person_input_idle_ms": {
+              "description": "Milliseconds since a person last typed into the agent's terminal;\nabsent when nobody has since the server started.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
             "revision": {
               "format": "uint64",
               "minimum": 0,

@@ -394,7 +394,7 @@ impl HeadlessServer {
         })
     }
 
-    fn terminal_id_for_pane(
+    pub(super) fn terminal_id_for_pane(
         &self,
         pane_id: crate::layout::PaneId,
     ) -> Option<&crate::terminal::TerminalId> {

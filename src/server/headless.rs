@@ -1126,6 +1126,13 @@ impl HeadlessServer {
             .cloned()
     }
 
+    /// Records that a person typed into `terminal_id`.
+    fn note_person_input(&mut self, terminal_id: &crate::terminal::TerminalId) {
+        if let Some(terminal) = self.app.state.terminals.get_mut(terminal_id) {
+            terminal.last_person_input_at = Some(Instant::now());
+        }
+    }
+
     fn runtime_for_terminal_id_string(
         &self,
         terminal_id: &str,
@@ -2124,6 +2131,9 @@ impl HeadlessServer {
                         warn!(client_id, terminal_id = %terminal_id, err = %err);
                     }
                 }
+                if let Some(terminal_id) = self.terminal_id_by_string(&terminal_id.clone()) {
+                    self.note_person_input(&terminal_id);
+                }
                 true
             }
             ServerEvent::ClientPasteRejected {
@@ -2472,6 +2482,9 @@ impl HeadlessServer {
                 let scroll_changed = runtime.scroll_metrics() != scroll_before;
                 if keyboard_forwarded {
                     self.note_interactive_input(runtime_pane_id, Instant::now());
+                    if let Some(terminal_id) = self.terminal_id_for_pane(runtime_pane_id).cloned() {
+                        self.note_person_input(&terminal_id);
+                    }
                 }
                 if let Err(err) = input_result {
                     warn!(client_id, pane_id, err = %err, "targeted client shell input failed");

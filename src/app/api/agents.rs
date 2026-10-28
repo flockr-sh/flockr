@@ -926,6 +926,39 @@ mod tests {
     }
 
     #[test]
+    fn agent_list_reports_how_long_since_a_person_typed() {
+        let mut app = app_with_agent();
+        let pane_id = app.state.workspaces[0].tabs[0].root_pane;
+        let terminal_id = app.state.workspaces[0].tabs[0].panes[&pane_id]
+            .attached_terminal_id
+            .clone();
+        let terminal = app.state.terminals.get_mut(&terminal_id).unwrap();
+        terminal.set_detected_state(Some(Agent::Claude), AgentState::Idle);
+        let list = |app: &mut App| {
+            let success: SuccessResponse =
+                serde_json::from_str(&app.handle_agent_list("req".into())).unwrap();
+            let ResponseResult::AgentList { mut agents } = success.result else {
+                panic!("expected agent list response");
+            };
+            agents.remove(0)
+        };
+        let agent = list(&mut app);
+        assert_eq!(agent.person_input_idle_ms, None);
+        assert!(serde_json::to_value(&agent)
+            .unwrap()
+            .get("person_input_idle_ms")
+            .is_none());
+
+        app.state
+            .terminals
+            .get_mut(&terminal_id)
+            .unwrap()
+            .last_person_input_at = Some(std::time::Instant::now() - Duration::from_secs(5));
+        let idle = list(&mut app).person_input_idle_ms.unwrap();
+        assert!((5_000..60_000).contains(&idle), "{idle}");
+    }
+
+    #[test]
     fn agent_list_reports_branch_and_empty_session() {
         let mut app = app_with_agent();
         let pane_id = app.state.workspaces[0].tabs[0].root_pane;
