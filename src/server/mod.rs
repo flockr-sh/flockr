@@ -9,6 +9,7 @@ pub(crate) mod client_shell_graphics;
 pub(crate) mod client_transport;
 pub(crate) mod clients;
 pub(crate) mod clipboard_image;
+pub(crate) mod flock;
 #[cfg(unix)]
 pub(crate) mod handoff;
 pub mod headless;

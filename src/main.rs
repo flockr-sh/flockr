@@ -24,6 +24,7 @@ mod config;
 mod copy_mode;
 mod detect;
 mod events;
+mod flock;
 use ghostty_vt as ghostty;
 mod handoff_runtime;
 mod input;
@@ -549,6 +550,21 @@ const DEFAULT_CONFIG: &str = r##"# flockr configuration
 # confirm_delay_ms = 5000
 # Optional Expo access token ("enhanced push security"), sent as a Bearer token.
 # expo_access_token = ""
+
+[flock]
+# Join this machine's server to a flock: several flockr servers that see each
+# other's agents without SSH. Off by default. Start a flock with
+# `flockr flock init`, add machines with `flockr flock invite` and
+# `flockr flock join`. Connections use Noise with keys checked against the
+# flock's signed member list. Binds only to the listed IP addresses (for
+# example a NetBird address); 0.0.0.0 and :: are rejected. All keys need a
+# server restart.
+# enabled = false
+# Literal IP addresses, optionally with a port: ["100.92.14.3", "[fd00::1]:47392"].
+# listen = []
+# port = 47392
+# This machine's name in the flock. Default: host name.
+# name = ""
 "##;
 
 // Bundled at build time so the printed skill always matches this binary's release.
@@ -944,6 +960,15 @@ mod tests {
             "# confirm_delay_ms = 5000",
             "# expo_access_token = \"\"",
         ] {
+            assert!(DEFAULT_CONFIG.contains(key), "{key}");
+        }
+    }
+
+    #[test]
+    fn default_config_parses_and_documents_flock_keys() {
+        let config: config::Config = toml::from_str(DEFAULT_CONFIG).unwrap();
+        assert!(!config.flock.enabled);
+        for key in ["[flock]", "# port = 47392", "# name = \"\""] {
             assert!(DEFAULT_CONFIG.contains(key), "{key}");
         }
     }

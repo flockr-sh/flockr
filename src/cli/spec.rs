@@ -3,6 +3,7 @@ use std::io::Write;
 use clap::{Arg, ArgAction, Command, ValueHint};
 
 mod completion;
+mod flock;
 mod machine;
 mod mobile;
 
@@ -37,6 +38,7 @@ pub(super) fn command() -> Command {
         .subcommand(channel_command())
         .subcommand(machine::command())
         .subcommand(mobile::command())
+        .subcommand(flock::command())
         .subcommand(server_command())
         .subcommand(api_command())
         .subcommand(workspace_command())

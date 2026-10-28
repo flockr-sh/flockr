@@ -329,6 +329,7 @@ pub struct Config {
     pub experimental: ExperimentalConfig,
     pub remote: RemoteConfig,
     pub mobile: MobileConfig,
+    pub flock: FlockConfig,
 }
 
 #[derive(Debug)]
@@ -1433,6 +1434,78 @@ fn parse_mobile_listen_entry(
     Ok(addr)
 }
 
+/// Default TCP port for flock connections between members.
+pub const DEFAULT_FLOCK_PORT: u16 = 47392;
+
+/// `[flock]`: the encrypted listener other members of this machine's flock
+/// connect to. Every key needs a server restart.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct FlockConfig {
+    /// Start the listener and connect to other members. Default: false.
+    pub enabled: bool,
+    /// Literal IP addresses to bind, optionally with `:port` (`[v6]:port`).
+    /// Unspecified addresses (`0.0.0.0`, `::`) and host names are rejected.
+    pub listen: Vec<String>,
+    /// Port for `listen` entries without one. Default: 47392.
+    pub port: u16,
+    /// This machine's name in the flock. Default: host name.
+    pub name: Option<String>,
+}
+
+impl Default for FlockConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            listen: Vec::new(),
+            port: DEFAULT_FLOCK_PORT,
+            name: None,
+        }
+    }
+}
+
+impl FlockConfig {
+    /// Parsed `listen` addresses plus one diagnostic per rejected entry.
+    pub fn listen_addrs(&self) -> (Vec<std::net::SocketAddr>, Vec<String>) {
+        let mut addrs = Vec::new();
+        let mut diagnostics = Vec::new();
+        for entry in &self.listen {
+            match parse_mobile_listen_entry(entry, self.port) {
+                Ok(addr) => {
+                    if !addrs.contains(&addr) {
+                        addrs.push(addr);
+                    }
+                }
+                Err(reason) => diagnostics.push(format!("flock.listen entry {entry:?} {reason}")),
+            }
+        }
+        (addrs, diagnostics)
+    }
+
+    /// Config warnings for `[flock]`.
+    pub fn diagnostics(&self) -> Vec<String> {
+        let (addrs, mut diagnostics) = self.listen_addrs();
+        if self.enabled && addrs.is_empty() {
+            diagnostics.push(
+                "flock.enabled is true but flock.listen has no usable address; this machine will not accept flock connections"
+                    .to_owned(),
+            );
+        }
+        diagnostics
+    }
+
+    /// This machine's name in the flock.
+    pub fn display_name(&self) -> String {
+        self.name
+            .as_deref()
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .map(str::to_owned)
+            .or_else(crate::platform::hostname)
+            .unwrap_or_else(|| "flockr".to_owned())
+    }
+}
+
 /// `[mobile.push]`: Expo push notifications for Blocked and Done agents.
 #[derive(Clone, Deserialize)]
 #[serde(default)]
@@ -1847,6 +1920,30 @@ expo_access_token = "secret"
         );
         assert_eq!(mobile.push.access_token(), Some("secret"));
         assert!(!format!("{:?}", mobile.push).contains("secret"));
+    }
+
+    #[test]
+    fn flock_config_parses_and_reports_bad_listen_entries() {
+        let default_config = Config::default();
+        assert!(!default_config.flock.enabled);
+        assert_eq!(default_config.flock.port, DEFAULT_FLOCK_PORT);
+        assert!(default_config.flock.diagnostics().is_empty());
+        let config: Config = toml::from_str(
+            "[flock]\nenabled = true\nlisten = [\"10.0.0.1\", \"0.0.0.0\", \"[fd00::1]:9\"]\nport = 5000\nname = \" tower \"\n",
+        )
+        .unwrap();
+        let (addrs, diagnostics) = config.flock.listen_addrs();
+        assert_eq!(
+            addrs,
+            vec![
+                "10.0.0.1:5000".parse().unwrap(),
+                "[fd00::1]:9".parse().unwrap()
+            ]
+        );
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(config.flock.display_name(), "tower");
+        let config: Config = toml::from_str("[flock]\nenabled = true\n").unwrap();
+        assert_eq!(config.flock.diagnostics().len(), 1);
     }
 
     #[test]

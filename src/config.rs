@@ -21,7 +21,7 @@ pub use self::{
         CustomCommandKeybind, IndexedKeybind, KeyCombo, Keybinds, LiveKeybindConfig,
     },
     model::{
-        validated_sidebar_bounds, Config, ConfigReloadReport, ConfigReloadStatus,
+        validated_sidebar_bounds, Config, ConfigReloadReport, ConfigReloadStatus, FlockConfig,
         HostCursorModeConfig, MobileConfig, MobilePushConfig, NewTerminalCwdConfig,
         PaneBordersConfig, SeenScopeConfig, ShellModeConfig, SidebarCollapsedModeConfig,
         SidebarPositionConfig, StatusIndicatorStyle, TabBarPositionConfig, ToastClipboardPosition,

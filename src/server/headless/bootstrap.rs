@@ -91,6 +91,7 @@ pub fn run_server() -> io::Result<()> {
         };
 
         let _mobile_gateway = start_mobile_gateway(&loaded_config.config, &server);
+        let _flock_node = crate::server::flock::start(&loaded_config.config.flock);
         info!(
             api_socket = %api::socket_path().display(),
             client_socket = %client_socket_path().display(),
@@ -226,6 +227,7 @@ fn run_handoff_import_server(socket_path: &Path, token: &str) -> io::Result<()> 
             warn!(err = %err, "failed to report handoff ownership; continuing as owner");
         }
         let _mobile_gateway = start_mobile_gateway(&loaded_config.config, &server);
+        let _flock_node = crate::server::flock::start(&loaded_config.config.flock);
         info!("handoff import server started");
         print_ready_message(&api::socket_path(), &client_socket_path());
         server.app.run_plugin_startup_hooks();
