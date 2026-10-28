@@ -28,6 +28,8 @@ const CALL_TIMEOUT: Duration = Duration::from_secs(15);
 const PING_INTERVAL: Duration = Duration::from_secs(20);
 pub(crate) const API_SERVICE: &str = "api";
 pub(crate) const FLOCK_SERVICE: &str = "flock";
+/// The TUI client protocol, piped to the member's client socket.
+pub(crate) const CLIENT_SERVICE: &str = "client";
 
 pub(crate) fn data_message(stream: u64, bytes: &[u8]) -> Value {
     json!({
@@ -152,23 +154,30 @@ async fn connect(dir: &Path) -> io::Result<Channel> {
     Ok(channel)
 }
 
-/// A local API socket whose connections go to a flock member's API through
-/// the hub. `flockr --machine <member>` points its API client here.
+/// A local socket whose connections go to a flock member's `service`
+/// through the hub. `flockr --machine <member>` points its API client here;
+/// the TUI connects to a member's client protocol the same way.
 pub(crate) struct FlockApiBridge {
     path: PathBuf,
     stop: Arc<AtomicBool>,
+    closed: Option<tokio::sync::oneshot::Sender<()>>,
 }
 
 impl FlockApiBridge {
     pub(crate) fn start(member: &Member) -> io::Result<Self> {
+        Self::start_service(&member.id, API_SERVICE)
+    }
+
+    pub(crate) fn start_service(member: &str, service: &str) -> io::Result<Self> {
         let dir = store::flock_dir();
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
         let channel = runtime.block_on(connect(&dir))?;
+        let unique = keys::new_id("")?;
         let path = crate::platform::remote_bridge_endpoint_path(
-            &format!("flockr-api-flock-{}-{}.sock", std::process::id(), member.id),
-            &format!("flockr-api-flock-{}.sock", std::process::id()),
+            &format!("flockr-flock-{}-{unique}.sock", std::process::id()),
+            &format!("flockr-flock-{}-{unique}.sock", std::process::id()),
         );
         let _ = std::fs::remove_file(&path);
         let listener = crate::ipc::bind_private_local_listener(&path)?;
@@ -185,6 +194,9 @@ impl FlockApiBridge {
                         let Ok(stream) = listener.accept() else {
                             continue;
                         };
+                        if stop.load(Ordering::Acquire) {
+                            return;
+                        }
                         let Ok(piped) = pipe::start(stream) else {
                             continue;
                         };
@@ -194,11 +206,17 @@ impl FlockApiBridge {
                     }
                 })?;
         }
-        let to = member.id.clone();
+        let (closed, close) = tokio::sync::oneshot::channel();
+        let to = member.to_owned();
+        let service = service.to_owned();
         std::thread::Builder::new()
             .name("flock-bridge".into())
-            .spawn(move || runtime.block_on(run_bridge(channel, streams, to)))?;
-        Ok(Self { path, stop })
+            .spawn(move || runtime.block_on(run_bridge(channel, streams, to, service, close)))?;
+        Ok(Self {
+            path,
+            stop,
+            closed: Some(closed),
+        })
     }
 
     pub(crate) fn socket_path(&self) -> &Path {
@@ -209,6 +227,11 @@ impl FlockApiBridge {
 impl Drop for FlockApiBridge {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Release);
+        if let Some(closed) = self.closed.take() {
+            let _ = closed.send(());
+        }
+        // Wakes the accept thread so it sees `stop` and exits.
+        let _ = crate::ipc::connect_local_stream(&self.path);
         let _ = std::fs::remove_file(&self.path);
     }
 }
@@ -219,6 +242,8 @@ async fn run_bridge(
     mut channel: Channel,
     mut streams: mpsc::Receiver<LocalStreamPair>,
     to: String,
+    service: String,
+    mut close: tokio::sync::oneshot::Receiver<()>,
 ) {
     let (from_local_tx, mut from_local) = mpsc::channel::<(u64, Option<Vec<u8>>)>(64);
     let mut writers: HashMap<u64, PipeWriter> = HashMap::new();
@@ -232,7 +257,8 @@ async fn run_bridge(
                 };
                 let stream = next_stream;
                 next_stream += 1;
-                if channel.send(&json!({ "t": "open", "s": stream, "to": to })).await.is_err() {
+                let open = json!({ "t": "open", "s": stream, "to": to, "service": service });
+                if channel.send(&open).await.is_err() {
                     break;
                 }
                 writers.insert(stream, writer);
@@ -290,6 +316,7 @@ async fn run_bridge(
                     break;
                 }
             }
+            _ = &mut close => break,
         }
     }
     channel.close().await;

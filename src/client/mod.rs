@@ -237,7 +237,7 @@ fn run_client_with_mode(
     info!(path = %socket_path.display(), "{log_message}");
 
     let endpoint_catalog = if client_rendered_shell && !is_remote_client_process() {
-        endpoint::EndpointCatalog::load().unwrap_or_else(|error| {
+        endpoint::EndpointCatalog::load_for_client().unwrap_or_else(|error| {
             warn!(%error, "saved SSH endpoint catalog is unavailable");
             endpoint::EndpointCatalog::default()
         })

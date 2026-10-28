@@ -476,6 +476,21 @@ fn connect_once(
             })?;
             (stream, Box::new(()))
         }
+        ConnectTarget::Ssh(profile) if profile.flock_member.is_some() => {
+            let member = profile.flock_member.clone().unwrap_or_default();
+            let bridge = crate::flock::client::FlockApiBridge::start_service(
+                &member,
+                crate::flock::client::CLIENT_SERVICE,
+            )?;
+            if cancelled.load(Ordering::Acquire) {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::ConnectionAborted,
+                    "connection attempt cancelled",
+                ));
+            }
+            let stream = crate::ipc::connect_local_stream(bridge.socket_path())?;
+            (stream, Box::new(bridge))
+        }
         ConnectTarget::Ssh(profile) => {
             let connected = crate::remote::connect_saved_ssh(
                 profile.id.as_str(),
@@ -825,6 +840,7 @@ mod tests {
             target: "build".into(),
             session: "agents".into(),
             enabled: true,
+            flock_member: None,
         }
     }
 

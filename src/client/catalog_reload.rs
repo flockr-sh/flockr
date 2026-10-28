@@ -8,7 +8,7 @@ pub(super) fn watch_profiles(
     std::thread::spawn(move || {
         let mut previous = None;
         while !should_quit.load(Ordering::Acquire) {
-            let current = endpoint::EndpointCatalog::load_profiles();
+            let current = endpoint::EndpointCatalog::load_profiles_for_client();
             if previous.as_ref() != Some(&current) {
                 previous = Some(current.clone());
                 if event_tx

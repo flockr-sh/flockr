@@ -98,6 +98,7 @@ fn ctrl_hover_pending_request_does_not_block_another_endpoint_with_the_same_boot
         target: "host".into(),
         session: "default".into(),
         enabled: true,
+        flock_member: None,
     };
     let endpoint = ClientEndpointId::Ssh(profile.id.clone());
     state.set_endpoint_catalog(&[profile]);

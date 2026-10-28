@@ -23,6 +23,11 @@ pub(crate) struct SavedSshEndpoint {
     pub(crate) target: String,
     pub(crate) session: String,
     pub(crate) enabled: bool,
+    /// Set for a flock member, which the client reaches through the hub
+    /// instead of SSH. Such entries come from the flock files and are never
+    /// stored in the catalog.
+    #[serde(skip)]
+    pub(crate) flock_member: Option<String>,
 }
 
 impl SavedSshEndpoint {
@@ -37,9 +42,22 @@ impl SavedSshEndpoint {
             target: target.into(),
             session: session.into(),
             enabled: true,
+            flock_member: None,
         };
         profile.validate()?;
         Ok(profile)
+    }
+
+    /// The machine entry for a flock member.
+    pub(crate) fn flock(member: &crate::flock::store::Member) -> Self {
+        Self {
+            id: ProfileId::for_flock_member(&member.id),
+            label: member.name.clone(),
+            target: format!("flock:{}", member.name),
+            session: crate::session::DEFAULT_SESSION_NAME.to_owned(),
+            enabled: true,
+            flock_member: Some(member.id.clone()),
+        }
     }
 
     fn validate(&self) -> Result<(), String> {
@@ -52,6 +70,9 @@ impl SavedSshEndpoint {
             return Err(format!(
                 "SSH endpoint label must be at most {MAX_LABEL_BYTES} bytes and contain no control characters"
             ));
+        }
+        if self.flock_member.is_some() {
+            return Ok(());
         }
         if self.target.len() > MAX_TARGET_BYTES || self.target.chars().any(char::is_control) {
             return Err(format!(
@@ -100,7 +121,13 @@ impl Default for EndpointCatalog {
 
 impl EndpointCatalog {
     pub(crate) fn load() -> Result<Self, String> {
-        Self::load_from_paths(&catalog_path(), &selection_path())
+        Self::load_from_paths(&catalog_path(), &selection_path(), Vec::new())
+    }
+
+    /// The catalog a TUI client shows: saved machines plus the other
+    /// computers in this machine's flock.
+    pub(crate) fn load_for_client() -> Result<Self, String> {
+        Self::load_from_paths(&catalog_path(), &selection_path(), flock_computers())
     }
 
     pub(crate) fn load_profiles() -> Result<Vec<SavedSshEndpoint>, String> {
@@ -108,8 +135,29 @@ impl EndpointCatalog {
         Self::load_from_path(&catalog_path()).map(|catalog| catalog.ssh)
     }
 
-    fn load_from_paths(catalog_path: &Path, selection_path: &Path) -> Result<Self, String> {
+    pub(crate) fn load_profiles_for_client() -> Result<Vec<SavedSshEndpoint>, String> {
+        let mut catalog = Self::load_from_path(&catalog_path())?;
+        catalog.add_flock_members(flock_computers());
+        Ok(catalog.ssh)
+    }
+
+    /// Adds flock members. A flock member replaces a saved SSH machine with
+    /// the same label: both reach the same computer.
+    fn add_flock_members(&mut self, members: Vec<crate::flock::store::Member>) {
+        for member in members {
+            self.ssh
+                .retain(|profile| profile.flock_member.is_some() || profile.label != member.name);
+            self.ssh.push(SavedSshEndpoint::flock(&member));
+        }
+    }
+
+    fn load_from_paths(
+        catalog_path: &Path,
+        selection_path: &Path,
+        flock_members: Vec<crate::flock::store::Member>,
+    ) -> Result<Self, String> {
         let mut catalog = Self::load_from_path(catalog_path)?;
+        catalog.add_flock_members(flock_members);
         match load_selection_from_path(selection_path) {
             Ok(Some(selection)) => {
                 let valid = selection.selected_profile.as_ref().is_none_or(|selected| {
@@ -305,10 +353,25 @@ impl EndpointCatalog {
 
     fn store_to_path(&self, path: &Path) -> Result<(), String> {
         self.validate()?;
-        let content = serde_json::to_vec_pretty(self)
+        let mut stored = self.clone();
+        stored.ssh.retain(|profile| profile.flock_member.is_none());
+        let content = serde_json::to_vec_pretty(&stored)
             .map_err(|error| format!("failed to encode endpoint catalog: {error}"))?;
         store_private_json(path, &content, "endpoint catalog")
     }
+}
+
+/// The other computers in this machine's flock, if it is in one.
+fn flock_computers() -> Vec<crate::flock::store::Member> {
+    let Ok(Some((members, me))) =
+        crate::flock::client::known_members(&crate::flock::store::flock_dir())
+    else {
+        return Vec::new();
+    };
+    members
+        .into_iter()
+        .filter(|member| member.id != me && member.kind == crate::flock::store::Kind::Computer)
+        .collect()
 }
 
 fn load_selection_from_path(path: &Path) -> Result<Option<EndpointSelection>, String> {
@@ -538,7 +601,8 @@ mod tests {
         catalog.store_to_path(&catalog_path).unwrap();
         std::fs::write(&selection_path, b"not json").unwrap();
 
-        let loaded = EndpointCatalog::load_from_paths(&catalog_path, &selection_path).unwrap();
+        let loaded =
+            EndpointCatalog::load_from_paths(&catalog_path, &selection_path, Vec::new()).unwrap();
         assert_eq!(loaded.ssh.len(), 1);
         assert_eq!(loaded.ssh[0].id, id);
         assert_eq!(loaded.selected_profile, None);
@@ -565,7 +629,8 @@ mod tests {
         )
         .unwrap();
 
-        let loaded = EndpointCatalog::load_from_paths(&catalog_path, &selection_path).unwrap();
+        let loaded =
+            EndpointCatalog::load_from_paths(&catalog_path, &selection_path, Vec::new()).unwrap();
         assert_eq!(loaded.ssh[0].id, saved);
         assert_eq!(loaded.selected_profile, None);
         std::fs::remove_dir_all(catalog_path.parent().unwrap()).unwrap();

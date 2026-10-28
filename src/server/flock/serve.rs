@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use super::messages::{Caller, LineBuffer, Messages};
 use crate::flock::access::RequestFilter;
-use crate::flock::client::{data_message, error_line, FLOCK_SERVICE};
+use crate::flock::client::{data_message, error_line, CLIENT_SERVICE, FLOCK_SERVICE};
 use crate::flock::pipe;
 use crate::flock::store::Role;
 
@@ -28,10 +28,27 @@ pub(super) fn serve_stream(
     out: mpsc::UnboundedSender<Value>,
 ) -> mpsc::UnboundedSender<Vec<u8>> {
     let (input_tx, input) = mpsc::unbounded_channel();
-    if service == FLOCK_SERVICE {
-        tokio::spawn(run_flock(stream, from, role, messages.clone(), input, out));
-    } else {
-        tokio::spawn(run(stream, from, role, input, out));
+    match service {
+        FLOCK_SERVICE => {
+            tokio::spawn(run_flock(stream, from, role, messages.clone(), input, out));
+        }
+        // The client protocol carries keystrokes; its frames can't be
+        // checked per request, so viewers don't get it.
+        CLIENT_SERVICE if role == Role::Viewer => {
+            let _ = out.send(json!({
+                "t": "close",
+                "s": stream,
+                "error": "a viewer may not open a terminal client",
+            }));
+        }
+        CLIENT_SERVICE => {
+            let socket = crate::server::socket_paths::client_socket_path();
+            tokio::spawn(run(stream, from, role, socket, input, out));
+        }
+        _ => {
+            let socket = crate::api::socket_path();
+            tokio::spawn(run(stream, from, role, socket, input, out));
+        }
     }
     input_tx
 }
@@ -63,10 +80,10 @@ async fn run(
     stream: u64,
     from: String,
     role: Role,
+    socket: std::path::PathBuf,
     mut input: mpsc::UnboundedReceiver<Vec<u8>>,
     out: mpsc::UnboundedSender<Value>,
 ) {
-    let socket = crate::api::socket_path();
     let connected = tokio::task::spawn_blocking(move || {
         crate::ipc::connect_local_stream(&socket).and_then(pipe::start)
     })
@@ -74,7 +91,7 @@ async fn run(
     let (writer, mut answers) = match connected {
         Ok(Ok(piped)) => piped,
         Ok(Err(err)) => {
-            let reason = format!("this machine's API is unavailable: {err}");
+            let reason = format!("this machine's server is unavailable: {err}");
             let _ = out.send(json!({ "t": "close", "s": stream, "error": reason }));
             return;
         }
