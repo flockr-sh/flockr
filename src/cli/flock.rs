@@ -32,6 +32,7 @@ pub(super) fn run_flock_command(args: &[String]) -> std::io::Result<i32> {
         Some("invite") => invite(&args[1..]),
         Some("join") => join(&args[1..]),
         Some("members") => members(&args[1..]),
+        Some("agents") => agents(&args[1..]),
         Some("status") => status(&args[1..]),
         Some("remove") => remove(&args[1..]),
         Some("help" | "--help" | "-h") => {
@@ -51,9 +52,12 @@ fn print_help() {
     eprintln!("  flockr flock invite [--role ROLE] [--ttl SECS]  invite a machine (on the hub)");
     eprintln!("  flockr flock join <url>                         join with an invite URL");
     eprintln!("  flockr flock members [--json]                   list members");
+    eprintln!("  flockr flock agents [--json]                    list agents on every member");
     eprintln!("  flockr flock status [--json]                    show this machine's flock state");
     eprintln!("  flockr flock remove <member-id|name>            remove a member (on the hub)");
     eprintln!();
+    eprintln!();
+    eprintln!("Run any API command on a member with `flockr --machine <member> <command>`.");
     eprintln!("Roles: admin (default for invites), member, viewer.");
 }
 
@@ -522,6 +526,75 @@ fn members(args: &[String]) -> std::io::Result<i32> {
             println!(
                 "Not connected to the hub; list as of {} ago.",
                 ago(now_unix().saturating_sub(at))
+            );
+        }
+    }
+    Ok(0)
+}
+
+fn agents(args: &[String]) -> std::io::Result<i32> {
+    let Some(as_json) = json_flag(args, "usage: flockr flock agents [--json]") else {
+        return Ok(2);
+    };
+    let dir = store::flock_dir();
+    let Some((members, _)) = crate::flock::client::known_members(&dir)? else {
+        eprintln!("{NOT_IN_FLOCK}");
+        return Ok(1);
+    };
+    let ids: Vec<String> = members.iter().map(|member| member.id.clone()).collect();
+    let request = json!({ "id": "cli:flock:agents", "method": "agent.list", "params": {} });
+    let answers = match crate::flock::client::call_each(&ids, &request) {
+        Ok(answers) => answers,
+        Err(err) => {
+            eprintln!("error: {err}");
+            return Ok(1);
+        }
+    };
+    let machines: Vec<Value> = members
+        .iter()
+        .zip(answers)
+        .map(|(member, answer)| {
+            let answer = answer.and_then(|response| {
+                if let Some(message) = response["error"]["message"].as_str() {
+                    return Err(message.to_owned());
+                }
+                Ok(response["result"]["agents"].clone())
+            });
+            match answer {
+                Ok(agents) => json!({ "id": member.id, "name": member.name, "agents": agents }),
+                Err(error) => json!({ "id": member.id, "name": member.name, "error": error }),
+            }
+        })
+        .collect();
+    if as_json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({ "machines": machines }))?
+        );
+        return Ok(0);
+    }
+    println!(
+        "{:<14} {:<8} {:<10} {:<9} TITLE",
+        "MACHINE", "PANE", "AGENT", "STATUS"
+    );
+    for machine in &machines {
+        let name = machine["name"].as_str().unwrap_or_default();
+        if let Some(error) = machine["error"].as_str() {
+            println!("{name:<14} {error}");
+            continue;
+        }
+        let agents = machine["agents"].as_array().cloned().unwrap_or_default();
+        if agents.is_empty() {
+            println!("{name:<14} (no agents)");
+        }
+        for agent in &agents {
+            let field = |key: &str| agent[key].as_str().unwrap_or("-").to_owned();
+            println!(
+                "{name:<14} {:<8} {:<10} {:<9} {}",
+                field("pane_id"),
+                field("agent"),
+                field("agent_status"),
+                field("terminal_title_stripped")
             );
         }
     }

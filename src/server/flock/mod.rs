@@ -7,6 +7,7 @@
 //! notices them on its poll tick, as the mobile gateway does for devices.
 
 mod conn;
+mod serve;
 
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
@@ -15,8 +16,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime};
 
+use serde_json::Value;
 use tokio::net::TcpListener;
-use tokio::sync::watch;
+use tokio::sync::{mpsc, watch};
 use tracing::{info, warn};
 
 use crate::config::FlockConfig;
@@ -43,7 +45,18 @@ pub(super) enum Membership {
 
 struct ConnEntry {
     member: String,
+    /// A CLI's connection rather than the member server's link.
+    client: bool,
+    tx: mpsc::UnboundedSender<Value>,
     close: watch::Sender<bool>,
+}
+
+/// A stream the hub relays from a client to a member's link.
+#[derive(Clone)]
+pub(super) struct Route {
+    pub client_tx: mpsc::UnboundedSender<Value>,
+    pub client_stream: u64,
+    pub link_conn: u64,
 }
 
 /// A member's connection to the hub.
@@ -61,6 +74,8 @@ struct Shared {
     stamps: (Option<SystemTime>, Option<SystemTime>),
     /// Authenticated member connections, on the hub.
     conns: HashMap<u64, ConnEntry>,
+    /// Relayed streams by the hub's stream ID.
+    routes: HashMap<u64, Route>,
     unauthenticated: usize,
     join_failures: HashMap<IpAddr, RateWindow>,
     link: HubLink,
@@ -93,6 +108,7 @@ impl Node {
                 membership: Membership::None,
                 stamps: (None, None),
                 conns: HashMap::new(),
+                routes: HashMap::new(),
                 unauthenticated: 0,
                 join_failures: HashMap::new(),
                 link: HubLink::default(),
@@ -137,39 +153,100 @@ impl Node {
         self.roster.send_modify(|version| *version += 1);
     }
 
-    /// Registers an authenticated member connection on the hub. A newer
-    /// connection from the same member replaces the older one, which may be
-    /// half-open after a network change.
-    pub(super) fn register(&self, member: &str) -> (u64, watch::Receiver<bool>) {
-        let id = self.next_conn_id.fetch_add(1, Ordering::Relaxed);
+    /// Registers an authenticated connection on the hub. A newer link from
+    /// the same member replaces the older one, which may be half-open after a
+    /// network change. Client connections never replace anything.
+    pub(super) fn register(
+        &self,
+        member: &str,
+        client: bool,
+        tx: mpsc::UnboundedSender<Value>,
+    ) -> (u64, watch::Receiver<bool>) {
+        let id = self.next_id();
         let (close, closed) = watch::channel(false);
         {
             let mut shared = self.shared();
-            shared.conns.retain(|_, entry| {
-                if entry.member == member {
-                    let _ = entry.close.send(true);
-                    false
-                } else {
-                    true
-                }
-            });
+            if !client {
+                shared.conns.retain(|_, entry| {
+                    if !entry.client && entry.member == member {
+                        let _ = entry.close.send(true);
+                        false
+                    } else {
+                        true
+                    }
+                });
+            }
             shared.conns.insert(
                 id,
                 ConnEntry {
                     member: member.to_owned(),
+                    client,
+                    tx,
                     close,
                 },
             );
         }
-        self.bump_roster();
+        if !client {
+            self.bump_roster();
+        }
         (id, closed)
     }
 
+    fn next_id(&self) -> u64 {
+        self.next_conn_id.fetch_add(1, Ordering::Relaxed)
+    }
+
+    /// Removes a connection. Streams relayed to a member's link close with a
+    /// reason for their clients.
     pub(super) fn unregister(&self, conn: u64) {
-        let removed = self.shared().conns.remove(&conn).is_some();
-        if removed {
+        let (removed, orphaned) = {
+            let mut shared = self.shared();
+            let removed = shared.conns.remove(&conn);
+            let orphaned: Vec<u64> = shared
+                .routes
+                .iter()
+                .filter(|(_, route)| route.link_conn == conn)
+                .map(|(id, _)| *id)
+                .collect();
+            let orphaned: Vec<Route> = orphaned
+                .iter()
+                .filter_map(|id| shared.routes.remove(id))
+                .collect();
+            (removed, orphaned)
+        };
+        for route in orphaned {
+            let _ = route.client_tx.send(serde_json::json!({
+                "t": "close",
+                "s": route.client_stream,
+                "error": "the member disconnected from the hub",
+            }));
+        }
+        if removed.is_some_and(|entry| !entry.client) {
             self.bump_roster();
         }
+    }
+
+    /// The live link of `member`, if it is connected.
+    pub(super) fn link(&self, member: &str) -> Option<(u64, mpsc::UnboundedSender<Value>)> {
+        self.shared()
+            .conns
+            .iter()
+            .find(|(_, entry)| !entry.client && entry.member == member)
+            .map(|(id, entry)| (*id, entry.tx.clone()))
+    }
+
+    pub(super) fn add_route(&self, route: Route) -> u64 {
+        let id = self.next_id();
+        self.shared().routes.insert(id, route);
+        id
+    }
+
+    pub(super) fn route(&self, id: u64) -> Option<Route> {
+        self.shared().routes.get(&id).cloned()
+    }
+
+    pub(super) fn remove_route(&self, id: u64) -> Option<Route> {
+        self.shared().routes.remove(&id)
     }
 
     /// Member IDs connected to the hub, the hub included.
@@ -181,6 +258,7 @@ impl Node {
         let mut connected: Vec<String> = shared
             .conns
             .values()
+            .filter(|entry| !entry.client)
             .map(|entry| entry.member.clone())
             .chain([hub.hub.clone()])
             .collect();
@@ -499,14 +577,39 @@ mod tests {
     #[test]
     fn a_new_connection_from_a_member_replaces_its_old_one() {
         let node = hub_node();
-        let (first, first_closed) = node.register("m_a");
-        let (_, second_closed) = node.register("m_a");
+        let tx = || mpsc::unbounded_channel().0;
+        let (first, first_closed) = node.register("m_a", false, tx());
+        let (_, client_closed) = node.register("m_a", true, tx());
+        let (second, second_closed) = node.register("m_a", false, tx());
         assert!(*first_closed.borrow());
         assert!(!*second_closed.borrow());
+        assert!(
+            !*client_closed.borrow(),
+            "a client doesn't replace the link"
+        );
         assert_eq!(node.connected(), vec!["m_a".to_owned(), "m_hub".to_owned()]);
+        assert_eq!(node.link("m_a").map(|(id, _)| id), Some(second));
         // The replaced connection's cleanup leaves the new one in place.
         node.unregister(first);
         assert_eq!(node.connected().len(), 2);
+    }
+
+    #[test]
+    fn streams_relayed_to_a_member_close_when_its_link_drops() {
+        let node = hub_node();
+        let (link, _) = node.register("m_a", false, mpsc::unbounded_channel().0);
+        let (client_tx, mut client_rx) = mpsc::unbounded_channel();
+        let route = node.add_route(Route {
+            client_tx,
+            client_stream: 7,
+            link_conn: link,
+        });
+        node.unregister(link);
+        assert!(node.route(route).is_none());
+        let close = client_rx.try_recv().unwrap();
+        assert_eq!(close["t"], "close");
+        assert_eq!(close["s"], 7);
+        assert!(node.link("m_a").is_none());
     }
 
     #[test]

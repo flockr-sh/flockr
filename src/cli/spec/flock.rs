@@ -27,6 +27,11 @@ pub(super) fn command() -> Command {
                 .arg(json_flag()),
         )
         .subcommand(
+            Command::new("agents")
+                .about("List agents on every member")
+                .arg(json_flag()),
+        )
+        .subcommand(
             Command::new("status")
                 .about("Show this machine's flock state")
                 .arg(json_flag()),

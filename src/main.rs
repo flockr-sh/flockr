@@ -626,7 +626,10 @@ fn finish_cli(outcome: io::Result<cli::CommandOutcome>) -> io::Result<()> {
             }
             std::process::exit(1);
         }
-        Err(err) => Err(err),
+        Err(err) => {
+            eprintln!("error: {err}");
+            std::process::exit(1);
+        }
     }
 }
 
