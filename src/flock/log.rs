@@ -208,14 +208,6 @@ impl State {
             .find(|member| !member.removed && member.info.sign_key == sign_key)
     }
 
-    /// Whether `sign_key` may issue certificates and remove members.
-    pub(crate) fn is_admin_key(&self, sign_key: &str) -> bool {
-        sign_key == self.owner
-            || self
-                .active_by_sign_key(sign_key)
-                .is_some_and(|member| member.role == Role::Admin)
-    }
-
     /// A new entry signed by `key` that follows every current head.
     pub(crate) fn append(&self, op: Op, key: &SigningKey, at: u64) -> Entry {
         let mut parents = self.heads.clone();
@@ -886,8 +878,7 @@ pub(crate) mod tests {
         let state = fold(&log, None).unwrap();
         let member = state.active(&a.member_id()).unwrap();
         assert_eq!(member.info.sign_key, encode_key(&fresh.sign_public()));
-        assert!(state.is_admin_key(&encode_key(&fresh.sign_public())));
-        assert!(!state.is_admin_key(&encode_key(&a.sign_public())));
+        assert_eq!(member.role, Role::Admin);
     }
 
     #[test]

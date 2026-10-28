@@ -1,5 +1,11 @@
-//! One flock connection: handshake, member check or join, then log sync and
-//! certificate renewal until either side closes or the peer is removed.
+//! One flock connection: handshake, member check or join, then log sync until
+//! either side closes or the peer is removed.
+//!
+//! The Noise handshake proves the peer holds its static key; the log says
+//! whether that key belongs to an active member. Right after the hello, both
+//! sides send `log.have` and answer the other's with `log.entries` (marked
+//! `reply`, possibly empty). Receiving the reply means this side holds
+//! everything the peer had, so a removal the peer knows about has arrived.
 
 use std::collections::HashSet;
 use std::net::{IpAddr, SocketAddr};
@@ -12,19 +18,18 @@ use tokio::sync::broadcast::error::RecvError;
 use tracing::{debug, info, warn};
 
 use super::{Broadcast, Node};
-use crate::flock::cert::{Cert, RENEW_BEFORE_SECS};
 use crate::flock::channel::{self, Channel};
 use crate::flock::invite::{self, Decision, JoinRequest};
 use crate::flock::keys::{self, decode_key, encode_key};
 use crate::flock::log::{self, Entry, Kind, MemberInfo};
-use crate::flock::store;
 use crate::mobile::store::now_unix;
 
 const HELLO_TIMEOUT: Duration = Duration::from_secs(10);
 const DECISION_POLL: Duration = Duration::from_millis(500);
 const PING_INTERVAL: Duration = Duration::from_secs(20);
 const PEER_TIMEOUT: Duration = Duration::from_secs(60);
-const CERT_CHECK: Duration = Duration::from_secs(600);
+/// Sent instead of an error when a connection loses the duplicate check.
+const DUPLICATE: &str = "duplicate";
 
 fn error(reason: &str) -> Value {
     json!({ "t": "error", "reason": reason })
@@ -36,19 +41,13 @@ async fn refuse(mut channel: Channel, reason: &str) {
     channel.close().await;
 }
 
-/// Checks a peer's certificate against its handshake key. Returns the member
-/// ID and when the certificate expires.
-fn check_cert(
-    node: &Node,
-    value: &Value,
-    remote_static: &[u8; 32],
-) -> Result<(String, u64), &'static str> {
+/// The active member that owns the peer's handshake key.
+fn member_for(node: &Node, remote_static: &[u8; 32]) -> Result<String, &'static str> {
     let state = node.state().ok_or("this machine is not in a flock")?;
-    let cert: Cert =
-        serde_json::from_value(value.clone()).map_err(|_| "certificate is malformed")?;
-    let member = cert.verify(&state, &encode_key(remote_static), now_unix())?;
-    let expires = cert.parsed().map(|body| body.expires).unwrap_or(0);
-    Ok((member, expires))
+    state
+        .active_by_noise_key(&encode_key(remote_static))
+        .map(|member| member.info.id.clone())
+        .ok_or("not a member of this flock")
 }
 
 pub(super) async fn serve_inbound(node: Arc<Node>, stream: TcpStream, peer: SocketAddr) {
@@ -58,12 +57,12 @@ pub(super) async fn serve_inbound(node: Arc<Node>, stream: TcpStream, peer: Sock
     }
     let outcome = accept(&node, stream, peer.ip()).await;
     node.release_unauthenticated();
-    if let Some((channel, member, expires)) = outcome {
-        run(node, channel, member, expires).await;
+    if let Some((channel, member)) = outcome {
+        run(node, channel, member, false).await;
     }
 }
 
-async fn accept(node: &Arc<Node>, stream: TcpStream, ip: IpAddr) -> Option<(Channel, String, u64)> {
+async fn accept(node: &Arc<Node>, stream: TcpStream, ip: IpAddr) -> Option<(Channel, String)> {
     let group = node.state()?.group;
     let mut channel = match Channel::accept(stream, &node.keys().noise, &group).await {
         Ok(channel) => channel,
@@ -83,20 +82,20 @@ async fn accept(node: &Arc<Node>, stream: TcpStream, ip: IpAddr) -> Option<(Chan
         }
         Some("hello") => {
             let remote = channel.remote_static;
-            let (member, expires) = match check_cert(node, &hello["cert"], &remote) {
-                Ok(checked) => checked,
+            let member = match member_for(node, &remote) {
+                Ok(member) if hello["member"] == member.as_str() => member,
+                Ok(_) => {
+                    refuse(channel, "member ID does not match the key").await;
+                    return None;
+                }
                 Err(reason) => {
                     refuse(channel, reason).await;
                     return None;
                 }
             };
-            let Some(own) = store::load_cert(node.dir()) else {
-                refuse(channel, "this machine has no certificate yet").await;
-                return None;
-            };
-            let welcome = json!({ "t": "welcome", "member": node.me(), "cert": own });
+            let welcome = json!({ "t": "welcome", "member": node.me() });
             channel.send(&welcome).await.ok()?;
-            Some((channel, member, expires))
+            Some((channel, member))
         }
         _ => {
             refuse(channel, "expected hello").await;
@@ -110,10 +109,6 @@ pub(super) async fn dial(node: Arc<Node>, member: String, noise_key: String, add
     let (Some(state), Some(remote)) = (node.state(), decode_key(&noise_key)) else {
         return;
     };
-    let Some(own) = store::load_cert(node.dir()) else {
-        debug!("flock dial skipped: this machine has no certificate yet");
-        return;
-    };
     let mut channel = None;
     for addr in &addrs {
         match Channel::connect(addr, &node.keys().noise, &remote, &state.group).await {
@@ -125,47 +120,50 @@ pub(super) async fn dial(node: Arc<Node>, member: String, noise_key: String, add
         }
     }
     let Some(mut channel) = channel else {
+        node.unreachable(&member);
         return;
     };
-    let hello = json!({ "t": "hello", "member": node.me(), "cert": own });
+    let hello = json!({ "t": "hello", "member": node.me() });
     if channel.send(&hello).await.is_err() {
+        node.unreachable(&member);
         return;
     }
     let welcome = match tokio::time::timeout(HELLO_TIMEOUT, channel.recv()).await {
         Ok(Ok(Some(welcome))) => welcome,
-        _ => return,
+        _ => {
+            node.unreachable(&member);
+            return;
+        }
     };
-    if welcome["t"] == "error" {
+    if welcome["t"] != "welcome" || welcome["member"] != member.as_str() {
         warn!(%member, reason = %welcome["reason"], "flock peer refused the connection");
+        node.unreachable(&member);
         channel.close().await;
         return;
     }
-    let remote_static = channel.remote_static;
-    match check_cert(&node, &welcome["cert"], &remote_static) {
-        Ok((id, expires)) if id == member => {
-            node.dial_succeeded(&member);
-            run(node, channel, member, expires).await;
-        }
-        Ok(_) => refuse(channel, "certificate is for another member").await,
-        Err(reason) => {
-            warn!(%member, reason, "flock peer sent a bad certificate");
-            refuse(channel, reason).await;
-        }
-    }
+    node.dial_succeeded(&member);
+    run(node, channel, member, true).await;
+}
+
+fn hashes(entries: &[Entry]) -> Vec<String> {
+    entries.iter().map(Entry::hash).collect()
 }
 
 /// Authenticated connection loop.
-async fn run(node: Arc<Node>, mut channel: Channel, member: String, mut peer_expires: u64) {
-    let conn = node.next_conn_id();
-    node.register(conn, &member);
+async fn run(node: Arc<Node>, mut channel: Channel, member: String, outbound: bool) {
+    let Some((conn, mut closed)) = node.register(&member, outbound) else {
+        debug!(%member, "flock duplicate connection dropped");
+        let _ = channel.send(&error(DUPLICATE)).await;
+        channel.close().await;
+        return;
+    };
     info!(%member, "flock peer connected");
     let mut events = node.subscribe();
     let mut members = node.members_version();
     let mut shutdown = node.shutdown();
     let mut ping = tokio::time::interval(PING_INTERVAL);
-    let mut cert_check = tokio::time::interval(CERT_CHECK);
     let mut last_inbound = Instant::now();
-    let have: Vec<String> = node.entries().iter().map(Entry::hash).collect();
+    let have = hashes(&node.entries());
     let mut open = channel
         .send(&json!({ "t": "log.have", "hashes": have }))
         .await
@@ -175,7 +173,7 @@ async fn run(node: Arc<Node>, mut channel: Channel, member: String, mut peer_exp
             message = channel.recv() => match message {
                 Ok(Some(message)) => {
                     last_inbound = Instant::now();
-                    open = handle(&node, &mut channel, &member, &message, &mut peer_expires).await;
+                    open = handle(&node, &mut channel, &member, &message).await;
                 }
                 Ok(None) => open = false,
                 Err(err) => {
@@ -187,12 +185,12 @@ async fn run(node: Arc<Node>, mut channel: Channel, member: String, mut peer_exp
                 Ok(Broadcast::Entries(entries)) => {
                     let message = json!({ "t": "log.entries", "entries": *entries });
                     open = channel.send(&message).await.is_ok();
-                }
-                Ok(Broadcast::OwnCert(cert)) => {
-                    open = channel.send(&json!({ "t": "cert.update", "cert": cert })).await.is_ok();
+                    if open {
+                        node.peer_has(&member, hashes(&entries));
+                    }
                 }
                 Err(RecvError::Lagged(_)) => {
-                    let have: Vec<String> = node.entries().iter().map(Entry::hash).collect();
+                    let have = hashes(&node.entries());
                     open = channel.send(&json!({ "t": "log.have", "hashes": have })).await.is_ok();
                 }
                 Err(RecvError::Closed) => open = false,
@@ -212,17 +210,9 @@ async fn run(node: Arc<Node>, mut channel: Channel, member: String, mut peer_exp
                     open = channel.send(&json!({ "t": "ping" })).await.is_ok();
                 }
             }
-            _ = cert_check.tick() => {
-                let now = now_unix();
-                if peer_expires.saturating_sub(now) < RENEW_BEFORE_SECS {
-                    if let Some(cert) = node.issue_cert(&member) {
-                        peer_expires = cert.parsed().map(|body| body.expires).unwrap_or(peer_expires);
-                        open = channel.send(&json!({ "t": "cert.renew", "cert": cert })).await.is_ok();
-                    } else if peer_expires <= now {
-                        let _ = channel.send(&error("certificate has expired")).await;
-                        open = false;
-                    }
-                }
+            _ = closed.changed() => {
+                debug!(%member, "flock connection replaced by a preferred one");
+                open = false;
             }
             _ = shutdown.changed() => open = false,
         }
@@ -233,31 +223,29 @@ async fn run(node: Arc<Node>, mut channel: Channel, member: String, mut peer_exp
 }
 
 /// Handles one message on an authenticated connection. `false` closes it.
-async fn handle(
-    node: &Node,
-    channel: &mut Channel,
-    member: &str,
-    message: &Value,
-    peer_expires: &mut u64,
-) -> bool {
+async fn handle(node: &Node, channel: &mut Channel, member: &str, message: &Value) -> bool {
     match message["t"].as_str() {
         Some("log.have") => {
-            let Some(hashes) = message["hashes"].as_array() else {
+            let Some(reported) = message["hashes"].as_array() else {
                 return true;
             };
-            let have: HashSet<&str> = hashes.iter().filter_map(Value::as_str).collect();
+            let theirs: HashSet<String> = reported
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect();
             let missing: Vec<Entry> = node
                 .entries()
                 .into_iter()
-                .filter(|entry| !have.contains(entry.hash().as_str()))
+                .filter(|entry| !theirs.contains(&entry.hash()))
                 .collect();
-            if missing.is_empty() {
-                return true;
+            node.peer_reported(member, theirs);
+            let reply = json!({ "t": "log.entries", "entries": missing, "reply": true });
+            let sent = channel.send(&reply).await.is_ok();
+            if sent {
+                node.peer_has(member, hashes(&missing));
             }
-            channel
-                .send(&json!({ "t": "log.entries", "entries": missing }))
-                .await
-                .is_ok()
+            sent
         }
         Some("log.entries") => {
             let Ok(entries) = serde_json::from_value::<Vec<Entry>>(message["entries"].clone())
@@ -267,30 +255,21 @@ async fn handle(
             if entries.len() > log::MAX_ENTRIES {
                 return false;
             }
+            node.peer_has(member, hashes(&entries));
             let stored = node.store_entries(&entries);
             if stored > 0 {
                 debug!(%member, stored, "flock log entries received");
             }
-            true
-        }
-        Some("cert.renew") => {
-            if let Ok(cert) = serde_json::from_value::<Cert>(message["cert"].clone()) {
-                node.accept_own_cert(&cert);
-            }
-            true
-        }
-        Some("cert.update") => {
-            let remote = channel.remote_static;
-            if let Ok((id, expires)) = check_cert(node, &message["cert"], &remote) {
-                if id == member {
-                    *peer_expires = (*peer_expires).max(expires);
-                }
+            if message["reply"] == true {
+                node.synced(member);
             }
             true
         }
         Some("ping") => channel.send(&json!({ "t": "pong" })).await.is_ok(),
         Some("error") => {
-            warn!(%member, reason = %message["reason"], "flock peer reported an error");
+            if message["reason"] != DUPLICATE {
+                warn!(%member, reason = %message["reason"], "flock peer reported an error");
+            }
             false
         }
         _ => true,
@@ -298,7 +277,7 @@ async fn handle(
 }
 
 /// A machine joining with an invite: redeem it, show the short code, wait
-/// for the owner's decision, then send the log and a certificate.
+/// for the owner's decision, then send the log.
 async fn join(node: &Arc<Node>, mut channel: Channel, hello: &Value, ip: IpAddr) {
     if node.join_blocked(ip) {
         refuse(channel, "too many failed join attempts; wait a minute").await;
@@ -392,7 +371,7 @@ async fn join(node: &Arc<Node>, mut channel: Channel, hello: &Value, ip: IpAddr)
         }
     };
     match outcome {
-        Some(Decision::Approved { cert }) => {
+        Some(Decision::Approved) => {
             node.reload();
             if node
                 .state()
@@ -404,7 +383,6 @@ async fn join(node: &Arc<Node>, mut channel: Channel, hello: &Value, ip: IpAddr)
                     "t": "joined",
                     "group": node.state().map(|state| state.group).unwrap_or_default(),
                     "entries": node.entries(),
-                    "cert": cert,
                 });
                 let _ = channel.send(&joined).await;
                 channel.close().await;

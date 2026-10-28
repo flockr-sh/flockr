@@ -9,13 +9,11 @@ use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
 
-use super::cert::Cert;
 use super::log::{self, Entry, State};
 use crate::mobile::store::{atomic_create, atomic_write, ensure_dir};
 
 pub(crate) const GROUP_FILE: &str = "group.json";
 pub(crate) const LOG_DIR: &str = "log";
-pub(crate) const CERT_FILE: &str = "cert.json";
 pub(crate) const NODE_FILE: &str = "node.json";
 
 pub(crate) fn flock_dir() -> PathBuf {
@@ -109,18 +107,8 @@ pub(crate) fn log_stamp(dir: &Path) -> Option<SystemTime> {
         .ok()
 }
 
-pub(crate) fn load_cert(dir: &Path) -> Option<Cert> {
-    let text = fs::read_to_string(dir.join(CERT_FILE)).ok()?;
-    serde_json::from_str(&text).ok()
-}
-
-pub(crate) fn save_cert(dir: &Path, cert: &Cert) -> io::Result<()> {
-    let bytes = serde_json::to_vec(cert).map_err(io::Error::other)?;
-    atomic_write(&dir.join(CERT_FILE), &bytes)
-}
-
 /// The running server's flock node, for `flockr flock status`.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) struct NodeRecord {
     pub version: u32,
     pub pid: u32,
@@ -128,7 +116,26 @@ pub(crate) struct NodeRecord {
     /// Member IDs with a live, authenticated connection.
     #[serde(default)]
     pub connected: Vec<String>,
+    /// Active members not known to hold every entry this node holds.
+    #[serde(default)]
+    pub behind: Vec<String>,
+    /// Unix time of the last two-way log sync per member.
+    #[serde(default)]
+    pub last_sync: std::collections::HashMap<String, u64>,
+    /// Whether the node finished catching up after its start or last wake.
+    #[serde(default)]
+    pub caught_up: bool,
     pub updated_at: u64,
+}
+
+impl NodeRecord {
+    /// Equal apart from `updated_at`.
+    pub(crate) fn same_as(&self, other: &Self) -> bool {
+        Self {
+            updated_at: other.updated_at,
+            ..self.clone()
+        } == *other
+    }
 }
 
 pub(crate) fn load_node(dir: &Path) -> Option<NodeRecord> {

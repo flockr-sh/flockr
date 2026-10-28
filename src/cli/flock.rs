@@ -14,7 +14,6 @@ use std::time::Duration;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use serde_json::{json, Value};
 
-use crate::flock::cert::{self, Cert};
 use crate::flock::channel::Channel;
 use crate::flock::invite::{self, Decision, InvitePayload};
 use crate::flock::keys::{self, encode_key, MemberKeys};
@@ -224,9 +223,6 @@ fn init(args: &[String]) -> std::io::Result<i32> {
         ),
     )?;
     let state = store::load_state(&dir)?.ok_or_else(|| std::io::Error::other("flock vanished"))?;
-    let cert = cert::issue(&state, &me.id, &owner, now)
-        .ok_or_else(|| std::io::Error::other("could not issue this machine's certificate"))?;
-    store::save_cert(&dir, &cert)?;
     println!("Started flock {name:?} ({})", short(&state.group));
     println!(
         "This machine is {} ({}), admin and owner device.",
@@ -376,12 +372,7 @@ fn invite(args: &[String]) -> std::io::Result<i32> {
         eprintln!("error: the flock refused the new member: {reason}");
         return Ok(1);
     }
-    let Some(cert) = cert::issue(&state, &request.member.id, &owner_key, now_unix()) else {
-        invite::save_decision(&dir, &record.id, &Decision::Denied)?;
-        eprintln!("error: could not issue the new member's certificate");
-        return Ok(1);
-    };
-    invite::save_decision(&dir, &record.id, &Decision::Approved { cert })?;
+    invite::save_decision(&dir, &record.id, &Decision::Approved)?;
     let started = std::time::Instant::now();
     while invite::load_request(&dir, &record.id).is_some() && started.elapsed() < HANDOFF_WAIT {
         std::thread::sleep(POLL);
@@ -427,7 +418,7 @@ fn join(args: &[String]) -> std::io::Result<i32> {
         .enable_all()
         .build()?;
     let joined = runtime.block_on(join_over_channel(&payload, &keys, &me, &host_key));
-    let (entries, cert) = match joined {
+    let entries = match joined {
         Ok(joined) => joined,
         Err(err) => {
             eprintln!("error: {err}");
@@ -444,14 +435,9 @@ fn join(args: &[String]) -> std::io::Result<i32> {
         eprintln!("error: the host's log lists this machine with other keys");
         return Ok(1);
     }
-    if cert.verify(&state, &me.noise_key, now_unix()).is_err() {
-        eprintln!("error: the host sent an invalid certificate");
-        return Ok(1);
-    }
     for entry in &entries {
         store::save_entry(&dir, entry)?;
     }
-    store::save_cert(&dir, &cert)?;
     store::save_group(&dir, &payload.group)?;
     println!(
         "Joined flock {:?} as {} ({}), {}",
@@ -469,7 +455,7 @@ async fn join_over_channel(
     keys: &MemberKeys,
     me: &MemberInfo,
     host_key: &[u8; 32],
-) -> Result<(Vec<Entry>, Cert), String> {
+) -> Result<Vec<Entry>, String> {
     let mut channel = None;
     let mut last_error = "the invite has no addresses".to_owned();
     for addr in &payload.addrs {
@@ -519,10 +505,8 @@ async fn join_over_channel(
     }
     let entries: Vec<Entry> =
         serde_json::from_value(second["entries"].clone()).map_err(|err| err.to_string())?;
-    let cert: Cert =
-        serde_json::from_value(second["cert"].clone()).map_err(|err| err.to_string())?;
     channel.close().await;
-    Ok((entries, cert))
+    Ok(entries)
 }
 
 fn json_flag(args: &[String], usage: &str) -> Option<bool> {
@@ -545,9 +529,17 @@ fn members(args: &[String]) -> std::io::Result<i32> {
         return Ok(1);
     };
     let me = keys::load_or_create(&dir)?.member_id();
-    let connected = node_running(&dir)
-        .map(|node| node.connected)
+    let node = node_running(&dir);
+    let connected = node
+        .as_ref()
+        .map(|node| node.connected.clone())
         .unwrap_or_default();
+    let sync = |id: &str| match &node {
+        None => "unknown",
+        Some(_) if id == me => "-",
+        Some(node) if node.behind.iter().any(|behind| behind == id) => "behind",
+        Some(_) => "synced",
+    };
     let rows: Vec<Value> = state
         .members
         .values()
@@ -561,6 +553,7 @@ fn members(args: &[String]) -> std::io::Result<i32> {
                 "removed": member.removed,
                 "this_machine": member.info.id == me,
                 "connected": connected.contains(&member.info.id),
+                "sync": (!member.removed).then(|| sync(&member.info.id)),
             })
         })
         .collect();
@@ -572,8 +565,8 @@ fn members(args: &[String]) -> std::io::Result<i32> {
         return Ok(0);
     }
     println!(
-        "{:<20} {:<18} {:<7} {:<10} ADDRESSES",
-        "ID", "NAME", "ROLE", "STATE"
+        "{:<20} {:<18} {:<7} {:<10} {:<7} ADDRESSES",
+        "ID", "NAME", "ROLE", "STATE", "LOG"
     );
     for member in state.members.values() {
         let status = if member.removed {
@@ -586,11 +579,16 @@ fn members(args: &[String]) -> std::io::Result<i32> {
             "offline"
         };
         println!(
-            "{:<20} {:<18} {:<7} {:<10} {}",
+            "{:<20} {:<18} {:<7} {:<10} {:<7} {}",
             member.info.id,
             member.info.name,
             member.role.as_str(),
             status,
+            if member.removed {
+                "-"
+            } else {
+                sync(&member.info.id)
+            },
             member.info.addrs.join(", ")
         );
     }
@@ -609,9 +607,6 @@ fn status(args: &[String]) -> std::io::Result<i32> {
     let role = state.active(&me).map(|member| member.role.as_str());
     let owner_device = owner::public(&dir).as_deref() == Some(state.owner.as_str());
     let node = node_running(&dir);
-    let cert_expires = store::load_cert(&dir)
-        .and_then(|cert| cert.parsed())
-        .map(|body| body.expires);
     if as_json {
         println!(
             "{}",
@@ -622,7 +617,6 @@ fn status(args: &[String]) -> std::io::Result<i32> {
                 "role": role,
                 "owner_device": owner_device,
                 "node": node,
-                "cert_expires": cert_expires,
                 "rejected_entries": state.rejected.len(),
                 "pending_entries": state.pending,
             }))?
@@ -647,17 +641,22 @@ fn status(args: &[String]) -> std::io::Result<i32> {
         ),
         None => println!("Node:         not running"),
     }
-    match cert_expires {
-        Some(expires) if expires > now_unix() => {
-            let left = expires - now_unix();
-            println!(
-                "Certificate:  valid for {}h {:02}m",
-                left / 3600,
-                left % 3600 / 60
-            );
+    if let Some(node) = &node {
+        if !node.caught_up {
+            println!("Catch-up:     still reaching members after a start or wake");
         }
-        Some(_) => println!("Certificate:  expired; an admin machine renews it when connected"),
-        None => println!("Certificate:  none"),
+        for id in &node.behind {
+            let name = state
+                .members
+                .get(id)
+                .map(|member| member.info.name.as_str())
+                .unwrap_or(id);
+            let last = match node.last_sync.get(id) {
+                Some(at) => format!("last synced {} ago", ago(now_unix().saturating_sub(*at))),
+                None => "not synced since this server started".to_owned(),
+            };
+            println!("Behind:       {name} lacks recent log entries ({last})");
+        }
     }
     if !state.rejected.is_empty() {
         println!("Log:          {} entr(ies) rejected", state.rejected.len());
@@ -669,6 +668,15 @@ fn status(args: &[String]) -> std::io::Result<i32> {
         );
     }
     Ok(0)
+}
+
+fn ago(secs: u64) -> String {
+    match secs {
+        0..60 => format!("{secs}s"),
+        60..3600 => format!("{}m", secs / 60),
+        3600..86400 => format!("{}h", secs / 3600),
+        _ => format!("{}d", secs / 86400),
+    }
 }
 
 fn remove(args: &[String]) -> std::io::Result<i32> {
@@ -732,7 +740,7 @@ fn remove(args: &[String]) -> std::io::Result<i32> {
         return Ok(1);
     }
     println!(
-        "Removed {} ({}). Connected members drop it now; others when they next sync.",
+        "Removed {} ({}). Connected members drop it now; `flockr flock status` lists members that haven't received the removal yet.",
         member.info.name, member.info.id
     );
     Ok(0)

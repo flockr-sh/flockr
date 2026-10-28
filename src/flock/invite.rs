@@ -11,7 +11,6 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use super::cert::Cert;
 use super::log::{MemberInfo, Role};
 use crate::mobile::store::{
     atomic_create, atomic_write, base64url, random_bytes, secret_matches, sha256_hex,
@@ -171,7 +170,7 @@ pub(crate) fn load_request(dir: &Path, invite: &str) -> Option<JoinRequest> {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "decision", rename_all = "snake_case")]
 pub(crate) enum Decision {
-    Approved { cert: Cert },
+    Approved,
     Denied,
 }
 

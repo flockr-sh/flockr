@@ -1,4 +1,4 @@
-//! Member keys: an Ed25519 key that signs log entries and certificates, and an
+//! Member keys: an Ed25519 key that signs log entries, and an
 //! X25519 key for the Noise channel.
 
 use std::io;

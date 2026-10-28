@@ -4,7 +4,6 @@
 //! running server, so the CLI and the server share it. The server's network
 //! side is `crate::server::flock`.
 
-pub(crate) mod cert;
 pub(crate) mod channel;
 pub(crate) mod invite;
 pub(crate) mod keys;
