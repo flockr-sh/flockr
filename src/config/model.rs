@@ -330,6 +330,7 @@ pub struct Config {
     pub remote: RemoteConfig,
     pub mobile: MobileConfig,
     pub flock: FlockConfig,
+    pub web: WebConfig,
 }
 
 #[derive(Debug)]
@@ -1311,8 +1312,7 @@ pub const DEFAULT_MOBILE_PORT: u16 = 47390;
 pub struct MobileConfig {
     /// Start the gateway. Default: false.
     pub enabled: bool,
-    /// Literal IP addresses to bind on the hub, optionally with `:port`
-    /// (`[v6]:port`).
+    /// Literal IP addresses to bind, optionally with `:port` (`[v6]:port`).
     /// Unspecified addresses (`0.0.0.0`, `::`) and host names are rejected.
     pub listen: Vec<String>,
     /// Port for `listen` entries without one. Default: 47390.
@@ -1500,6 +1500,68 @@ impl FlockConfig {
             .map(str::to_owned)
             .or_else(crate::platform::hostname)
             .unwrap_or_else(|| "flockr".to_owned())
+    }
+}
+
+/// Default TCP port for the web app.
+pub const DEFAULT_WEB_PORT: u16 = 47393;
+
+/// `[web]`: serves the flockr web app (the phone app built for a browser)
+/// over plain HTTP. Every key needs a server restart.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct WebConfig {
+    /// Serve the web app. Default: false.
+    pub enabled: bool,
+    /// Literal IP addresses to bind, optionally with `:port` (`[v6]:port`).
+    /// Unspecified addresses (`0.0.0.0`, `::`) and host names are rejected.
+    pub listen: Vec<String>,
+    /// Port for `listen` entries without one. Default: 47393.
+    pub port: u16,
+    /// Folder with the built web app (`npm run export:web` in flockr-mobile
+    /// writes it to `dist/`).
+    pub dir: Option<String>,
+}
+
+impl Default for WebConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            listen: Vec::new(),
+            port: DEFAULT_WEB_PORT,
+            dir: None,
+        }
+    }
+}
+
+impl WebConfig {
+    /// Parsed `listen` addresses plus one diagnostic per rejected entry.
+    pub fn listen_addrs(&self) -> (Vec<std::net::SocketAddr>, Vec<String>) {
+        let mut addrs = Vec::new();
+        let mut diagnostics = Vec::new();
+        for entry in &self.listen {
+            match parse_mobile_listen_entry(entry, self.port) {
+                Ok(addr) => {
+                    if !addrs.contains(&addr) {
+                        addrs.push(addr);
+                    }
+                }
+                Err(reason) => diagnostics.push(format!("web.listen entry {entry:?} {reason}")),
+            }
+        }
+        (addrs, diagnostics)
+    }
+
+    /// Config warnings for `[web]`.
+    pub fn diagnostics(&self) -> Vec<String> {
+        let (addrs, mut diagnostics) = self.listen_addrs();
+        if self.enabled && addrs.is_empty() {
+            diagnostics.push("web.enabled is true but web.listen has no usable address".to_owned());
+        }
+        if self.enabled && self.dir.as_deref().is_none_or(|dir| dir.trim().is_empty()) {
+            diagnostics.push("web.enabled is true but web.dir is not set".to_owned());
+        }
+        diagnostics
     }
 }
 
@@ -1917,6 +1979,24 @@ expo_access_token = "secret"
         );
         assert_eq!(mobile.push.access_token(), Some("secret"));
         assert!(!format!("{:?}", mobile.push).contains("secret"));
+    }
+
+    #[test]
+    fn web_config_parses_and_needs_a_dir_and_address() {
+        let default_config = Config::default();
+        assert!(!default_config.web.enabled);
+        assert_eq!(default_config.web.port, DEFAULT_WEB_PORT);
+        assert!(default_config.web.diagnostics().is_empty());
+        let config: Config = toml::from_str(
+            "[web]\nenabled = true\nlisten = [\"10.0.0.1\", \"0.0.0.0\"]\ndir = \"/srv/flockr-web\"\n",
+        )
+        .unwrap();
+        let (addrs, diagnostics) = config.web.listen_addrs();
+        assert_eq!(addrs, vec!["10.0.0.1:47393".parse().unwrap()]);
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(config.web.dir.as_deref(), Some("/srv/flockr-web"));
+        let config: Config = toml::from_str("[web]\nenabled = true\n").unwrap();
+        assert_eq!(config.web.diagnostics().len(), 2);
     }
 
     #[test]

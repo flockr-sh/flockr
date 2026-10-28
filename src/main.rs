@@ -566,6 +566,18 @@ const DEFAULT_CONFIG: &str = r##"# flockr configuration
 # port = 47392
 # This machine's name in the flock. Default: host name.
 # name = ""
+
+[web]
+# Serve the flockr web app (the phone app built for a browser) over plain
+# HTTP, like other local web UIs. Off by default. Build it with
+# `npm run export:web` in flockr-mobile and point `dir` at its dist folder.
+# The app connects to the [mobile] gateway, so enable that too. Binds only to
+# the listed IP addresses; 0.0.0.0 and :: are rejected. All keys need a
+# server restart.
+# enabled = false
+# listen = []            # e.g. ["100.92.14.3"]
+# port = 47393
+# dir = ""
 "##;
 
 // Bundled at build time so the printed skill always matches this binary's release.
@@ -972,7 +984,15 @@ mod tests {
     fn default_config_parses_and_documents_flock_keys() {
         let config: config::Config = toml::from_str(DEFAULT_CONFIG).unwrap();
         assert!(!config.flock.enabled);
-        for key in ["[flock]", "# port = 47392", "# name = \"\""] {
+        assert!(!config.web.enabled);
+        for key in [
+            "[flock]",
+            "# port = 47392",
+            "# name = \"\"",
+            "[web]",
+            "# port = 47393",
+            "# dir = \"\"",
+        ] {
             assert!(DEFAULT_CONFIG.contains(key), "{key}");
         }
     }

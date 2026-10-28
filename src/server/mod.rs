@@ -23,3 +23,4 @@ pub(crate) mod render_stream;
 pub(crate) mod shutdown;
 pub mod socket_paths;
 pub(crate) mod terminal_attach;
+pub(crate) mod web;

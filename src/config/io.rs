@@ -388,6 +388,7 @@ fn load_live_config_from_str(content: &str) -> Result<LoadedConfig, Vec<String>>
     diagnostics.extend(config.theme.diagnostics());
     diagnostics.extend(config.mobile.diagnostics());
     diagnostics.extend(config.flock.diagnostics());
+    diagnostics.extend(config.web.diagnostics());
 
     Ok(LoadedConfig {
         config,

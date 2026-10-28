@@ -25,7 +25,7 @@ pub use self::{
         HostCursorModeConfig, MobileConfig, MobilePushConfig, NewTerminalCwdConfig,
         PaneBordersConfig, SeenScopeConfig, ShellModeConfig, SidebarCollapsedModeConfig,
         SidebarPositionConfig, StatusIndicatorStyle, TabBarPositionConfig, ToastClipboardPosition,
-        ToastConfig, ToastDelivery, ToastFlockrPosition, UpdateChannelConfig,
+        ToastConfig, ToastDelivery, ToastFlockrPosition, UpdateChannelConfig, WebConfig,
         MAX_TOAST_DELAY_SECONDS,
     },
     sidebar::{
