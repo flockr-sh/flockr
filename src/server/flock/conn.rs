@@ -1,35 +1,31 @@
-//! One flock connection: handshake, member check or join, then log sync until
-//! either side closes or the peer is removed.
+//! Flock connections. Every connection is a member dialing the hub.
 //!
-//! The Noise handshake proves the peer holds its static key; the log says
-//! whether that key belongs to an active member. Right after the hello, both
-//! sides send `log.have` and answer the other's with `log.entries` (marked
-//! `reply`, possibly empty). Receiving the reply means this side holds
-//! everything the peer had, so a removal the peer knows about has arrived.
+//! The Noise handshake proves the peer holds its static key; the hub looks
+//! that key up in `hub.json`. Once in, the hub sends the member list and
+//! sends it again whenever members or connections change. A removed member's
+//! connection closes as soon as the hub reads the change.
 
-use std::collections::HashSet;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 use tokio::net::TcpStream;
-use tokio::sync::broadcast::error::RecvError;
 use tracing::{debug, info, warn};
 
-use super::{Broadcast, Node};
+use super::{roster_message, Node};
 use crate::flock::channel::{self, Channel};
 use crate::flock::invite::{self, Decision, JoinRequest};
-use crate::flock::keys::{self, decode_key, encode_key};
-use crate::flock::log::{self, Entry, Kind, MemberInfo};
+use crate::flock::keys::{decode_key, encode_key};
+use crate::flock::store::{self, GroupFile, Kind, Member, MembersCache};
 use crate::mobile::store::now_unix;
 
 const HELLO_TIMEOUT: Duration = Duration::from_secs(10);
 const DECISION_POLL: Duration = Duration::from_millis(500);
 const PING_INTERVAL: Duration = Duration::from_secs(20);
 const PEER_TIMEOUT: Duration = Duration::from_secs(60);
-/// Sent instead of an error when a connection loses the duplicate check.
-const DUPLICATE: &str = "duplicate";
+pub(crate) const NOT_A_MEMBER: &str = "not a member of this flock";
+pub(crate) const REMOVED: &str = "removed from the flock";
 
 fn error(reason: &str) -> Value {
     json!({ "t": "error", "reason": reason })
@@ -41,15 +37,6 @@ async fn refuse(mut channel: Channel, reason: &str) {
     channel.close().await;
 }
 
-/// The active member that owns the peer's handshake key.
-fn member_for(node: &Node, remote_static: &[u8; 32]) -> Result<String, &'static str> {
-    let state = node.state().ok_or("this machine is not in a flock")?;
-    state
-        .active_by_noise_key(&encode_key(remote_static))
-        .map(|member| member.info.id.clone())
-        .ok_or("not a member of this flock")
-}
-
 pub(super) async fn serve_inbound(node: Arc<Node>, stream: TcpStream, peer: SocketAddr) {
     if !node.try_unauthenticated() {
         debug!(%peer, "flock connection dropped: too many waiting");
@@ -58,12 +45,12 @@ pub(super) async fn serve_inbound(node: Arc<Node>, stream: TcpStream, peer: Sock
     let outcome = accept(&node, stream, peer.ip()).await;
     node.release_unauthenticated();
     if let Some((channel, member)) = outcome {
-        run(node, channel, member, false).await;
+        serve_member(node, channel, member).await;
     }
 }
 
 async fn accept(node: &Arc<Node>, stream: TcpStream, ip: IpAddr) -> Option<(Channel, String)> {
-    let group = node.state()?.group;
+    let group = node.hub()?.group;
     let mut channel = match Channel::accept(stream, &node.keys().noise, &group).await {
         Ok(channel) => channel,
         Err(err) => {
@@ -81,19 +68,26 @@ async fn accept(node: &Arc<Node>, stream: TcpStream, ip: IpAddr) -> Option<(Chan
             None
         }
         Some("hello") => {
-            let remote = channel.remote_static;
-            let member = match member_for(node, &remote) {
-                Ok(member) if hello["member"] == member.as_str() => member,
-                Ok(_) => {
+            // The CLI may have just removed this member; don't wait for the poll.
+            node.reload();
+            let hub = node.hub()?;
+            let key = encode_key(&channel.remote_static);
+            let member = match hub.by_noise_key(&key) {
+                Some(member) if member.id == hub.hub => {
+                    refuse(channel, "that is the hub's own key").await;
+                    return None;
+                }
+                Some(member) if hello["member"] == member.id.as_str() => member.id.clone(),
+                Some(_) => {
                     refuse(channel, "member ID does not match the key").await;
                     return None;
                 }
-                Err(reason) => {
-                    refuse(channel, reason).await;
+                None => {
+                    refuse(channel, NOT_A_MEMBER).await;
                     return None;
                 }
             };
-            let welcome = json!({ "t": "welcome", "member": node.me() });
+            let welcome = json!({ "t": "welcome", "hub": hub.hub });
             channel.send(&welcome).await.ok()?;
             Some((channel, member))
         }
@@ -104,76 +98,26 @@ async fn accept(node: &Arc<Node>, stream: TcpStream, ip: IpAddr) -> Option<(Chan
     }
 }
 
-/// Connects to `member` at the first address that answers.
-pub(super) async fn dial(node: Arc<Node>, member: String, noise_key: String, addrs: Vec<String>) {
-    let (Some(state), Some(remote)) = (node.state(), decode_key(&noise_key)) else {
-        return;
-    };
-    let mut channel = None;
-    for addr in &addrs {
-        match Channel::connect(addr, &node.keys().noise, &remote, &state.group).await {
-            Ok(connected) => {
-                channel = Some(connected);
-                break;
-            }
-            Err(err) => debug!(%member, %addr, err = %err, "flock dial failed"),
-        }
-    }
-    let Some(mut channel) = channel else {
-        node.unreachable(&member);
-        return;
-    };
-    let hello = json!({ "t": "hello", "member": node.me() });
-    if channel.send(&hello).await.is_err() {
-        node.unreachable(&member);
-        return;
-    }
-    let welcome = match tokio::time::timeout(HELLO_TIMEOUT, channel.recv()).await {
-        Ok(Ok(Some(welcome))) => welcome,
-        _ => {
-            node.unreachable(&member);
-            return;
-        }
-    };
-    if welcome["t"] != "welcome" || welcome["member"] != member.as_str() {
-        warn!(%member, reason = %welcome["reason"], "flock peer refused the connection");
-        node.unreachable(&member);
-        channel.close().await;
-        return;
-    }
-    node.dial_succeeded(&member);
-    run(node, channel, member, true).await;
-}
-
-fn hashes(entries: &[Entry]) -> Vec<String> {
-    entries.iter().map(Entry::hash).collect()
-}
-
-/// Authenticated connection loop.
-async fn run(node: Arc<Node>, mut channel: Channel, member: String, outbound: bool) {
-    let Some((conn, mut closed)) = node.register(&member, outbound) else {
-        debug!(%member, "flock duplicate connection dropped");
-        let _ = channel.send(&error(DUPLICATE)).await;
-        channel.close().await;
-        return;
-    };
-    info!(%member, "flock peer connected");
-    let mut events = node.subscribe();
-    let mut members = node.members_version();
+/// The hub's side of a member's connection.
+async fn serve_member(node: Arc<Node>, mut channel: Channel, member: String) {
+    let (conn, mut closed) = node.register(&member);
+    info!(%member, "flock member connected");
+    let mut roster = node.roster();
+    roster.mark_changed();
     let mut shutdown = node.shutdown();
     let mut ping = tokio::time::interval(PING_INTERVAL);
     let mut last_inbound = Instant::now();
-    let have = hashes(&node.entries());
-    let mut open = channel
-        .send(&json!({ "t": "log.have", "hashes": have }))
-        .await
-        .is_ok();
+    let mut open = true;
     while open {
         tokio::select! {
             message = channel.recv() => match message {
                 Ok(Some(message)) => {
                     last_inbound = Instant::now();
-                    open = handle(&node, &mut channel, &member, &message).await;
+                    open = match message["t"].as_str() {
+                        Some("ping") => channel.send(&json!({ "t": "pong" })).await.is_ok(),
+                        Some("error") => false,
+                        _ => true,
+                    };
                 }
                 Ok(None) => open = false,
                 Err(err) => {
@@ -181,37 +125,29 @@ async fn run(node: Arc<Node>, mut channel: Channel, member: String, outbound: bo
                     open = false;
                 }
             },
-            event = events.recv() => match event {
-                Ok(Broadcast::Entries(entries)) => {
-                    let message = json!({ "t": "log.entries", "entries": *entries });
-                    open = channel.send(&message).await.is_ok();
-                    if open {
-                        node.peer_has(&member, hashes(&entries));
+            _ = roster.changed() => {
+                match node.hub() {
+                    Some(hub) if hub.member(&member).is_some() => {
+                        let message = roster_message(&hub, &node.connected());
+                        open = channel.send(&message).await.is_ok();
                     }
-                }
-                Err(RecvError::Lagged(_)) => {
-                    let have = hashes(&node.entries());
-                    open = channel.send(&json!({ "t": "log.have", "hashes": have })).await.is_ok();
-                }
-                Err(RecvError::Closed) => open = false,
-            },
-            _ = members.changed() => {
-                if node.state().is_none_or(|state| state.active(&member).is_none()) {
-                    info!(%member, "flock peer removed; closing its connection");
-                    let _ = channel.send(&error("removed from the flock")).await;
-                    open = false;
+                    _ => {
+                        info!(%member, "flock member removed; closing its connection");
+                        let _ = channel.send(&error(REMOVED)).await;
+                        open = false;
+                    }
                 }
             }
             _ = ping.tick() => {
                 if last_inbound.elapsed() > PEER_TIMEOUT {
-                    debug!(%member, "flock peer timed out");
+                    debug!(%member, "flock member timed out");
                     open = false;
                 } else {
                     open = channel.send(&json!({ "t": "ping" })).await.is_ok();
                 }
             }
             _ = closed.changed() => {
-                debug!(%member, "flock connection replaced by a preferred one");
+                debug!(%member, "flock connection replaced by a newer one");
                 open = false;
             }
             _ = shutdown.changed() => open = false,
@@ -219,65 +155,126 @@ async fn run(node: Arc<Node>, mut channel: Channel, member: String, outbound: bo
     }
     node.unregister(conn);
     channel.close().await;
-    info!(%member, "flock peer disconnected");
+    info!(%member, "flock member disconnected");
 }
 
-/// Handles one message on an authenticated connection. `false` closes it.
-async fn handle(node: &Node, channel: &mut Channel, member: &str, message: &Value) -> bool {
-    match message["t"].as_str() {
-        Some("log.have") => {
-            let Some(reported) = message["hashes"].as_array() else {
-                return true;
-            };
-            let theirs: HashSet<String> = reported
-                .iter()
-                .filter_map(Value::as_str)
-                .map(str::to_owned)
-                .collect();
-            let missing: Vec<Entry> = node
-                .entries()
-                .into_iter()
-                .filter(|entry| !theirs.contains(&entry.hash()))
-                .collect();
-            node.peer_reported(member, theirs);
-            let reply = json!({ "t": "log.entries", "entries": missing, "reply": true });
-            let sent = channel.send(&reply).await.is_ok();
-            if sent {
-                node.peer_has(member, hashes(&missing));
+/// A member's connection to the hub: dial, hello, then keep the member list
+/// cached until either side closes.
+pub(super) async fn dial_hub(node: Arc<Node>, group: GroupFile) {
+    let Some(hub_key) = decode_key(&group.hub_key) else {
+        node.dial_failed(Some("the hub key in group.json is malformed".to_owned()));
+        return;
+    };
+    let mut channel = None;
+    for addr in &group.hub_addrs {
+        match Channel::connect(addr, &node.keys().noise, &hub_key, &group.group).await {
+            Ok(connected) => {
+                channel = Some(connected);
+                break;
             }
-            sent
+            Err(err) => debug!(%addr, err = %err, "flock could not reach the hub"),
         }
-        Some("log.entries") => {
-            let Ok(entries) = serde_json::from_value::<Vec<Entry>>(message["entries"].clone())
-            else {
-                return true;
-            };
-            if entries.len() > log::MAX_ENTRIES {
-                return false;
-            }
-            node.peer_has(member, hashes(&entries));
-            let stored = node.store_entries(&entries);
-            if stored > 0 {
-                debug!(%member, stored, "flock log entries received");
-            }
-            if message["reply"] == true {
-                node.synced(member);
-            }
-            true
+    }
+    let Some(mut channel) = channel else {
+        node.dial_failed(None);
+        return;
+    };
+    let hello = json!({ "t": "hello", "member": group.member });
+    if channel.send(&hello).await.is_err() {
+        node.dial_failed(None);
+        return;
+    }
+    let welcome = match tokio::time::timeout(HELLO_TIMEOUT, channel.recv()).await {
+        Ok(Ok(Some(welcome))) => welcome,
+        _ => {
+            node.dial_failed(None);
+            return;
         }
-        Some("ping") => channel.send(&json!({ "t": "pong" })).await.is_ok(),
-        Some("error") => {
-            if message["reason"] != DUPLICATE {
-                warn!(%member, reason = %message["reason"], "flock peer reported an error");
+    };
+    if welcome["t"] != "welcome" || welcome["hub"] != group.hub.as_str() {
+        let reason = welcome["reason"]
+            .as_str()
+            .unwrap_or("unexpected reply")
+            .to_owned();
+        warn!(reason, "the flock hub refused this machine");
+        node.dial_failed(Some(reason));
+        channel.close().await;
+        return;
+    }
+    node.hub_connected();
+    info!("flock connected to the hub");
+    let refused = run_hub_link(&node, &mut channel).await;
+    channel.close().await;
+    if let Some(reason) = &refused {
+        warn!(reason, "the flock hub closed this machine's connection");
+    } else {
+        info!("flock disconnected from the hub");
+    }
+    node.hub_disconnected(refused);
+}
+
+/// Runs a member's open hub connection. Returns the hub's reason when it
+/// turned this member away.
+async fn run_hub_link(node: &Node, channel: &mut Channel) -> Option<String> {
+    let mut shutdown = node.shutdown();
+    let mut ping = tokio::time::interval(PING_INTERVAL);
+    let mut last_inbound = Instant::now();
+    loop {
+        tokio::select! {
+            message = channel.recv() => match message {
+                Ok(Some(message)) => {
+                    last_inbound = Instant::now();
+                    match message["t"].as_str() {
+                        Some("members") => save_roster(node, &message),
+                        Some("ping") => {
+                            if channel.send(&json!({ "t": "pong" })).await.is_err() {
+                                return None;
+                            }
+                        }
+                        Some("error") => {
+                            return Some(message["reason"].as_str().unwrap_or("refused").to_owned());
+                        }
+                        _ => {}
+                    }
+                }
+                Ok(None) => return None,
+                Err(err) => {
+                    debug!(err = %err, "flock hub connection error");
+                    return None;
+                }
+            },
+            _ = ping.tick() => {
+                if last_inbound.elapsed() > PEER_TIMEOUT {
+                    debug!("flock hub timed out");
+                    return None;
+                }
+                if channel.send(&json!({ "t": "ping" })).await.is_err() {
+                    return None;
+                }
             }
-            false
+            _ = shutdown.changed() => return None,
         }
-        _ => true,
+    }
+}
+
+fn save_roster(node: &Node, message: &Value) {
+    let Ok(members) = serde_json::from_value::<Vec<Member>>(message["members"].clone()) else {
+        return;
+    };
+    let connected = serde_json::from_value(message["connected"].clone()).unwrap_or_default();
+    let cache = MembersCache {
+        version: 1,
+        members,
+        connected,
+        updated_at: now_unix(),
+    };
+    if let Err(err) = store::save_members_cache(node.dir(), &cache) {
+        warn!(err = %err, "could not save the flock member list");
     }
 }
 
 /// A machine joining with an invite: redeem it, show the short code, wait
-/// for the owner's decision, then send the log.
+/// for the decision on the hub, then tell the machine its member ID.
 async fn join(node: &Arc<Node>, mut channel: Channel, hello: &Value, ip: IpAddr) {
     if node.join_blocked(ip) {
         refuse(channel, "too many failed join attempts; wait a minute").await;
@@ -285,26 +282,11 @@ async fn join(node: &Arc<Node>, mut channel: Channel, hello: &Value, ip: IpAddr)
     }
     let field = |key: &str| hello[key].as_str().unwrap_or_default().to_owned();
     let invite_id = field("invite");
-    let sign_key = field("sign_key");
     let name: String = field("name")
         .trim()
         .chars()
-        .take(log::MAX_NAME_CHARS)
+        .take(store::MAX_NAME_CHARS)
         .collect();
-    let addrs: Vec<String> = hello["addrs"]
-        .as_array()
-        .map(|addrs| {
-            addrs
-                .iter()
-                .filter_map(Value::as_str)
-                .map(str::to_owned)
-                .collect()
-        })
-        .unwrap_or_default();
-    let Some(sign_public) = decode_key(&sign_key) else {
-        refuse(channel, "signing key is malformed").await;
-        return;
-    };
     let record = match invite::redeem(node.dir(), &invite_id, &field("secret"), now_unix()) {
         Ok(record) => record,
         Err(reason) => {
@@ -313,33 +295,28 @@ async fn join(node: &Arc<Node>, mut channel: Channel, hello: &Value, ip: IpAddr)
             return;
         }
     };
-    let member = MemberInfo {
-        id: keys::member_id(&sign_public),
+    let noise_key = encode_key(&channel.remote_static);
+    let sas = channel::sas(&channel.handshake_hash);
+    let request = JoinRequest {
+        version: 1,
+        invite: invite_id.clone(),
+        role: record.role,
         name: if name.is_empty() {
             "computer".to_owned()
         } else {
             name
         },
         kind: Kind::Computer,
-        sign_key,
-        noise_key: encode_key(&channel.remote_static),
-        addrs,
-    };
-    let sas = channel::sas(&channel.handshake_hash);
-    let request = JoinRequest {
-        version: 1,
-        invite: invite_id.clone(),
-        role: record.role,
-        member: member.clone(),
+        noise_key: noise_key.clone(),
         sas: sas.clone(),
         at: now_unix(),
     };
     if let Err(err) = invite::save_request(node.dir(), &request) {
         warn!(err = %err, "could not save a flock join request");
-        refuse(channel, "the host could not record the request").await;
+        refuse(channel, "the hub could not record the request").await;
         return;
     }
-    info!(member = %member.id, name = %member.name, "flock join waiting for approval");
+    info!(name = %request.name, "flock join waiting for approval");
     if channel
         .send(&json!({ "t": "join.wait", "sas": sas }))
         .await
@@ -363,7 +340,7 @@ async fn join(node: &Arc<Node>, mut channel: Channel, hello: &Value, ip: IpAddr)
             }
             closed = channel.recv() => {
                 if !matches!(closed, Ok(Some(_))) {
-                    info!(member = %member.id, "flock join abandoned");
+                    info!("flock join abandoned");
                     invite::clear(node.dir(), &invite_id);
                     return;
                 }
@@ -373,23 +350,27 @@ async fn join(node: &Arc<Node>, mut channel: Channel, hello: &Value, ip: IpAddr)
     match outcome {
         Some(Decision::Approved) => {
             node.reload();
-            if node
-                .state()
-                .is_none_or(|state| state.active(&member.id).is_none())
-            {
-                refuse(channel, "approved, but the member is missing from the log").await;
-            } else {
-                let joined = json!({
+            let joined = node.hub().and_then(|hub| {
+                let member = hub.by_noise_key(&noise_key)?;
+                Some(json!({
                     "t": "joined",
-                    "group": node.state().map(|state| state.group).unwrap_or_default(),
-                    "entries": node.entries(),
-                });
-                let _ = channel.send(&joined).await;
-                channel.close().await;
-                info!(member = %member.id, "flock member joined");
+                    "group": hub.group,
+                    "name": hub.name,
+                    "member": member.id,
+                    "role": member.role,
+                    "hub": hub.hub,
+                }))
+            });
+            match joined {
+                Some(joined) => {
+                    let _ = channel.send(&joined).await;
+                    channel.close().await;
+                    info!("flock member joined");
+                }
+                None => refuse(channel, "approved, but the hub has no record of the member").await,
             }
         }
-        Some(Decision::Denied) => refuse(channel, "the owner declined the join").await,
+        Some(Decision::Denied) => refuse(channel, "the join was declined").await,
         None => refuse(channel, "the join timed out").await,
     }
     invite::clear(node.dir(), &invite_id);

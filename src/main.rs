@@ -553,12 +553,13 @@ const DEFAULT_CONFIG: &str = r##"# flockr configuration
 
 [flock]
 # Join this machine's server to a flock: several flockr servers that see each
-# other's agents without SSH. Off by default. Start a flock with
-# `flockr flock init`, add machines with `flockr flock invite` and
-# `flockr flock join`. Connections use Noise with keys checked against the
-# flock's signed member list. Binds only to the listed IP addresses (for
-# example a NetBird address); 0.0.0.0 and :: are rejected. All keys need a
-# server restart.
+# other's agents through one hub, without SSH. Off by default. Start a flock
+# on the hub with `flockr flock init`, add machines with `flockr flock invite`
+# there and `flockr flock join` on the new machine. Members connect only to
+# the hub, over Noise with keys the hub checks against its member list. Only
+# the hub needs `listen`. Binds only to the listed IP addresses (for example a
+# NetBird address); 0.0.0.0 and :: are rejected. All keys need a server
+# restart.
 # enabled = false
 # Literal IP addresses, optionally with a port: ["100.92.14.3", "[fd00::1]:47392"].
 # listen = []

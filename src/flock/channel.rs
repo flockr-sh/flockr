@@ -1,7 +1,7 @@
-//! The encrypted channel between flock members: WebSocket at `/flock/v1`
-//! carrying `Noise_IK_25519_ChaChaPoly_SHA256`. The initiator knows the
-//! responder's static key from the log or the invite; the responder learns
-//! the initiator's in the handshake and checks it against the log. The
+//! The encrypted channel from a flock member to the hub: WebSocket at
+//! `/flock/v1` carrying `Noise_IK_25519_ChaChaPoly_SHA256`. The member knows
+//! the hub's static key from the invite; the hub learns the member's in the
+//! handshake and checks it against its member list. The
 //! prologue binds the group ID, so a handshake for another group fails.
 //!
 //! After the handshake, frames and chunking match `mobile.v2`
@@ -30,7 +30,7 @@ pub(crate) const PROTOCOL_NAME: &str = "Noise_IK_25519_ChaChaPoly_SHA256";
 const MSG1_LEN: usize = 32 + 48 + 16;
 /// e and the tag of an empty payload.
 const MSG2_LEN: usize = 32 + 16;
-/// Cap on one reassembled message; the largest is a full log sync.
+/// Cap on one reassembled message.
 pub(crate) const MAX_MESSAGE_BYTES: usize = 16 * 1024 * 1024;
 pub(crate) const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 pub(crate) const WRITE_TIMEOUT: Duration = Duration::from_secs(30);

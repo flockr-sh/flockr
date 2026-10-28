@@ -1311,7 +1311,8 @@ pub const DEFAULT_MOBILE_PORT: u16 = 47390;
 pub struct MobileConfig {
     /// Start the gateway. Default: false.
     pub enabled: bool,
-    /// Literal IP addresses to bind, optionally with `:port` (`[v6]:port`).
+    /// Literal IP addresses to bind on the hub, optionally with `:port`
+    /// (`[v6]:port`).
     /// Unspecified addresses (`0.0.0.0`, `::`) and host names are rejected.
     pub listen: Vec<String>,
     /// Port for `listen` entries without one. Default: 47390.
@@ -1437,14 +1438,16 @@ fn parse_mobile_listen_entry(
 /// Default TCP port for flock connections between members.
 pub const DEFAULT_FLOCK_PORT: u16 = 47392;
 
-/// `[flock]`: the encrypted listener other members of this machine's flock
-/// connect to. Every key needs a server restart.
+/// `[flock]`: this server's part in a flock. On the hub, the encrypted
+/// listener members connect to; elsewhere, the connection to the hub. Every
+/// key needs a server restart.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct FlockConfig {
-    /// Start the listener and connect to other members. Default: false.
+    /// Run the flock node. Default: false.
     pub enabled: bool,
-    /// Literal IP addresses to bind, optionally with `:port` (`[v6]:port`).
+    /// Literal IP addresses to bind on the hub, optionally with `:port`
+    /// (`[v6]:port`).
     /// Unspecified addresses (`0.0.0.0`, `::`) and host names are rejected.
     pub listen: Vec<String>,
     /// Port for `listen` entries without one. Default: 47392.
@@ -1482,16 +1485,10 @@ impl FlockConfig {
         (addrs, diagnostics)
     }
 
-    /// Config warnings for `[flock]`.
+    /// Config warnings for `[flock]`. An empty `listen` is fine: only the
+    /// hub listens, and `flockr flock init` and `invite` warn there.
     pub fn diagnostics(&self) -> Vec<String> {
-        let (addrs, mut diagnostics) = self.listen_addrs();
-        if self.enabled && addrs.is_empty() {
-            diagnostics.push(
-                "flock.enabled is true but flock.listen has no usable address; this machine will not accept flock connections"
-                    .to_owned(),
-            );
-        }
-        diagnostics
+        self.listen_addrs().1
     }
 
     /// This machine's name in the flock.
@@ -1943,7 +1940,7 @@ expo_access_token = "secret"
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(config.flock.display_name(), "tower");
         let config: Config = toml::from_str("[flock]\nenabled = true\n").unwrap();
-        assert_eq!(config.flock.diagnostics().len(), 1);
+        assert!(config.flock.diagnostics().is_empty());
     }
 
     #[test]

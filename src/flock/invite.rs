@@ -1,9 +1,10 @@
 //! Invites and join requests.
 //!
-//! `flockr flock invite` writes an invite; the server redeems it when a new
-//! machine connects and writes a join request; the CLI shows the request and
-//! writes the owner's decision; the server sends the result to the new
-//! machine. Each step is its own file, so no file has two writers.
+//! On the hub, `flockr flock invite` writes an invite; the server redeems it
+//! when a new machine connects and writes a join request; the CLI shows the
+//! request, adds the member to `hub.json` if approved, and writes the
+//! decision; the server sends the result to the new machine. Each step is its
+//! own file, so no file has two writers.
 
 use std::fs;
 use std::io;
@@ -11,7 +12,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use super::log::{MemberInfo, Role};
+use super::store::{Kind, Role};
 use crate::mobile::store::{
     atomic_create, atomic_write, base64url, random_bytes, secret_matches, sha256_hex,
 };
@@ -28,10 +29,11 @@ pub(crate) struct InvitePayload {
     pub v: u32,
     pub group: String,
     pub name: String,
-    /// Member that issued the invite and accepts the join.
-    pub host: String,
-    /// The host's Noise public key.
-    pub noise_key: String,
+    /// The hub's member ID.
+    pub hub: String,
+    /// The hub's Noise public key.
+    pub hub_key: String,
+    /// `host:port` addresses to reach the hub at.
     pub addrs: Vec<String>,
     pub invite: String,
     pub secret: String,
@@ -142,13 +144,16 @@ pub(crate) fn redeem(
     }
 }
 
-/// A machine waiting for the owner to approve its join.
+/// A machine waiting for approval on the hub.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct JoinRequest {
     pub version: u32,
     pub invite: String,
     pub role: Role,
-    pub member: MemberInfo,
+    pub name: String,
+    pub kind: Kind,
+    /// The joining machine's Noise public key, from the handshake.
+    pub noise_key: String,
     /// Short code both screens show.
     pub sas: String,
     pub at: u64,
@@ -236,8 +241,8 @@ mod tests {
             v: PAYLOAD_VERSION,
             group: "g".into(),
             name: "home".into(),
-            host: "m_x".into(),
-            noise_key: "k".into(),
+            hub: "m_x".into(),
+            hub_key: "k".into(),
             addrs: vec!["10.0.0.1:47392".into()],
             invite: "i_1".into(),
             secret: "s".into(),

@@ -4,15 +4,15 @@ use super::{json_flag, option};
 
 pub(super) fn command() -> Command {
     Command::new("flock")
-        .about("Join several machines' flockr servers into one group")
+        .about("Join several machines' flockr servers through one hub")
         .subcommand(
             Command::new("init")
-                .about("Start a flock; this machine holds the owner key")
+                .about("Start a flock with this machine as the hub")
                 .arg(option("name", "NAME").help("Flock name")),
         )
         .subcommand(
             Command::new("invite")
-                .about("Invite a machine and approve its join (owner machine only)")
+                .about("Invite a machine and approve its join (on the hub)")
                 .arg(option("role", "ROLE").help("admin (default), member, or viewer"))
                 .arg(option("ttl", "SECS").help("Invite lifetime in seconds (60..=3600)")),
         )
@@ -33,7 +33,7 @@ pub(super) fn command() -> Command {
         )
         .subcommand(
             Command::new("remove")
-                .about("Remove a member from the flock everywhere")
+                .about("Remove a member (on the hub)")
                 .arg(Arg::new("member").value_name("MEMBER")),
         )
 }
