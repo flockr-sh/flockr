@@ -2,6 +2,8 @@
 const APP_VARIANT = process.env.APP_VARIANT || 'development';
 const IS_DEV = APP_VARIANT === 'development';
 // EAS project @dmkenney/flockr-mobile. Push tokens need it.
+const CAMERA_USAGE =
+  'flockr uses the camera to scan the pairing QR code shown by `flockr mobile pair` and to take photos you attach to messages.';
 const EAS_PROJECT_ID = process.env.EAS_PROJECT_ID || 'a9e72b44-a4d7-4c9d-bffd-9b7addac30b3';
 
 module.exports = {
@@ -40,9 +42,17 @@ module.exports = {
       [
         'expo-camera',
         {
-          cameraPermission: 'flockr uses the camera to scan the pairing QR code shown by `flockr mobile pair`.',
+          cameraPermission: CAMERA_USAGE,
           microphonePermission: false,
           recordAudioAndroid: false,
+        },
+      ],
+      [
+        'expo-image-picker',
+        {
+          photosPermission: 'flockr attaches the photos you pick to messages for your agents.',
+          cameraPermission: CAMERA_USAGE,
+          microphonePermission: false,
         },
       ],
       [

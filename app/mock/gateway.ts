@@ -28,7 +28,7 @@ const WS_PATH = '/mobile/v2';
 /** v1 inbound caps: 1 MiB for input text messages, 64 KiB for the rest. */
 const MAX_INPUT_BYTES = 1024 * 1024;
 const MAX_OTHER_BYTES = 64 * 1024;
-const INPUT_TYPES = new Set(['input.paste', 'input.submit', 'input.text']);
+const INPUT_TYPES = new Set(['input.paste', 'input.submit', 'input.text', 'input.image']);
 
 export type PaneKind = 'shell' | 'log' | 'tui' | 'stress';
 
@@ -546,6 +546,7 @@ export class MockGateway {
         'push.expo',
         ...(this.opts.shift !== false ? ['surface.shift'] : []),
         ...(this.opts.wheel !== false ? ['surface.wheel'] : []),
+        'input.image',
       ],
       methods: [
         'ping',
@@ -688,6 +689,7 @@ export class MockGateway {
       case 'input.key':
       case 'input.paste':
       case 'input.submit':
+      case 'input.image':
         return this.onInput(c, msg, id);
       default:
         if (id) err('unknown_type');
@@ -856,6 +858,9 @@ export class MockGateway {
       case 'input.submit':
         typeText(String(msg.text ?? ''));
         this.enter(pane);
+        break;
+      case 'input.image':
+        typeText(`/tmp/mock-image-${Date.now()}.${String(msg.format ?? 'png')} `);
         break;
       case 'input.key':
         for (const k of (msg.keys as string[]) ?? []) {

@@ -368,6 +368,19 @@ async function main(): Promise<void> {
       (e) => check(`input: key ${k}`, false, String(e)),
     );
   }
+  // An attached image comes back as a pasted file path. 1x1 PNG.
+  if (client.hasFeature('input.image')) {
+    const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+    await fit.image('png', png).then(
+      () => check('input: image ok', true),
+      (e) => check('input: image ok', false, String(e)),
+    );
+    await waitFor('image path pasted', () => /\S+\.png/.test(screen(fit.grid)), 5000).then(
+      () => check('input: image path pasted', true),
+      (e) => check('input: image path pasted', false, String(e) + '\n' + screen(fit.grid)),
+    );
+    await fit.input('key', ['ctrl+c']);
+  }
 
   // 8. One-character delta (typical keystroke).
   await sleep(300);
