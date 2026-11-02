@@ -1,24 +1,11 @@
 // The desktop message box: a chat-style field that sends a message to the
-// agent (Enter sends, Shift+Enter adds a line), quick keys under it, and a
-// hidden field that takes keystrokes for the terminal once it is clicked.
+// agent (Enter sends, Shift+Enter adds a line), and a hidden field that
+// takes keystrokes for the terminal once it is clicked.
 import React, { useImperativeHandle, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { colors } from '../state/ui';
 import { diffInput } from '../terminal/directInput';
 import type { ComposerHandle } from '../terminal/Composer';
-
-const QUICK_KEYS: { label: string; keys: string[]; hint: string }[] = [
-  { label: 'Esc', keys: ['esc'], hint: 'Escape' },
-  { label: '⇧Tab', keys: ['shift+tab'], hint: 'Shift+Tab' },
-  { label: '^C', keys: ['ctrl+c'], hint: 'Ctrl+C' },
-  { label: '↑', keys: ['up'], hint: 'Up' },
-  { label: '↓', keys: ['down'], hint: 'Down' },
-  { label: '⏎', keys: ['enter'], hint: 'Enter' },
-  { label: 'y', keys: ['y'], hint: 'y' },
-  { label: 'n', keys: ['n'], hint: 'n' },
-  { label: '1', keys: ['1'], hint: '1' },
-  { label: '2', keys: ['2'], hint: '2' },
-];
 
 // Browser key names the terminal takes as keys rather than text.
 const KEY_NAMES: Record<string, string> = {
@@ -130,6 +117,7 @@ export function DesktopComposer({ target, onSubmit, onPaste, onText, onKeys, onA
         editable={!disabled}
       />
       <View style={[styles.box, typing && styles.boxIdle]}>
+        {onAttach ? <Chip label="＋" hint="Attach an image" onPress={onAttach} disabled={disabled} /> : null}
         <TextInput
           ref={message}
           style={[styles.input, { height: Math.min(200, Math.max(24, height)) }]}
@@ -142,24 +130,16 @@ export function DesktopComposer({ target, onSubmit, onPaste, onText, onKeys, onA
           multiline
           editable={!disabled}
         />
-        <View style={styles.bar}>
-          <View style={styles.chips}>
-            {onAttach ? <Chip label="＋" hint="Attach an image" onPress={onAttach} disabled={disabled} /> : null}
-            {QUICK_KEYS.map((k) => (
-              <Chip key={k.label} label={k.label} hint={k.hint} onPress={() => onKeys(k.keys)} disabled={disabled} />
-            ))}
-          </View>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Send"
-            disabled={disabled || !text.trim()}
-            onPress={() => send(true)}
-            onLongPress={() => send(false)}
-            style={[styles.send, (disabled || !text.trim()) && styles.sendOff]}
-          >
-            <Text style={styles.sendText}>↑</Text>
-          </Pressable>
-        </View>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Send"
+          disabled={disabled || !text.trim()}
+          onPress={() => send(true)}
+          onLongPress={() => send(false)}
+          style={[styles.send, (disabled || !text.trim()) && styles.sendOff]}
+        >
+          <Text style={styles.sendText}>↑</Text>
+        </Pressable>
       </View>
       <Text style={styles.footnote}>
         {typing
@@ -203,9 +183,12 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     borderWidth: 1,
     borderColor: '#2c303d',
-    paddingHorizontal: 14,
-    paddingTop: 12,
-    paddingBottom: 8,
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 10,
+    paddingLeft: 16,
+    paddingRight: 8,
+    paddingVertical: 8,
     shadowColor: '#000',
     shadowOpacity: 0.35,
     shadowRadius: 18,
@@ -213,13 +196,13 @@ const styles = StyleSheet.create({
   },
   boxIdle: { opacity: 0.7 },
   input: {
+    flex: 1,
+    marginBottom: 5,
     color: colors.text,
     fontSize: 15,
     lineHeight: 22,
     outlineStyle: 'none',
   } as object,
-  bar: { flexDirection: 'row', alignItems: 'center', marginTop: 8, gap: 8 },
-  chips: { flex: 1, flexDirection: 'row', flexWrap: 'wrap', gap: 4 },
   chip: {
     minWidth: 30,
     paddingHorizontal: 8,
