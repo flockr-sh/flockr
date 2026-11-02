@@ -47,6 +47,8 @@ export function TerminalScreen({ nav, serverId, paneId, title, variant = 'phone'
   const [perf, setPerf] = useState(false);
   const [nativeDebug, setNativeDebug] = useState(false);
   const [sub, setSub] = useState<Subscription | null>(null);
+  // The pane's background, so the space around the terminal matches it.
+  const [paneBg, setPaneBg] = useState<string | null>(null);
   const [ended, setEnded] = useState<string | null>(null);
   const [layout, setLayout] = useState<TerminalLayout | null>(null);
   const [sheet, setSheet] = useState<{ title: string; lines: string[] } | null>(null);
@@ -112,6 +114,7 @@ export function TerminalScreen({ nav, serverId, paneId, title, variant = 'phone'
       paneId,
       mode === 'fit' && fitSize ? { mode: 'fit', cols: fitSize.cols, rows: fitSize.rows } : { mode: 'observe' },
       {
+        onStarted: () => setPaneBg(`#${s.theme.bg.toString(16).padStart(6, '0')}`),
         onEnded: (reason, message) => {
           // Another device (or a desktop attach) holds this pane's size: keep watching at the desktop size.
           if (mode === 'fit' && (reason === 'taken_over' || message?.startsWith('pane_busy'))) {
@@ -253,7 +256,7 @@ export function TerminalScreen({ nav, serverId, paneId, title, variant = 'phone'
           </View>
         </View>
         {ended || notice ? <Text style={desk.notice}>{ended ? `Stream ended: ${ended}` : notice}</Text> : null}
-        <View style={desk.surface}>
+        <View style={[desk.surface, paneBg ? { backgroundColor: paneBg } : null]}>
           {perf ? <PerfOverlay client={client} sub={sub} view={viewStats} /> : null}
           {terminal}
         </View>
@@ -407,14 +410,9 @@ const desk = StyleSheet.create({
   notice: { color: colors.dim, fontSize: 12.5, paddingHorizontal: 24, paddingTop: 8 },
   surface: {
     flex: 1,
-    marginHorizontal: 24,
-    marginTop: 14,
-    borderRadius: 12,
     overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: '#1e2029',
     backgroundColor: '#0d0e12',
-    padding: 12,
+    padding: 8,
   },
 });
 
