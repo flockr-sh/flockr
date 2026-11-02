@@ -19,7 +19,8 @@ import { colors, ui } from '../state/ui';
 import { GatewayClient, GatewayError, gridText, InputKind, linkAt, Subscription, SurfaceMode } from '../protocol';
 import { canAttachImages, pickImage } from '../terminal/attachImage';
 import { Composer, ComposerHandle } from '../terminal/Composer';
-import { DesktopComposer } from '../desktop/DesktopComposer';
+import { DesktopKeyboard } from '../desktop/DesktopKeyboard';
+import { prepareImage } from '../desktop/pasteImage';
 import { PerfOverlay } from '../terminal/PerfOverlay';
 import { TextSheet } from '../terminal/TextSheet';
 import { BASE_FONT_SIZE, makeViewStats, TerminalLayout, TerminalView } from '../terminal/TerminalView';
@@ -171,6 +172,22 @@ export function TerminalScreen({ nav, serverId, paneId, title, variant = 'phone'
     }
   }, [sub]);
 
+  const pasteImage = useCallback(
+    async (file: File) => {
+      if (!sub) return;
+      try {
+        setNotice('Attaching image…');
+        const image = await prepareImage(file);
+        await sub.image(image.format, image.data);
+        setNotice('Image attached');
+      } catch (e) {
+        setNotice(null);
+        setLastError(String((e as Error).message ?? e));
+      }
+    },
+    [sub],
+  );
+
   const onTapCell = useCallback(
     (col: number, row: number) => {
       composer.current?.tapTerminal();
@@ -260,15 +277,13 @@ export function TerminalScreen({ nav, serverId, paneId, title, variant = 'phone'
           {perf ? <PerfOverlay client={client} sub={sub} view={viewStats} /> : null}
           {terminal}
         </View>
-        <DesktopComposer
+        <DesktopKeyboard
           ref={composer}
-          target={title}
           disabled={!sub || !!ended}
-          onSubmit={(t) => send('submit', t)}
           onPaste={(t) => send('paste', t)}
           onText={(t) => send('text', t)}
           onKeys={(k) => send('key', k)}
-          onAttach={onAttach}
+          onImage={client?.hasFeature('input.image') ? pasteImage : undefined}
         />
         <TextSheet title={sheet?.title ?? ''} lines={sheet?.lines ?? null} onClose={() => setSheet(null)} />
       </View>
