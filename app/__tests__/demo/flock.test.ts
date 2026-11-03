@@ -1,5 +1,6 @@
 import { DEMO_DEVICE_ID, DEMO_HUB_ID, DEMO_TOKEN, DemoFlock } from '../../src/demo/flock';
 import { AgentInfo, decodeServerKey, GatewayClient, gridText, Subscription } from '../../src/protocol';
+import { answerPrompt, readPrompt } from '../../src/state/answer';
 
 function waitFor(cond: () => boolean, timeoutMs = 3000): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -133,5 +134,49 @@ describe('demo flock', () => {
     await waitFor(() => infra.text().includes('draft the terraform changes'));
     flock.advance(3000);
     await waitFor(() => infra.text().includes('This is a demo machine'));
+  });
+
+  it('answers the checkout prompt from its parsed screen', async () => {
+    const studio = await connect();
+    const prompt = await readPrompt(studio, 'p_checkout');
+    expect(prompt?.question).toBe('Do you want to proceed?');
+    expect(prompt?.detail).toBe('npx playwright test --project=chromium');
+    expect(prompt?.options.map((o) => o.key)).toEqual(['1', '2', '3', '4']);
+    expect(prompt?.options[0].label).toBe('Yes');
+    expect(prompt?.options[3].label).toBe('No, and tell Claude what to do differently');
+    if (!prompt) return;
+
+    expect(await answerPrompt(studio, 'p_checkout', prompt, prompt.options[0])).toBe('sent');
+    expect((await agents(studio)).find((a) => a.name === 'checkout')?.agent_status).toBe('working');
+    // A second tap finds the agent no longer blocked and sends nothing.
+    expect(await answerPrompt(studio, 'p_checkout', prompt, prompt.options[0])).toBe('not-blocked');
+    for (let i = 0; i < 20; i++) flock.advance(500);
+    expect((await agents(studio)).find((a) => a.name === 'checkout')?.agent_status).toBe('done');
+  });
+
+  it('sends nothing when the prompt changed', async () => {
+    const studio = await connect();
+    const prompt = await readPrompt(studio, 'p_checkout');
+    if (!prompt) throw new Error('no prompt');
+    const pane = flock.pane('studio', 'p_checkout');
+    const keys = jest.spyOn(pane as NonNullable<typeof pane>, 'key');
+
+    const relabeled = { key: '1', label: 'Yes, and delete everything' };
+    expect(await answerPrompt(studio, 'p_checkout', prompt, relabeled)).toBe('changed');
+    const otherCommand = { ...prompt, detail: 'rm -rf ~/src/storefront' };
+    expect(await answerPrompt(studio, 'p_checkout', otherCommand, prompt.options[0])).toBe('changed');
+    expect(keys).not.toHaveBeenCalled();
+    expect((await agents(studio)).find((a) => a.name === 'checkout')?.agent_status).toBe('blocked');
+  });
+
+  it('never sends to an agent that is not blocked', async () => {
+    const studio = await connect();
+    const prompt = await readPrompt(studio, 'p_checkout');
+    if (!prompt) throw new Error('no prompt');
+    const pane = flock.pane('studio', 'p_api');
+    const keys = jest.spyOn(pane as NonNullable<typeof pane>, 'key');
+    expect(await answerPrompt(studio, 'p_api', prompt, prompt.options[0])).toBe('not-blocked');
+    expect(keys).not.toHaveBeenCalled();
+    expect(await readPrompt(studio, 'p_api')).toBeNull();
   });
 });

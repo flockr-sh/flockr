@@ -19,6 +19,7 @@ import {
 import { MessagesList } from '../screens/MessagesScreen';
 import { PairScreen } from '../screens/PairScreen';
 import { DemoTag } from '../screens/DemoTag';
+import { NeedsYouCard } from '../screens/NeedsYouCard';
 import { SettingsList } from '../screens/SettingsScreen';
 import { TerminalScreen } from '../screens/TerminalScreen';
 import { useWaitingMessages } from '../state/messages';
@@ -693,30 +694,46 @@ function MachineCard({ server, onSelect }: { server: StoredServer; onSelect: (s:
         </Text>
       </View>
       {sorted.length === 0 ? <Text style={over.cardEmpty}>{repair ? '' : 'No agents running.'}</Text> : null}
-      {sorted.map((row) => (
-        <Pressable
-          key={row.agent.pane_id}
-          accessibilityRole="button"
-          onPress={() =>
-            onSelect({
-              serverId: server.server_id,
-              paneId: row.agent.pane_id,
-              title: row.name,
-              crumb: `${server.name} › ${row.workspaceLabel} › ${row.tabLabel}`,
-            })
-          }
-          style={(state) => [over.agent, (state as { hovered?: boolean }).hovered && over.agentHover]}
-        >
-          <StatusDot status={row.status} />
-          <Text style={over.agentName} numberOfLines={1}>
-            {row.workspaceLabel}
-          </Text>
-          <Text style={over.agentWhere} numberOfLines={1}>
-            {row.agent.terminal_title_stripped || row.name}
-          </Text>
-          <Text style={[over.badge, { color: statusColor[row.status] }]}>{row.status}</Text>
-        </Pressable>
-      ))}
+      {sorted.map((row) => {
+        const select = () =>
+          onSelect({
+            serverId: server.server_id,
+            paneId: row.agent.pane_id,
+            title: row.name,
+            crumb: `${server.name} › ${row.workspaceLabel} › ${row.tabLabel}`,
+          });
+        const item = (
+          <Pressable
+            key={row.agent.pane_id}
+            accessibilityRole="button"
+            onPress={select}
+            style={(state) => [over.agent, (state as { hovered?: boolean }).hovered && over.agentHover]}
+          >
+            <StatusDot status={row.status} />
+            <Text style={over.agentName} numberOfLines={1}>
+              {row.workspaceLabel}
+            </Text>
+            <Text style={over.agentWhere} numberOfLines={1}>
+              {row.agent.terminal_title_stripped || row.name}
+            </Text>
+            <Text style={[over.badge, { color: statusColor[row.status] }]}>{row.status}</Text>
+          </Pressable>
+        );
+        return row.status === 'blocked' ? (
+          <View key={row.agent.pane_id} style={over.needs}>
+            <NeedsYouCard
+              row={row}
+              client={client}
+              serverId={server.server_id}
+              where={[server.name, row.workspaceLabel].filter(Boolean).join(' · ')}
+              onOpen={select}
+              fallback={item}
+            />
+          </View>
+        ) : (
+          item
+        );
+      })}
     </View>
   );
 }
@@ -934,6 +951,7 @@ const over = StyleSheet.create({
     borderRadius: 8,
   },
   agentHover: { backgroundColor: '#1b1e27' },
+  needs: { marginVertical: 4 },
   agentName: { color: '#d6d9e2', fontSize: 13.5, fontWeight: '600', width: 150 },
   agentWhere: { color: '#8a90a2', fontSize: 12.5, flex: 1 },
   badge: { fontSize: 11.5, fontWeight: '600', textTransform: 'capitalize' },

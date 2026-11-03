@@ -75,6 +75,14 @@ function worst(statuses: AgentStatus[]): AgentStatus {
   return 'idle';
 }
 
+/** API key names ("Enter", "Escape", "Up") as the demo panes name them. */
+function demoKey(key: string): string {
+  const k = key.trim();
+  if (k.length === 1) return k;
+  const lower = k.toLowerCase();
+  return lower === 'escape' ? 'esc' : lower;
+}
+
 const clamp = (v: unknown, lo: number, hi: number) =>
   typeof v === 'number' && Number.isFinite(v) ? Math.min(hi, Math.max(lo, Math.floor(v))) : lo;
 
@@ -427,6 +435,10 @@ export class DemoFlock {
         'tab.list',
         'pane.list',
         'pane.mark_read',
+        'agent.read',
+        'pane.read',
+        'agent.send_keys',
+        'pane.send_keys',
         'message.pending',
         'message.approve',
         'message.deny',
@@ -568,6 +580,39 @@ export class DemoFlock {
           p.status = 'idle';
           for (const conn of this.conns) if (conn.machine === m) this.sendAgents(conn, false);
         }
+        return ok({ type: 'ok' });
+      }
+      case 'agent.read':
+      case 'pane.read': {
+        const target = method === 'agent.read' ? params.target : params.pane_id;
+        const p = m.panes.find((x) => x.id === target || `term_${x.id}` === target);
+        if (!p || (method === 'agent.read' && !p.isAgent)) return fail('not_found', `not found: ${String(target)}`);
+        // Every source reads the visible screen; `lines` keeps the bottom rows.
+        const rows = p.screen();
+        const lines = typeof params.lines === 'number' && params.lines > 0 ? rows.slice(-params.lines) : rows;
+        return ok({
+          type: 'pane_read',
+          read: {
+            pane_id: p.id,
+            workspace_id: p.def.workspace_id,
+            tab_id: p.def.tab_id,
+            source: params.source ?? 'recent',
+            format: 'text',
+            text: lines.join('\n'),
+            revision: 0,
+            truncated: false,
+          },
+        });
+      }
+      case 'agent.send_keys':
+      case 'pane.send_keys': {
+        const target = method === 'agent.send_keys' ? params.target : params.pane_id;
+        const p = m.panes.find((x) => x.id === target || `term_${x.id}` === target);
+        if (!p || (method === 'agent.send_keys' && !p.isAgent))
+          return fail('not_found', `not found: ${String(target)}`);
+        const keys = Array.isArray(params.keys) ? params.keys.map(String) : [];
+        for (const k of keys) p.key(demoKey(k));
+        this.pumpPane(p);
         return ok({ type: 'ok' });
       }
       case 'message.pending':
