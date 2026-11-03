@@ -102,7 +102,7 @@ impl Palette {
     /// flockr light — the light flockr flavor.
     pub fn flockr_light() -> Self {
         Self {
-            accent: Color::Rgb(11, 138, 144), // #0b8a90
+            accent: Color::Rgb(7, 115, 122), // #07737a: 4.5:1 or more on every light surface
             panel_bg: Color::Rgb(244, 242, 237),
             sidebar_bg: Color::Reset,
             active_row_bg: Color::Rgb(233, 230, 223),
@@ -118,8 +118,8 @@ impl Palette {
             green: Color::Rgb(47, 138, 59),
             yellow: Color::Rgb(167, 107, 0),
             red: Color::Rgb(200, 50, 77),
-            blue: Color::Rgb(11, 138, 144),
-            teal: Color::Rgb(11, 138, 144),
+            blue: Color::Rgb(7, 115, 122),
+            teal: Color::Rgb(7, 115, 122),
             peach: Color::Rgb(194, 85, 26),
         }
     }
