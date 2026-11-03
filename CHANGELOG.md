@@ -16,6 +16,36 @@
   session is still empty (`session_empty`).
 - The phone app can attach images. The gateway saves each one like a
   desktop clipboard image paste and pastes its path into the pane.
+- Flock: several machines' flockr servers act as one, off by default
+  (`[flock]` in the config). Start one with `flockr flock init` on the hub,
+  add machines with `flockr flock invite` there and `flockr flock join` on
+  the new machine; no SSH needed. Members connect only to the hub, over
+  Noise, with keys the hub checks against its member list. Roles are
+  admin, member, and viewer. `flockr flock agents` lists every agent with
+  the address to send it a message, and `flockr --machine <name>` runs
+  commands on another member.
+- The TUI shows other flock members' panes, and the phone app shows every
+  machine in the flock through the one it paired with.
+- Agents message each other on any machine: `flockr message send
+  machine:agent "..."`, with `--wait` for the reply, and `flockr message
+  read` and `reply`. An agent can be addressed by name, pane ID, or kind
+  (`tower:claude`) when only one of that kind runs there. flockr types a
+  notice into the recipient's pane when it is idle, and holds it while a
+  person is typing there. Senders are verified, conversations stop after 8
+  replies, and every message is logged in `messages.jsonl`.
+- `[flock] approve_messages` decides which agent messages wait for a
+  person: `other-projects` (default: same-repo messages and replies go
+  through), `never`, or `always`. Approve or deny with `flockr message
+  approve` and `deny`, from the phone or web app, or allow a pair for
+  good. The setting is in the TUI settings and the apps, and applies
+  without a restart.
+- Web app, off by default (`[web]` in the config): the phone app's screens
+  in a desktop layout, served over plain HTTP on your private network.
+  Type straight into a terminal, paste text and images, approve messages,
+  and change the approval setting.
+- `flockr integration install claude` and `codex` also install the flockr
+  skill, which tells agents how to message each other and to act on the
+  messages they receive.
 
 ### Fixed
 - The TUI client stays attached across `flockr server live-handoff`. It
@@ -27,6 +57,14 @@
   one looking (no client attached, or the terminal window not focused), so
   it never showed done and sent no alert. It now stays done until a
   focused client shows it or someone opens it.
+- A live handoff turned agents that had finished but were not yet read
+  back into idle. They now stay done.
+- Server listeners (phone gateway, flock, web) bind as soon as the old
+  server lets go during a live handoff, instead of after up to 10 seconds.
+- The sample config showed the pane swap keys as unset and
+  `pane_focus_passthrough` as `["nvim"]`; it now shows the real defaults.
+  `--help` no longer lists `update` and `channel`, since flockr does not
+  self-update.
 
 ## [1.1.0] - 2026-10-26
 
