@@ -1,7 +1,7 @@
 // The wide web layout: machines and their agents in a sidebar, the chosen
 // agent's terminal in the main panel, like a chat app with a conversation list.
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { connections, InbandNotify } from '../state/connections';
 import { statusText, useAgents, useClientStatus, useServers, useTerminals } from '../state/hooks';
 import type { Nav } from '../state/nav';
@@ -117,9 +117,7 @@ export function DesktopShell() {
             }}
             style={side.brand}
           >
-            <View style={side.logo}>
-              <Text style={side.logoText}>f</Text>
-            </View>
+            <Image source={require('../../assets/brand/mark-tide-96.png')} style={side.logo} accessibilityIgnoresInvertColors />
             <Text style={side.brandText}>flockr</Text>
           </Pressable>
           <Pressable
@@ -757,15 +755,7 @@ const side = StyleSheet.create({
   wrap: { width: 280, backgroundColor: SIDEBAR.bg, borderRightWidth: 1, borderRightColor: SIDEBAR.border },
   top: { height: 60, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, gap: 8 },
   brand: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10 },
-  logo: {
-    width: 26,
-    height: 26,
-    borderRadius: 8,
-    backgroundColor: colors.accent,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  logoText: { color: '#0b0d12', fontWeight: '800', fontSize: 15 },
+  logo: { width: 22, height: 22 },
   brandText: { color: colors.text, fontSize: 16, fontWeight: '700', letterSpacing: 0.2 },
   iconButton: { width: 32, height: 32, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
   iconHover: { backgroundColor: SIDEBAR.active },
