@@ -15,8 +15,8 @@ include = [
     "docs/next/api/flockr-api.schema.json",
     "skills/flockr/SKILL.md",
     "distribution/install.ps1",
-    "README.md",
-    "LICENSE",
+    "/README.md",
+    "/LICENSE",
     "Cargo.toml",
 ]
 
