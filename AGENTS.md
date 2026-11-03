@@ -140,6 +140,9 @@ npm run export:web   # web build in app/dist
 - It talks to the server over `mobile.v2` (`docs/mobile/protocol.md`). Wire
   fixtures in `tests/fixtures/` are shared with the Rust tests; edit them
   there.
+- CI: `.github/workflows/app.yml` runs the commands above on changes to
+  `app/` or the shared fixtures; `ci.yml` (Rust) skips app-only changes.
+  `release.yml` builds the web app once and embeds it in every binary.
 - TestFlight builds are manual (`app/scripts/testflight.sh`). Apple account
   ids come from env vars (`app/fastlane/Fastfile`); never commit them.
 
