@@ -29,6 +29,25 @@ pub(crate) struct HandoffRuntimeState {
     pub initial_history_ansi: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_state: Option<crate::terminal::state::HandoffAgentState>,
+    /// Missing from older servers, and dropped if a newer server's shape does
+    /// not parse, so the pane falls back to re-detecting as before.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "lenient_attention"
+    )]
+    pub attention: Option<crate::terminal::state::HandoffAgentAttention>,
+}
+
+#[cfg(unix)]
+fn lenient_attention<'de, D>(
+    deserializer: D,
+) -> Result<Option<crate::terminal::state::HandoffAgentAttention>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    Ok(serde_json::from_value(value).ok())
 }
 
 #[cfg(unix)]

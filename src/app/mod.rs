@@ -737,6 +737,21 @@ impl App {
         app.state.pane_id_aliases = pane_id_aliases;
         app.state.workspaces = workspaces;
         app.state.terminals = terminals;
+        // Carried completions keep their sequence numbers; new ones must
+        // follow them so clients still order acknowledgements correctly.
+        app.state.next_agent_state_change_seq = app
+            .state
+            .terminals
+            .values()
+            .flat_map(|terminal| {
+                [
+                    terminal.last_agent_state_change_seq,
+                    terminal.last_agent_completion_seq,
+                ]
+            })
+            .flatten()
+            .max()
+            .unwrap_or(0);
         app.terminal_runtimes = runtimes.into();
         app.state.active = snapshot
             .active
