@@ -9,6 +9,7 @@ import { repairReason, repairShort, StoredServer } from '../state/storage';
 import { colors, statusColor } from '../state/ui';
 import {
   agentDetail,
+  byAttention,
   normalizeStatus,
   type AgentRow,
   type ConnStatus,
@@ -661,14 +662,12 @@ function Overview({
   );
 }
 
-const ORDER: Record<AgentRow['status'], number> = { blocked: 0, done: 1, working: 2, idle: 3, unknown: 4 };
-
 function MachineCard({ server, onSelect }: { server: StoredServer; onSelect: (s: Selection) => void }) {
   const repair = repairReason(server);
   const client = repair ? null : connections.client(server.server_id);
   const status = useClientStatus(client);
   const { rows } = useAgents(client);
-  const sorted = [...rows].sort((a, b) => ORDER[a.status] - ORDER[b.status]);
+  const sorted = byAttention(rows);
   return (
     <View style={over.card}>
       <View style={over.cardHead}>
