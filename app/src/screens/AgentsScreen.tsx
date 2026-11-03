@@ -174,9 +174,10 @@ function tabText(label: string): string {
   return /^\d+$/.test(label) ? `tab ${label}` : label;
 }
 
-function AgentCard({ row, onPress }: { row: AgentRow; onPress: () => void }) {
+/** One agent. `detail` replaces the default tab · name · branch line (the home screen shows the workspace there). */
+export function AgentCard({ row, onPress, detail: detailOverride }: { row: AgentRow; onPress: () => void; detail?: string }) {
   const title = row.agent.terminal_title_stripped || row.agent.title;
-  const detail = agentDetail(row);
+  const detail = detailOverride ?? agentDetail(row);
   // Like the sidebar, the marker carries the status; only states that ask for
   // attention also get a word.
   const word = row.status === 'blocked' || row.status === 'done' ? row.status : null;
@@ -213,7 +214,7 @@ function AgentCard({ row, onPress }: { row: AgentRow; onPress: () => void }) {
 const MARKER = 10;
 
 /** The sidebar's status icon (Dots style) drawn with views so it sizes the same on every font. */
-function StatusMarker({ kind, status }: { kind: AgentMarker; status: AgentStatus }) {
+export function StatusMarker({ kind, status }: { kind: AgentMarker; status: AgentStatus }) {
   const color = statusColor[status];
   if (kind === 'pulse') return <PulseDot color={color} />;
   if (kind === 'dot') return <View style={[styles.marker, { backgroundColor: color }]} />;
