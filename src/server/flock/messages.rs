@@ -515,7 +515,8 @@ impl Messages {
             let _ = waiter.reply.send(Ok(message));
             return Ok(json!({ "status": "delivered", "agent": agent }));
         }
-        if !message::allowed(&self.dir, &message) {
+        let mode = crate::config::Config::load().config.flock.approve_messages;
+        if !message::allowed(&self.dir, &message, mode) {
             message::save_pending(&self.dir, &message)
                 .map_err(|err| Failure::new("internal", err.to_string()))?;
             message::audit(&self.dir, "pending", &message, None);

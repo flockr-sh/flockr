@@ -1438,9 +1438,24 @@ fn parse_mobile_listen_entry(
 /// Default TCP port for flock connections between members.
 pub const DEFAULT_FLOCK_PORT: u16 = 47392;
 
+/// When a message from an agent waits for a person to approve it. Read for
+/// each message, so a change applies without a restart.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum ApproveMessages {
+    /// Only between agents in different repos, unless it answers a message
+    /// the recipient sent or a person allowed the pair.
+    #[default]
+    OtherProjects,
+    /// Never: every message goes through.
+    Never,
+    /// Every message from an agent, unless a person allowed the pair.
+    Always,
+}
+
 /// `[flock]`: this server's part in a flock. On the hub, the encrypted
 /// listener members connect to; elsewhere, the connection to the hub. Every
-/// key needs a server restart.
+/// key but `approve_messages` needs a server restart.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct FlockConfig {
@@ -1454,6 +1469,8 @@ pub struct FlockConfig {
     pub port: u16,
     /// This machine's name in the flock. Default: host name.
     pub name: Option<String>,
+    /// When messages from agents to this machine's agents wait for a person.
+    pub approve_messages: ApproveMessages,
 }
 
 impl Default for FlockConfig {
@@ -1463,6 +1480,7 @@ impl Default for FlockConfig {
             listen: Vec::new(),
             port: DEFAULT_FLOCK_PORT,
             name: None,
+            approve_messages: ApproveMessages::default(),
         }
     }
 }
@@ -2021,6 +2039,19 @@ expo_access_token = "secret"
         assert_eq!(config.flock.display_name(), "tower");
         let config: Config = toml::from_str("[flock]\nenabled = true\n").unwrap();
         assert!(config.flock.diagnostics().is_empty());
+        assert_eq!(
+            config.flock.approve_messages,
+            ApproveMessages::OtherProjects
+        );
+        for (text, mode) in [
+            ("never", ApproveMessages::Never),
+            ("always", ApproveMessages::Always),
+            ("other-projects", ApproveMessages::OtherProjects),
+        ] {
+            let config: Config =
+                toml::from_str(&format!("[flock]\napprove_messages = \"{text}\"\n")).unwrap();
+            assert_eq!(config.flock.approve_messages, mode);
+        }
     }
 
     #[test]

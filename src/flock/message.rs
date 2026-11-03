@@ -21,6 +21,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+use crate::config::ApproveMessages;
 use crate::mobile::store::{atomic_write, ensure_dir};
 
 pub(crate) const MAX_HOPS: u32 = 8;
@@ -342,15 +343,19 @@ pub(crate) fn add_rule(dir: &Path, rule: Rule) -> io::Result<()> {
 /// always message each other; anything else needs a saved rule. The rules
 /// keep agents from messaging across projects in normal use; any process
 /// running as the user can still claim to be a person.
-pub(crate) fn allowed(dir: &Path, message: &Message) -> bool {
-    if message.from.agent.is_none() {
+/// Whether `message` goes through without a person's approval under `mode`.
+/// A person's own messages always do.
+pub(crate) fn allowed(dir: &Path, message: &Message, mode: ApproveMessages) -> bool {
+    if message.from.agent.is_none() || mode == ApproveMessages::Never {
         return true;
     }
-    if message.from.repo.is_some() && message.from.repo == message.to.repo {
-        return true;
-    }
-    if answers_sent(dir, message) {
-        return true;
+    if mode == ApproveMessages::OtherProjects {
+        if message.from.repo.is_some() && message.from.repo == message.to.repo {
+            return true;
+        }
+        if answers_sent(dir, message) {
+            return true;
+        }
     }
     rule_for(message).is_some_and(|rule| load_rules(dir).allow.contains(&rule))
 }
@@ -413,6 +418,10 @@ pub(crate) mod tests {
             terminal: agent.map(|agent| format!("term_{agent}")),
             repo: repo.map(Into::into),
         }
+    }
+
+    fn allows(dir: &Path, message: &Message) -> bool {
+        allowed(dir, message, ApproveMessages::OtherProjects)
     }
 
     pub(crate) fn message(id: &str, from: Party, to: Party) -> Message {
@@ -478,16 +487,16 @@ pub(crate) mod tests {
             party("m_a", Some("x"), repo),
             party("m_b", Some("y"), repo),
         );
-        assert!(allowed(&dir, &same));
+        assert!(allows(&dir, &same));
         let other = message(
             "m2",
             party("m_a", Some("x"), Some("github.com/org/other")),
             party("m_b", Some("y"), repo),
         );
-        assert!(!allowed(&dir, &other));
+        assert!(!allows(&dir, &other));
         add_rule(&dir, rule_for(&other).unwrap()).unwrap();
         add_rule(&dir, rule_for(&other).unwrap()).unwrap();
-        assert!(allowed(&dir, &other));
+        assert!(allows(&dir, &other));
         assert_eq!(load_rules(&dir).allow.len(), 1);
         let unrepoed = message(
             "m3",
@@ -499,9 +508,9 @@ pub(crate) mod tests {
             party("m_a", None, None),
             party("m_b", Some("y"), None),
         );
-        assert!(allowed(&dir, &person));
+        assert!(allows(&dir, &person));
         assert!(
-            !allowed(&dir, &unrepoed),
+            !allows(&dir, &unrepoed),
             "no repo on either side is not a match"
         );
     }
@@ -520,33 +529,62 @@ pub(crate) mod tests {
             conversation: sent.conversation.clone(),
             ..message(id, from, to)
         };
-        assert!(allowed(
+        assert!(allows(
             &dir,
             &reply("r1", sent.to.clone(), sent.from.clone())
         ));
         let stranger = party("m_b", Some("z"), None);
         assert!(
-            !allowed(&dir, &reply("r2", stranger, sent.from.clone())),
+            !allows(&dir, &reply("r2", stranger, sent.from.clone())),
             "only the agent it went to may answer"
         );
         let elsewhere = party("m_a", Some("w"), None);
         assert!(
-            !allowed(&dir, &reply("r3", sent.to.clone(), elsewhere)),
+            !allows(&dir, &reply("r3", sent.to.clone(), elsewhere)),
             "the answer goes to the agent that sent it"
         );
         let unsent = Message {
             reply_to: Some("m9".into()),
             ..reply("r4", sent.to.clone(), sent.from.clone())
         };
-        assert!(!allowed(&dir, &unsent));
+        assert!(!allows(&dir, &unsent));
 
         // Expired sent messages are dropped when the next one is saved.
         let later = message("m2", sent.from.clone(), sent.to.clone());
         save_sent(&dir, &later, sent.expires_at).unwrap();
-        assert!(!allowed(
+        assert!(!allows(
             &dir,
             &reply("r5", sent.to.clone(), sent.from.clone())
         ));
+    }
+
+    #[test]
+    fn approve_messages_never_and_always_change_what_waits() {
+        let dir = crate::mobile::store::tests::temp_dir("flock-message-modes");
+        let repo = Some("github.com/org/repo");
+        let same = message(
+            "m1",
+            party("m_a", Some("x"), repo),
+            party("m_b", Some("y"), repo),
+        );
+        let other = message(
+            "m2",
+            party("m_a", Some("x"), Some("github.com/org/other")),
+            party("m_b", Some("y"), repo),
+        );
+        let person = message(
+            "m3",
+            party("m_a", None, None),
+            party("m_b", Some("y"), repo),
+        );
+        assert!(allowed(&dir, &other, ApproveMessages::Never));
+        assert!(!allowed(&dir, &same, ApproveMessages::Always));
+        assert!(allowed(&dir, &person, ApproveMessages::Always));
+        add_rule(&dir, rule_for(&same).unwrap()).unwrap();
+        assert!(
+            allowed(&dir, &same, ApproveMessages::Always),
+            "a pair a person allowed still goes through"
+        );
     }
 
     #[test]

@@ -604,6 +604,20 @@ static ROWS: &[SettingRow] = &[
         visible: always,
     },
     SettingRow {
+        section: Behavior,
+        table: "flock",
+        key: "approve_messages",
+        label: "approve agent messages",
+        help: "When a message from another agent waits for you to approve it.",
+        choices: SettingChoices::Fixed(&[
+            ("other projects", Str("other-projects")),
+            ("never", Str("never")),
+            ("always", Str("always")),
+        ]),
+        current: |c| value(&c.flock.approve_messages),
+        visible: |c| c.flock.enabled,
+    },
+    SettingRow {
         section: Session,
         table: "session",
         key: "resume_agents_on_restore",

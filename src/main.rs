@@ -566,6 +566,14 @@ const DEFAULT_CONFIG: &str = r##"# flockr configuration
 # port = 47392
 # This machine's name in the flock. Default: host name.
 # name = ""
+# When a message from an agent to an agent on this machine waits for a person
+# to approve it (`flockr message pending`, or the phone and web app). Applies
+# without a restart.
+#   "other-projects": only between agents in different git repos. Replies to
+#     a message the recipient sent, and pairs a person allowed, go through.
+#   "never": every message goes through.
+#   "always": every message from an agent, unless a person allowed the pair.
+# approve_messages = "other-projects"
 
 [web]
 # Serve the flockr web app (the phone app built for a browser) over plain
