@@ -767,6 +767,9 @@ pub(super) fn serve_local(messages: Arc<Messages>, shutdown: tokio::sync::watch:
     if let Err(err) = crate::ipc::restrict_socket_permissions(&path, 0o600) {
         warn!(err = %err, "could not restrict the flock message socket");
     }
+    // After a live handoff the new server owns this path; removing it on the
+    // way out would cut the new server's agents off from messages.
+    let identity = crate::ipc::socket_file_identity(&path).ok();
     let (accepted_tx, mut accepted) = tokio::sync::mpsc::channel(16);
     let spawned = std::thread::Builder::new()
         .name("flock-socket".into())
@@ -810,7 +813,9 @@ pub(super) fn serve_local(messages: Arc<Messages>, shutdown: tokio::sync::watch:
                     });
                 }
                 _ = shutdown.changed() => {
-                    let _ = std::fs::remove_file(message::socket_path());
+                    if let Some(identity) = &identity {
+                        let _ = crate::ipc::remove_socket_file_if_owned(&path, identity);
+                    }
                     return;
                 }
             }
