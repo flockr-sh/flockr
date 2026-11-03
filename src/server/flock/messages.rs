@@ -287,7 +287,7 @@ impl Messages {
         }
         let wait = params["wait"] == true;
         let now = now_unix();
-        let message = Message {
+        let mut message = Message {
             id: keys::new_id("msg_").map_err(|err| Failure::new("internal", err.to_string()))?,
             conversation,
             reply_to,
@@ -315,7 +315,16 @@ impl Messages {
         });
         let delivered = self.deliver(&message).await;
         let status = match delivered {
-            Ok(status) => status,
+            Ok((status, agent)) => {
+                // Keep the agent it reached, so its reply matches.
+                if agent.is_some() {
+                    message.to.agent = agent;
+                    if let Some(waiter) = lock(&self.waiters).get_mut(&message.id) {
+                        waiter.peer = message.to.clone();
+                    }
+                }
+                status
+            }
             Err(reason) => {
                 lock(&self.waiters).remove(&message.id);
                 message::audit(&self.dir, "refused", &message, Some(&reason));
@@ -383,7 +392,13 @@ impl Messages {
     }
 
     /// Hands a message to the recipient's machine. Returns its status there.
-    async fn deliver(self: &Arc<Self>, message: &Message) -> Result<String, String> {
+    /// Delivers `message` and returns its status and the agent it reached:
+    /// the recipient's name or pane, which can differ from the address
+    /// ("claude") the sender used.
+    async fn deliver(
+        self: &Arc<Self>,
+        message: &Message,
+    ) -> Result<(String, Option<String>), String> {
         let (me, _) = self.me().map_err(|Failure(_, reason)| reason)?;
         let request = json!({
             "id": "flock:message:deliver",
@@ -407,10 +422,12 @@ impl Messages {
         if let Some(reason) = response["error"]["message"].as_str() {
             return Err(reason.to_owned());
         }
-        Ok(response["result"]["status"]
+        let status = response["result"]["status"]
             .as_str()
             .unwrap_or("delivered")
-            .to_owned())
+            .to_owned();
+        let agent = response["result"]["agent"].as_str().map(str::to_owned);
+        Ok((status, agent))
     }
 
     /// `message.deliver` on the recipient's machine.
@@ -459,7 +476,7 @@ impl Messages {
         let terminal = message.to.terminal.clone().unwrap_or_default();
         let inbox = message::inbox(&self.dir, &terminal);
         if inbox.iter().any(|entry| entry.message.id == message.id) {
-            return Ok(json!({ "status": "duplicate" }));
+            return Ok(json!({ "status": "duplicate", "agent": message.to.agent }));
         }
         if message.wait && self.waiting_on(&message.to, &message.from) {
             return Err(Failure::new(
@@ -494,19 +511,20 @@ impl Messages {
                 &message,
                 Some("taken by the waiting sender"),
             );
+            let agent = message.to.agent.clone();
             let _ = waiter.reply.send(Ok(message));
-            return Ok(json!({ "status": "delivered" }));
+            return Ok(json!({ "status": "delivered", "agent": agent }));
         }
         if !message::allowed(&self.dir, &message) {
             message::save_pending(&self.dir, &message)
                 .map_err(|err| Failure::new("internal", err.to_string()))?;
             message::audit(&self.dir, "pending", &message, None);
             self.ask_approval(&message).await;
-            return Ok(json!({ "status": "pending_approval" }));
+            return Ok(json!({ "status": "pending_approval", "agent": message.to.agent }));
         }
         self.store(&message, InboxState::Queued)?;
         message::audit(&self.dir, "received", &message, None);
-        Ok(json!({ "status": "queued" }))
+        Ok(json!({ "status": "queued", "agent": message.to.agent }))
     }
 
     fn waiting_on(&self, waiter: &Party, peer: &Party) -> bool {
