@@ -1,0 +1,10 @@
+● Here is the plan for the coupon work:
+
+  1. Add a SAVE10 rule to src/lib/coupons.ts
+  2. Show the discount as its own line in Cart.tsx
+  3. Cover both with vitest tests
+
+──────────────────────────────────────────────────────────────────
+❯ 
+──────────────────────────────────────────────────────────────────
+  ? for shortcuts

@@ -179,7 +179,18 @@ function tabText(label: string): string {
 }
 
 /** One agent. `detail` replaces the default tab · name · branch line (the home screen shows the workspace there). */
-export function AgentCard({ row, onPress, detail: detailOverride }: { row: AgentRow; onPress: () => void; detail?: string }) {
+export function AgentCard({
+  row,
+  onPress,
+  detail: detailOverride,
+  note,
+}: {
+  row: AgentRow;
+  onPress: () => void;
+  detail?: string;
+  /** A last line in the status color, e.g. "Open to answer". */
+  note?: string;
+}) {
   const title = row.agent.terminal_title_stripped || row.agent.title;
   const detail = detailOverride ?? agentDetail(row);
   // Like the sidebar, the marker carries the status; only states that ask for
@@ -210,6 +221,7 @@ export function AgentCard({ row, onPress, detail: detailOverride }: { row: Agent
             {title}
           </Text>
         ) : null}
+        {note ? <Text style={[styles.note, { color: statusColor[row.status] }]}>{note}</Text> : null}
       </View>
     </Pressable>
   );
@@ -287,4 +299,5 @@ const styles = StyleSheet.create({
   line: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   name: { color: colors.text, fontSize: 16, fontWeight: '600', flexShrink: 1 },
   status: { fontSize: 12, fontWeight: '600' },
+  note: { fontSize: 12.5, fontWeight: '600', marginTop: 4 },
 });
