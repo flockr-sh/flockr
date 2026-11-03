@@ -46,6 +46,13 @@ export function agentDetail(row: AgentRow): string {
   return [tab, name, row.branch].filter(Boolean).join(' · ');
 }
 
+/** Agents that need a person first: blocked, then finished, then working, then idle. */
+export const ATTENTION_ORDER: Record<AgentStatus, number> = { blocked: 0, done: 1, working: 2, idle: 3, unknown: 4 };
+
+export function byAttention<T extends { status: AgentStatus }>(rows: T[]): T[] {
+  return [...rows].sort((a, b) => ATTENTION_ORDER[a.status] - ATTENTION_ORDER[b.status]);
+}
+
 export function agentName(a: Pick<AgentInfo, 'display_agent' | 'name' | 'agent'>): string {
   return a.display_agent || a.name || a.agent || 'Agent';
 }

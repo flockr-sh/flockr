@@ -5,6 +5,7 @@ import { Platform } from 'react-native';
 import {
   ConnStatus,
   decodeServerKey,
+  FlockMachine,
   GatewayClient,
   HANDSHAKE_FAILED,
   NotifyMessage,
@@ -12,7 +13,16 @@ import {
   parseHostEntry,
   WebSocketLike,
 } from '../protocol';
-import { deleteServer, loadServers, repairReason, saveServer, StoredServer } from './storage';
+import { DEMO_DEVICE_ID, DEMO_HUB_ID, DEMO_TOKEN, DemoFlock } from '../demo/flock';
+import {
+  deleteServer,
+  loadDemoFlag,
+  loadServers,
+  repairReason,
+  saveDemoFlag,
+  saveServer,
+  StoredServer,
+} from './storage';
 
 const createSocket = (url: string, protocols: string[]) => new WebSocket(url, protocols) as unknown as WebSocketLike;
 
@@ -25,7 +35,32 @@ export function appInfo() {
 }
 
 export function deviceName(): string {
+  if (Platform.OS === 'web') return browserName();
   return (Device.deviceName || Device.modelName || `${Platform.OS} device`).slice(0, 64);
+}
+
+/** "Chrome on Linux" and the like, from the user agent. */
+function browserName(): string {
+  const ua = globalThis.navigator?.userAgent ?? '';
+  const browser = /Edg\//.test(ua)
+    ? 'Edge'
+    : /Firefox\//.test(ua)
+      ? 'Firefox'
+      : /Chrome\//.test(ua)
+        ? 'Chrome'
+        : /Safari\//.test(ua)
+          ? 'Safari'
+          : 'Browser';
+  const os = /Windows/.test(ua)
+    ? 'Windows'
+    : /Mac OS X/.test(ua)
+      ? 'macOS'
+      : /Android/.test(ua)
+        ? 'Android'
+        : /Linux/.test(ua)
+          ? 'Linux'
+          : '';
+  return os ? `${browser} on ${os}` : browser;
 }
 
 export interface InbandNotify extends NotifyMessage {
@@ -44,16 +79,58 @@ class Connections {
   private foreground = true;
   private pushToken: string | null = null;
   private pushRegistered = new Set<string>();
+  private demo: DemoFlock | null = null;
   version = 0;
 
   load(): Promise<void> {
     if (!this.loaded) {
-      this.loaded = loadServers().then((s) => {
-        this.servers = s;
+      this.loaded = Promise.all([loadServers(), loadDemoFlag()]).then(([s, demo]) => {
+        this.servers = demo ? [...s, this.demoHub()] : s;
         this.changed();
       });
     }
     return this.loaded;
+  }
+
+  /** Demo mode: a made-up flock that runs in the app, for trying it without a server. */
+  get demoOn(): boolean {
+    return this.servers.some((s) => s.server_id === DEMO_HUB_ID);
+  }
+
+  async startDemo(): Promise<void> {
+    if (this.demoOn) return;
+    this.servers = [...this.servers, this.demoHub()];
+    this.changed();
+    await saveDemoFlag(true);
+  }
+
+  async stopDemo(): Promise<void> {
+    if (this.demoOn) await this.remove(DEMO_HUB_ID);
+    else await saveDemoFlag(false);
+  }
+
+  private demoHub(): StoredServer {
+    if (!this.demo) this.demo = new DemoFlock();
+    return {
+      server_id: DEMO_HUB_ID,
+      name: 'studio',
+      hosts: ['demo'],
+      port: 0,
+      pk: this.demo.pk,
+      device_id: DEMO_DEVICE_ID,
+      token: DEMO_TOKEN,
+      pairedAt: Date.now(),
+      demo: true,
+    };
+  }
+
+  // Demo machines live in memory only.
+  private async store(s: StoredServer): Promise<void> {
+    if (!s.demo) await saveServer(s);
+  }
+
+  private async unstore(s: StoredServer): Promise<void> {
+    if (!s.demo) await deleteServer(s.server_id);
   }
 
   subscribe = (cb: Listener): (() => void) => {
@@ -89,13 +166,17 @@ class Connections {
     if (!s || repairReason(s)) return null;
     const serverKey = decodeServerKey(s.pk);
     if (!serverKey) return null;
+    const demo = s.demo ? this.demo : null;
+    if (s.demo && !demo) return null;
     const client = new GatewayClient({
       hosts: s.hosts.map((h) => parseHostEntry(h, s.port)),
-      sid: s.server_id,
+      // A flock machine answers through the paired server, with its ID.
+      sid: s.via ?? s.server_id,
+      machine: s.machine,
       serverKey,
       credentials: { kind: 'auth', device_id: s.device_id, token: s.token },
       app: appInfo(),
-      createSocket,
+      createSocket: demo ? demo.createSocket : createSocket,
       preferredHost: s.lastHost,
       log: __DEV__ ? (m) => console.log(`[flockr ${s.name}] ${m}`) : undefined,
     });
@@ -103,6 +184,7 @@ class Connections {
       const idx = client.currentHostIndex;
       const name = w.server.name || s.name;
       if (idx !== s.lastHost || name !== s.name) void this.update(serverId, { lastHost: idx, name });
+      if (!s.via) void this.syncMachines(serverId, w.machines ?? []);
       void this.registerPush(serverId, client);
     });
     client.on('fatal', (f) => {
@@ -126,7 +208,7 @@ class Connections {
     if (i < 0) return;
     const next = { ...this.servers[i], ...patch };
     this.servers = this.servers.map((s, j) => (j === i ? next : s));
-    await saveServer(next);
+    await this.store(next);
     this.changed();
   }
 
@@ -151,6 +233,7 @@ class Connections {
 
   private async registerPush(serverId: string, client: GatewayClient): Promise<void> {
     const token = this.pushToken;
+    if (this.server(serverId)?.demo) return;
     if (!token || !client.ready || !client.hasFeature('push.expo')) return;
     const key = `${serverId}:${client.welcome?.server.boot_id ?? ''}`;
     if (this.pushRegistered.has(key)) return;
@@ -160,6 +243,59 @@ class Connections {
     } catch (e) {
       if (__DEV__) console.log(`push.register failed: ${String(e)}`);
     }
+  }
+
+  /**
+   * Keeps one entry per other machine in a paired server's flock. They share
+   * the server's pairing and connect through it.
+   */
+  private async syncMachines(serverId: string, machines: FlockMachine[]): Promise<void> {
+    const hub = this.server(serverId);
+    if (!hub) return;
+    const wanted: StoredServer[] = machines
+      .filter((m) => !m.this)
+      .map((m) => {
+        const id = `${hub.server_id}~${m.id}`;
+        const existing = this.server(id);
+        return {
+          server_id: id,
+          name: m.name,
+          hosts: hub.hosts,
+          port: hub.port,
+          pk: hub.pk,
+          device_id: hub.device_id,
+          token: hub.token,
+          lastHost: existing?.lastHost ?? hub.lastHost,
+          pairedAt: existing?.pairedAt ?? Date.now(),
+          machine: m.id,
+          via: hub.server_id,
+          ...(hub.demo ? { demo: true } : {}),
+        };
+      });
+    const wantedIds = new Set(wanted.map((s) => s.server_id));
+    const stale = this.servers.filter((s) => s.via === hub.server_id && !wantedIds.has(s.server_id));
+    const changed = wanted.filter((w) => {
+      const existing = this.server(w.server_id);
+      return !existing || JSON.stringify(existing) !== JSON.stringify(w);
+    });
+    if (stale.length === 0 && changed.length === 0) return;
+    for (const s of stale) {
+      this.clients.get(s.server_id)?.close();
+      this.clients.delete(s.server_id);
+      await this.unstore(s);
+    }
+    for (const s of changed) {
+      this.clients.get(s.server_id)?.close();
+      this.clients.delete(s.server_id);
+      await this.store(s);
+    }
+    const byId = new Map(changed.map((s) => [s.server_id, s]));
+    const staleIds = new Set(stale.map((s) => s.server_id));
+    this.servers = [
+      ...this.servers.filter((s) => !staleIds.has(s.server_id)).map((s) => byId.get(s.server_id) ?? s),
+      ...changed.filter((s) => !this.servers.some((e) => e.server_id === s.server_id)),
+    ];
+    this.changed();
   }
 
   /** Pair with a scanned/pasted payload. Resolves with the stored server. */
@@ -207,10 +343,19 @@ class Connections {
     }
   }
 
-  /** Forget this phone on the server (if reachable) and locally. */
+  /** Forget this phone on the server (if reachable) and locally, with its flock machines. */
   async remove(serverId: string): Promise<void> {
+    for (const machine of this.servers.filter((s) => s.via === serverId)) {
+      this.clients.get(machine.server_id)?.close();
+      this.clients.delete(machine.server_id);
+      await this.unstore(machine);
+    }
+    this.servers = this.servers.filter((s) => s.via !== serverId);
     const c = this.clients.get(serverId);
-    if (c?.ready) {
+    const server = this.server(serverId);
+    // A flock machine shares its server's pairing; removing it only hides it
+    // until the server lists it again.
+    if (c?.ready && server && !server.via && !server.demo) {
       try {
         await c.forget();
       } catch {
@@ -219,8 +364,13 @@ class Connections {
     }
     c?.close();
     this.clients.delete(serverId);
-    await deleteServer(serverId);
+    if (server) await this.unstore(server);
     this.servers = this.servers.filter((s) => s.server_id !== serverId);
+    if (serverId === DEMO_HUB_ID) {
+      this.demo?.stop();
+      this.demo = null;
+      await saveDemoFlag(false);
+    }
     this.changed();
   }
 }

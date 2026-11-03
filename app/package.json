@@ -13,7 +13,8 @@
     "smoke": "tsx scripts/smoke.ts",
     "doctor": "expo-doctor",
     "start:go": "expo start --go",
-    "format": "prettier --write \"App.tsx\" \"src/**/*.{ts,tsx}\" \"mock/**/*.ts\" \"scripts/**/*.ts\" \"__tests__/**/*.ts\""
+    "format": "prettier --write \"App.tsx\" \"src/**/*.{ts,tsx}\" \"mock/**/*.ts\" \"scripts/**/*.ts\" \"__tests__/**/*.ts\"",
+    "export:web": "mkdir -p public && cp node_modules/canvaskit-wasm/bin/full/canvaskit.wasm public/ && expo export --platform web"
   },
   "dependencies": {
     "@expo-google-fonts/jetbrains-mono": "^0.4.1",
@@ -35,10 +36,13 @@
     "expo-linking": "~58.0.14",
     "expo-notifications": "~58.1.6",
     "expo-secure-store": "~58.0.2",
+    "expo-splash-screen": "~58.0.12",
     "expo-status-bar": "~58.0.4",
     "react": "19.3.0",
+    "react-dom": "19.3.0",
     "react-native": "0.88.0",
-    "react-native-safe-area-context": "~5.10.1"
+    "react-native-safe-area-context": "~5.10.1",
+    "react-native-web": "^0.21.4"
   },
   "devDependencies": {
     "@types/jest": "30.0.0",

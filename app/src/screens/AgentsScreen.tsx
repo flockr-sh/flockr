@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Alert, Animated, Pressable, SectionList, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { DemoTag } from './DemoTag';
 import { connections } from '../state/connections';
 import { statusText, useAgents, useClientStatus, useServers, useTerminals } from '../state/hooks';
 import type { Nav } from '../state/nav';
@@ -66,9 +67,12 @@ export function AgentsScreen({ nav, serverId }: Props) {
           <Text style={ui.buttonText}>‹</Text>
         </Pressable>
         <View style={{ flex: 1 }}>
-          <Text style={ui.title} numberOfLines={1}>
-            {server?.name ?? 'Server'}
-          </Text>
+          <View style={styles.line}>
+            <Text style={ui.title} numberOfLines={1}>
+              {server?.name ?? 'Server'}
+            </Text>
+            <DemoTag show={!!server?.demo} />
+          </View>
           <Text style={ui.sub}>{repair ? repairShort(repair) : statusText(status)}</Text>
         </View>
         <Pressable accessibilityRole="button" onPress={remove} style={ui.button}>
@@ -174,9 +178,21 @@ function tabText(label: string): string {
   return /^\d+$/.test(label) ? `tab ${label}` : label;
 }
 
-function AgentCard({ row, onPress }: { row: AgentRow; onPress: () => void }) {
+/** One agent. `detail` replaces the default tab · name · branch line (the home screen shows the workspace there). */
+export function AgentCard({
+  row,
+  onPress,
+  detail: detailOverride,
+  note,
+}: {
+  row: AgentRow;
+  onPress: () => void;
+  detail?: string;
+  /** A last line in the status color, e.g. "Open to answer". */
+  note?: string;
+}) {
   const title = row.agent.terminal_title_stripped || row.agent.title;
-  const detail = agentDetail(row);
+  const detail = detailOverride ?? agentDetail(row);
   // Like the sidebar, the marker carries the status; only states that ask for
   // attention also get a word.
   const word = row.status === 'blocked' || row.status === 'done' ? row.status : null;
@@ -205,6 +221,7 @@ function AgentCard({ row, onPress }: { row: AgentRow; onPress: () => void }) {
             {title}
           </Text>
         ) : null}
+        {note ? <Text style={[styles.note, { color: statusColor[row.status] }]}>{note}</Text> : null}
       </View>
     </Pressable>
   );
@@ -213,7 +230,7 @@ function AgentCard({ row, onPress }: { row: AgentRow; onPress: () => void }) {
 const MARKER = 10;
 
 /** The sidebar's status icon (Dots style) drawn with views so it sizes the same on every font. */
-function StatusMarker({ kind, status }: { kind: AgentMarker; status: AgentStatus }) {
+export function StatusMarker({ kind, status }: { kind: AgentMarker; status: AgentStatus }) {
   const color = statusColor[status];
   if (kind === 'pulse') return <PulseDot color={color} />;
   if (kind === 'dot') return <View style={[styles.marker, { backgroundColor: color }]} />;
@@ -282,4 +299,5 @@ const styles = StyleSheet.create({
   line: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   name: { color: colors.text, fontSize: 16, fontWeight: '600', flexShrink: 1 },
   status: { fontSize: 12, fontWeight: '600' },
+  note: { fontSize: 12.5, fontWeight: '600', marginTop: 4 },
 });

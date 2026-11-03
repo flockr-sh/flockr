@@ -62,6 +62,8 @@ export interface HelloMessage {
   auth?: HelloAuth;
   pair?: HelloPair;
   max_in_flight?: number;
+  /** A flock machine to reach through this server instead of the server itself. */
+  machine?: string;
 }
 
 export interface WelcomeServer {
@@ -86,6 +88,15 @@ export interface WelcomeLimits {
   max_rows?: number;
 }
 
+/** A computer in the server's flock, reachable through the server. */
+export interface FlockMachine {
+  id: string;
+  name: string;
+  /** The server this phone connected to. */
+  this: boolean;
+  online: boolean;
+}
+
 export interface WelcomeMessage {
   t: 'welcome';
   version: number;
@@ -94,6 +105,10 @@ export interface WelcomeMessage {
   features: string[];
   methods?: string[];
   limits?: WelcomeLimits;
+  /** The server's flock, when it is in one. */
+  machines?: FlockMachine[];
+  /** The flock machine this session reached, when it was relayed. */
+  machine?: string;
 }
 
 export type ErrorCode =
@@ -357,6 +372,10 @@ export interface PushData {
   tab?: string;
   pane_id: string;
   terminal_id?: string;
+  /** The agent's status change this alert is about (blocked alerts check it before answering). */
+  state_change_seq?: number;
+  /** A blocked agent's prompt and its answer buttons; read with `parsePushPrompt`. */
+  prompt?: unknown;
 }
 
 /** Any message from the server. `t` is checked at runtime. */

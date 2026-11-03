@@ -8,7 +8,7 @@ export const colors = {
   border: '#2a2e3b',
   text: '#e6e8ef',
   dim: '#8a90a2',
-  accent: '#7aa2f7',
+  accent: '#2ad4d9',
   danger: '#f7768e',
   ok: '#9ece6a',
   warn: '#e0af68',

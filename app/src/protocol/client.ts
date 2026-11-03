@@ -62,6 +62,8 @@ export interface ClientOptions {
   createSocket: WebSocketFactory;
   /** Index into `hosts` to try first (last one that worked). */
   preferredHost?: number;
+  /** A flock machine to reach through this server. */
+  machine?: string;
   maxInFlight?: number;
   /** Reconnect with backoff on non-terminal closes. Default true. */
   reconnect?: boolean;
@@ -572,6 +574,7 @@ export class GatewayClient {
       app: this.opts.app,
       max_in_flight: this.opts.maxInFlight ?? 2,
     };
+    if (this.opts.machine) hello.machine = this.opts.machine;
     const c = this.credentials;
     if (c.kind === 'auth') hello.auth = { device_id: c.device_id, token: c.token };
     else hello.pair = { code: c.code, device_name: c.device_name, sid: this.opts.sid };
