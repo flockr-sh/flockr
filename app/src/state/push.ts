@@ -4,6 +4,7 @@ import Constants, { ExecutionEnvironment } from 'expo-constants';
 import * as Device from 'expo-device';
 import { Platform } from 'react-native';
 import type { PushData } from '../protocol';
+import { isPromptAction, OPEN_ACTION, registerPromptCategories, type PromptAction } from './pushActions';
 
 type NotificationsModule = typeof import('expo-notifications');
 
@@ -52,13 +53,19 @@ export async function setupNotifications(): Promise<void> {
   N.setNotificationHandler({
     // The app shows in-band `notify` banners while in the foreground and the
     // server does not push then, so anything that still arrives is shown.
-    handleNotification: async () => ({
+    // Answer results are posted quietly.
+    handleNotification: async (n) => ({
       shouldShowBanner: true,
       shouldShowList: true,
-      shouldPlaySound: true,
+      shouldPlaySound: !(n.request.content.data as { quiet?: boolean } | undefined)?.quiet,
       shouldSetBadge: false,
     }),
   });
+  try {
+    await registerPromptCategories(N);
+  } catch (e) {
+    if (__DEV__) console.log(`notification categories failed: ${String(e)}`);
+  }
   if (Platform.OS === 'android') {
     await N.setNotificationChannelAsync('agents', {
       name: 'Agent alerts',
@@ -100,20 +107,55 @@ export function parsePushData(data: unknown): PushData | null {
   return d as unknown as PushData;
 }
 
-/** Call `onOpen` for notification taps, including the one that launched the app. */
-export function listenForTaps(onOpen: (data: PushData) => void): () => void {
+/** A quiet local notification, such as the result of answering from an alert. */
+export async function postLocalNotification(title: string, data: PushData): Promise<void> {
+  const N = notifications();
+  if (!N) return;
+  await N.scheduleNotificationAsync({
+    content: {
+      title,
+      sound: false,
+      // A tap opens the pane like the alert did.
+      data: { ...data, type: 'answer_result', prompt: undefined, quiet: true },
+    },
+    trigger: null,
+  });
+}
+
+// Responses already handled, so the launch response and the listener (or a
+// remount) never answer twice.
+const handled = new Set<string>();
+
+/**
+ * Notification responses, including the one that launched the app: a tap or
+ * Open calls `onOpen`, an answer button calls `onAnswer`.
+ */
+export function listenForTaps(
+  onOpen: (data: PushData) => void,
+  onAnswer: (data: PushData, action: PromptAction) => void,
+): () => void {
   const N = notifications();
   if (!N) return () => {};
   let cancelled = false;
+  const handle = (resp: import('expo-notifications').NotificationResponse) => {
+    const key = `${resp.notification.request.identifier}\u0000${resp.actionIdentifier}`;
+    if (handled.has(key)) return;
+    handled.add(key);
+    try {
+      N.clearLastNotificationResponse();
+    } catch {
+      // Older native module: the handled set still guards this run.
+    }
+    const d = parsePushData(resp.notification.request.content.data);
+    if (!d) return;
+    const action = resp.actionIdentifier;
+    if (isPromptAction(action)) onAnswer(d, action);
+    else if (action === OPEN_ACTION || action === N.DEFAULT_ACTION_IDENTIFIER) onOpen(d);
+  };
   void N.getLastNotificationResponseAsync().then((resp) => {
-    if (cancelled || !resp) return;
-    const d = parsePushData(resp.notification.request.content.data);
-    if (d) onOpen(d);
+    if (!cancelled && resp) handle(resp);
   });
-  const sub = N.addNotificationResponseReceivedListener((resp) => {
-    const d = parsePushData(resp.notification.request.content.data);
-    if (d) onOpen(d);
-  });
+  const sub = N.addNotificationResponseReceivedListener(handle);
   return () => {
     cancelled = true;
     sub.remove();
