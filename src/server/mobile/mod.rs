@@ -236,6 +236,8 @@ pub(crate) struct Gateway {
     pub server_event_tx: mpsc::Sender<ServerEvent>,
     pub event_hub: crate::api::EventHub,
     pub api: api_proxy::ApiCaller,
+    /// The flock message service, when this server is in a flock.
+    pub messages: Option<api_proxy::ApiCaller>,
     pub shutdown: watch::Receiver<bool>,
     pub stopped: Arc<AtomicBool>,
     next_surface_client_id: AtomicU64,
@@ -325,7 +327,19 @@ impl Gateway {
         if self.push.enabled {
             features.push("push.expo");
         }
+        if self.messages.is_some() {
+            features.push("messages");
+        }
         features
+    }
+
+    /// Methods `api.request` takes on this server.
+    pub(crate) fn methods(&self) -> Vec<&'static str> {
+        let mut methods = api_proxy::ALLOWED_METHODS.to_vec();
+        if self.messages.is_some() {
+            methods.extend_from_slice(api_proxy::MESSAGE_METHODS);
+        }
+        methods
     }
 
     /// Connections of `device_id` that reported foreground and sent something
@@ -425,6 +439,7 @@ pub(crate) fn start(
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let stopped = Arc::new(AtomicBool::new(false));
     let api = api_proxy::ApiCaller::new(deps.api_socket);
+    let messages = relay.then(|| api_proxy::ApiCaller::new(crate::flock::message::socket_path()));
     let push_queue = (listening && config.push.enabled).then(|| {
         push::ExpoQueue::start(config.push.access_token().map(str::to_owned), dir.clone())
     });
@@ -439,6 +454,7 @@ pub(crate) fn start(
         server_event_tx: deps.server_event_tx,
         event_hub: deps.event_hub,
         api,
+        messages,
         shutdown: shutdown_rx,
         stopped: stopped.clone(),
         next_surface_client_id: AtomicU64::new(1),
@@ -508,6 +524,7 @@ impl Gateway {
         let noise_key = store::load_or_create_noise_key(&dir).unwrap();
         Arc::new(Self {
             api: api_proxy::ApiCaller::new(dir.join("no-api.sock")),
+            messages: None,
             dir,
             name: "test".to_owned(),
             server_id,
@@ -574,6 +591,20 @@ mod tests {
             *rx.close.borrow_and_update(),
             Some((protocol::close::REVOKED, None))
         ));
+    }
+
+    #[test]
+    fn message_methods_are_offered_only_in_a_flock() {
+        let dir = store::tests::temp_dir("gw-message-methods");
+        let mut gateway = Gateway::for_test(dir.clone());
+        assert!(!gateway.methods().contains(&"message.approve"));
+        assert!(!gateway.features().contains(&"messages"));
+        if let Some(gateway) = Arc::get_mut(&mut gateway) {
+            gateway.messages = Some(api_proxy::ApiCaller::new(dir.join("flock.sock")));
+        }
+        assert!(gateway.methods().contains(&"message.approve"));
+        assert!(gateway.methods().contains(&"agent.list"));
+        assert!(gateway.features().contains(&"messages"));
     }
 
     #[test]

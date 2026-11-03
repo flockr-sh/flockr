@@ -449,6 +449,8 @@ MUST NOT depend on a feature the server did not list. v2 servers list:
   Without it the app scrolls with `surface.scroll` only.
 - `"input.image"` if the server takes `input.image` (section 9.6).
   Without it the app hides image attach.
+- `"messages"` if the server is in a flock and takes the message methods
+  (section 9.2). Without it the app hides message approvals and settings.
 
 ### 8.4 Server checks
 
@@ -646,6 +648,21 @@ worktree.list worktree.create worktree.open
 events.subscribe events.wait pane.wait_for_output
 notification.show
 ```
+
+On a server in a flock (feature `"messages"`), these go to the flock message
+service instead of the API, as a person (any `caller_pane` param is
+dropped):
+
+```
+message.pending                 -> {"pending": [Message]}
+message.approve {id, always?}   -> {"id", "to"}; always saves a rule for the pair
+message.deny {id}               -> {"id"}
+message.settings                -> {"approve_messages"}
+message.settings.set {approve_messages: "other-projects"|"never"|"always"}
+                                -> {"approve_messages"}; writes [flock] in config.toml
+```
+
+Over a relayed session (section 8.7) they act on that machine.
 
 Not allowed: `server.*`, `plugin.*`, `integration.*`, `client.*`,
 `client_shell.*`, `command.invoke`, `layout.*`, `pane.edit_scrollback`,

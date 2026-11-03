@@ -117,6 +117,8 @@ impl Messages {
                     "message.approve" => self.approve(params).await,
                     "message.deny" => self.deny(params),
                     "message.cancel" => Ok(self.cancel(params)),
+                    "message.settings" => Ok(settings()),
+                    "message.settings.set" => set_settings(params),
                     _ => Err(Failure::new(
                         "unknown_method",
                         format!("no method {method:?}"),
@@ -819,6 +821,32 @@ pub(super) fn serve_local(messages: Arc<Messages>, shutdown: tokio::sync::watch:
             }
         }
     });
+}
+
+/// `message.settings`: this machine's message settings.
+fn settings() -> Value {
+    json!({ "approve_messages": crate::config::Config::load().config.flock.approve_messages })
+}
+
+/// `message.settings.set`: changes `[flock] approve_messages` in this
+/// machine's config. It applies to the next message.
+fn set_settings(params: &Value) -> Answer {
+    let mode: crate::config::ApproveMessages =
+        serde_json::from_value(params["approve_messages"].clone()).map_err(|_| {
+            Failure::new(
+                "bad_request",
+                "approve_messages is \"other-projects\", \"never\" or \"always\"",
+            )
+        })?;
+    let literal =
+        serde_json::to_string(&mode).map_err(|err| Failure::new("internal", err.to_string()))?;
+    crate::config::write_edit(crate::config::ConfigEdit::Set {
+        table: "flock",
+        key: "approve_messages",
+        value: &literal,
+    })
+    .map_err(|err| Failure::new("internal", err))?;
+    Ok(settings())
 }
 
 /// The names (or pane IDs) of the listed agents of `kind`.

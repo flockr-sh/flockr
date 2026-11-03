@@ -405,7 +405,7 @@ fn welcome_value(
         },
         "device": device,
         "features": gateway.features(),
-        "methods": api_proxy::ALLOWED_METHODS,
+        "methods": gateway.methods(),
         "limits": {
             "max_in_flight": max_in_flight,
             "max_subscriptions": MAX_SUBSCRIPTIONS,
@@ -1487,8 +1487,17 @@ impl Conn {
         Flow::Continue
     }
 
-    fn api_request(&mut self, request: protocol::ApiRequest) {
-        if !api_proxy::method_allowed(&request.method) {
+    fn api_request(&mut self, mut request: protocol::ApiRequest) {
+        // Message methods go to the flock message service, as a person.
+        let messages = if api_proxy::MESSAGE_METHODS.contains(&request.method.as_str()) {
+            if let Some(params) = request.params.as_object_mut() {
+                params.remove("caller_pane");
+            }
+            self.gateway.messages.clone()
+        } else {
+            None
+        };
+        if messages.is_none() && !api_proxy::method_allowed(&request.method) {
             self.error(
                 Some(&request.id),
                 ErrorCode::MethodNotAllowed,
@@ -1514,7 +1523,7 @@ impl Conn {
         }
         let cancel = Arc::new(AtomicBool::new(false));
         self.api.insert(request.id.clone(), cancel.clone());
-        let api = self.gateway.api.clone();
+        let api = messages.unwrap_or_else(|| self.gateway.api.clone());
         let out = self.out.clone();
         let done = self.api_done_tx.clone();
         tokio::task::spawn_blocking(move || {
