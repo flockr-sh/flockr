@@ -327,11 +327,13 @@ export function TerminalScreen({ nav, serverId, paneId, title, variant = 'phone'
           )}
           <Tool label="Bottom" onPress={() => sub?.scrollToBottom()} />
           <Tool label="History" onPress={openHistory} />
-          <Tool
-            label={perf ? 'Perf ✓' : 'Perf'}
-            onPress={() => setPerf(!perf)}
-            onLongPress={() => setNativeDebug(!nativeDebug)}
-          />
+          {__DEV__ ? (
+            <Tool
+              label={perf ? 'Perf ✓' : 'Perf'}
+              onPress={() => setPerf(!perf)}
+              onLongPress={() => setNativeDebug(!nativeDebug)}
+            />
+          ) : null}
         </View>
         {ended || notice ? <Text style={styles.banner}>{ended ? `Stream ended: ${ended}` : notice}</Text> : null}
         <View style={{ flex: 1 }}>
