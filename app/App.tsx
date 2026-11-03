@@ -6,7 +6,14 @@ import { AppState, BackHandler, Platform, Pressable, StyleSheet, Text, useWindow
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { connections, InbandNotify } from './src/state/connections';
 import type { Nav, Route } from './src/state/nav';
-import { getPushToken, listenForTaps, pushSupported, setupNotifications } from './src/state/push';
+import {
+  getPushToken,
+  listenForTaps,
+  postLocalNotification,
+  pushSupported,
+  setupNotifications,
+} from './src/state/push';
+import { answerFromPush } from './src/state/pushActions';
 import { colors, statusColor } from './src/state/ui';
 import type { PushData } from './src/protocol';
 import { DesktopShell } from './src/desktop/DesktopShell';
@@ -82,9 +89,23 @@ export default function App() {
       connections.setPushToken(r.token);
       setPushNote(r.token ? 'Push notifications on.' : (r.reason ?? null));
     });
-    return listenForTaps((d: PushData) =>
-      openPane(d.server_id, d.pane_id, `${d.agent ?? 'Agent'} · ${d.workspace ?? ''} › ${d.tab ?? ''}`),
-    );
+    const open = (d: PushData) =>
+      openPane(d.server_id, d.pane_id, `${d.agent ?? 'Agent'} · ${d.workspace ?? ''} › ${d.tab ?? ''}`);
+    return listenForTaps(open, (d, action) => {
+      // Answer buttons open the app (see pushActions.ts); answer now, and
+      // show the pane if the prompt could not be answered.
+      void answerFromPush(
+        {
+          client: (id) => connections.client(id),
+          isDemo: (id) => !!connections.server(id)?.demo,
+          notify: postLocalNotification,
+        },
+        d,
+        action,
+      ).then((r) => {
+        if (r !== 'sent') open(d);
+      });
+    });
   }, [ready, openPane]);
 
   // In-band alerts while the app is open.
