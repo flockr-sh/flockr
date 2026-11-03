@@ -1,6 +1,8 @@
 // Answer buttons on "agent is blocked" push alerts. The server picks one of
 // the categories below when the prompt's options map cleanly (Yes / Yes,
-// don't ask again / No) and puts the prompt it saw in `data.prompt`.
+// don't ask again / No) and puts the prompt it saw in `data.prompt`: its
+// question, detail, and option labels, or, with `alert_prompt_text` off, only
+// the option keys and the prompt's fingerprint (no text leaves the machine).
 //
 // iOS gives an app no reliable background time for an action response:
 // expo-notifications only delivers it to JS when the app is running, and
@@ -11,8 +13,8 @@
 //
 // Plain module with no native imports so it runs under jest and on web.
 import type { GatewayClient, PushData } from '../protocol';
-import type { Prompt, PromptOption } from '../protocol/prompt';
-import { answerPrompt, type AnswerResult } from './answer';
+import type { Prompt } from '../protocol/prompt';
+import { answerFingerprint, answerPrompt, type AnswerResult } from './answer';
 
 export type PromptAction = 'yes' | 'always' | 'no';
 export const OPEN_ACTION = 'open';
@@ -59,36 +61,58 @@ export function isPromptAction(id: string): id is PromptAction {
   return id === 'yes' || id === 'always' || id === 'no';
 }
 
-/** What the server saw when it sent the alert. */
-export interface PushPrompt {
-  category: string;
-  question: string;
-  detail?: string;
-  actions: Partial<Record<PromptAction, PromptOption>>;
+/** An answer button's option; `label` only when the push carried text. */
+export interface PushOption {
+  key: string;
+  label?: string;
 }
 
-function option(value: unknown): PromptOption | undefined {
+/**
+ * What the server saw when it sent the alert: the prompt's text (`question`,
+ * `detail`, labels), or, when the server keeps text off the push, only
+ * `fingerprint`.
+ */
+export interface PushPrompt {
+  category: string;
+  question?: string;
+  detail?: string;
+  fingerprint?: string;
+  actions: Partial<Record<PromptAction, PushOption>>;
+}
+
+const FINGERPRINT = /^[0-9a-f]{32}$/;
+
+function option(value: unknown, text: boolean): PushOption | undefined {
   if (!value || typeof value !== 'object') return undefined;
   const o = value as Record<string, unknown>;
-  if (typeof o.key !== 'string' || !/^\d$/.test(o.key) || typeof o.label !== 'string' || !o.label) return undefined;
+  if (typeof o.key !== 'string' || !/^\d$/.test(o.key)) return undefined;
+  if (!text) return { key: o.key };
+  if (typeof o.label !== 'string' || !o.label) return undefined;
   return { key: o.key, label: o.label };
 }
 
 export function parsePushPrompt(value: unknown): PushPrompt | null {
   if (!value || typeof value !== 'object') return null;
   const p = value as Record<string, unknown>;
-  if (typeof p.category !== 'string' || typeof p.question !== 'string' || !p.question) return null;
-  if (p.detail != null && typeof p.detail !== 'string') return null;
+  if (typeof p.category !== 'string') return null;
+  const fingerprint = typeof p.fingerprint === 'string' && FINGERPRINT.test(p.fingerprint) ? p.fingerprint : undefined;
+  if (p.fingerprint != null && !fingerprint) return null;
+  const text = p.question != null;
+  if (text && (typeof p.question !== 'string' || !p.question)) return null;
+  // Without text, the fingerprint is the only check against the screen.
+  if (!text && !fingerprint) return null;
+  if (p.detail != null && (!text || typeof p.detail !== 'string')) return null;
   const raw = (p.actions && typeof p.actions === 'object' ? p.actions : {}) as Record<string, unknown>;
   const actions: PushPrompt['actions'] = {};
   for (const id of ['yes', 'always', 'no'] as const) {
-    const o = option(raw[id]);
+    const o = option(raw[id], text);
     if (o) actions[id] = o;
   }
   return {
     category: p.category,
-    question: p.question,
+    ...(text ? { question: p.question as string } : {}),
     ...(typeof p.detail === 'string' ? { detail: p.detail } : {}),
+    ...(fingerprint ? { fingerprint } : {}),
     actions,
   };
 }
@@ -112,8 +136,10 @@ export type PushAnswer = AnswerResult | 'no-prompt' | 'unreachable';
 
 /**
  * Answer a prompt from an alert's button. Sends keys only through
- * `answerPrompt`, which re-checks the agent is still blocked (in the same
- * status change) and re-reads its screen. Posts the result either way.
+ * `answerPrompt` (push with text: same question, detail, and label) or
+ * `answerFingerprint` (push without text: same fingerprint), which both
+ * re-check the agent is still blocked (in the same status change) and re-read
+ * its screen. Posts the result either way.
  */
 export async function answerFromPush(deps: AnswerDeps, data: PushData, action: PromptAction): Promise<PushAnswer> {
   const prompt = parsePushPrompt(data.prompt);
@@ -126,16 +152,24 @@ export async function answerFromPush(deps: AnswerDeps, data: PushData, action: P
     if (!client) {
       result = 'unreachable';
     } else {
-      const seen: Prompt = {
-        question: prompt.question,
-        ...(prompt.detail !== undefined ? { detail: prompt.detail } : {}),
-        options: [chosen],
+      const opts = {
+        stateChangeSeq: typeof data.state_change_seq === 'number' ? data.state_change_seq : undefined,
       };
       try {
         await client.waitReady(deps.connectTimeoutMs ?? 15000);
-        result = await answerPrompt(client, data.pane_id, seen, chosen, {
-          stateChangeSeq: typeof data.state_change_seq === 'number' ? data.state_change_seq : undefined,
-        });
+        if (prompt.question !== undefined && chosen.label !== undefined) {
+          const option = { key: chosen.key, label: chosen.label };
+          const seen: Prompt = {
+            question: prompt.question,
+            ...(prompt.detail !== undefined ? { detail: prompt.detail } : {}),
+            options: [option],
+          };
+          result = await answerPrompt(client, data.pane_id, seen, option, opts);
+        } else if (prompt.fingerprint !== undefined) {
+          result = await answerFingerprint(client, data.pane_id, prompt.fingerprint, chosen.key, opts);
+        } else {
+          result = 'no-prompt';
+        }
       } catch {
         result = 'unreachable';
       }

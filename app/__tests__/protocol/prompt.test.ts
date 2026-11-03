@@ -1,8 +1,30 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { isNoOption, parsePrompt, shortLabel } from '../../src/protocol/prompt';
+import { isNoOption, parsePrompt, promptFingerprint, shortLabel } from '../../src/protocol/prompt';
 
 const fixture = (name: string) => readFileSync(join(__dirname, '../fixtures/prompts', name), 'utf8');
+
+describe('promptFingerprint', () => {
+  // src/server/mobile/prompt.rs asserts the same value for the same fixture,
+  // so the app and server canonical forms cannot drift apart.
+  it('matches the server for the claude-bash fixture', () => {
+    expect(promptFingerprint(parsePrompt(fixture('claude-bash.txt'))!)).toBe('36dfc8675e9d416e241ddc54a4bb19d3');
+  });
+
+  it('covers the question, detail, and every label but not the cursor', () => {
+    const p = parsePrompt(fixture('claude-bash.txt'))!;
+    const fp = promptFingerprint(p);
+    expect(promptFingerprint({ ...p, selected: '3' })).toBe(fp);
+    expect(promptFingerprint({ ...p, question: 'Proceed?' })).not.toBe(fp);
+    expect(promptFingerprint({ ...p, detail: 'rm -rf build' })).not.toBe(fp);
+    expect(promptFingerprint({ ...p, options: p.options.map((o) => (o.key === '3' ? { ...o, label: 'Yes' } : o)) })).not.toBe(
+      fp,
+    );
+    expect(promptFingerprint({ ...p, options: p.options.slice(0, 3) })).not.toBe(fp);
+    const { detail: _, ...noDetail } = p;
+    expect(promptFingerprint(noDetail)).toBe(promptFingerprint({ ...p, detail: '' }));
+  });
+});
 
 describe('parsePrompt', () => {
   it('reads a Claude Code Bash prompt (captured from a real pane)', () => {

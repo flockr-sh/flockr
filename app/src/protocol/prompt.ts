@@ -3,6 +3,8 @@
 // Claude Code and Codex both draw a list like "❯ 1. Yes" / "2. No" and pick an
 // option when its digit is typed. Returns null whenever the screen does not
 // clearly show one, so the app falls back to opening the terminal.
+import { sha256 } from '@noble/hashes/sha2.js';
+import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
 
 export interface PromptOption {
   /** The digit that picks this option. */
@@ -169,6 +171,21 @@ function findDetail(lines: Line[], q: number, first: number): string | undefined
 /** Same prompt, same options: safe to answer what the person saw. */
 export function samePrompt(a: Prompt, b: Prompt): boolean {
   return a.question === b.question && a.detail === b.detail;
+}
+
+/**
+ * A hash of what the prompt says. A push sent with `alert_prompt_text` off
+ * carries this instead of the text; the server computes it the same way
+ * (`prompt_fingerprint` in `src/server/mobile/prompt.rs`).
+ *
+ * SHA-256 of the UTF-8 lines `q:<question>`, `d:<detail, or empty>`, then
+ * `<key>:<label>` for each option in screen order, joined with "\n" (no
+ * trailing newline); the first 16 bytes as lowercase hex. The cursor position
+ * is left out so moving it does not block an answer.
+ */
+export function promptFingerprint(p: Prompt): string {
+  const lines = [`q:${p.question}`, `d:${p.detail ?? ''}`, ...p.options.map((o) => `${o.key}:${o.label}`)];
+  return bytesToHex(sha256(utf8ToBytes(lines.join('\n'))).slice(0, 16));
 }
 
 /** An option's label short enough for a button. */

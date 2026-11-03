@@ -12,6 +12,7 @@ import {
 } from '../../src/state/pushActions';
 
 const screen = readFileSync(join(__dirname, '../fixtures/prompts/claude-bash.txt'), 'utf8');
+const FINGERPRINT = '36dfc8675e9d416e241ddc54a4bb19d3';
 
 // What the server sends for the claude-bash fixture (src/server/mobile/push.rs tests).
 const pushData = (patch: Partial<PushData> = {}): PushData => ({
@@ -32,9 +33,21 @@ const pushData = (patch: Partial<PushData> = {}): PushData => ({
       always: { key: '2', label: 'Yes, and don’t ask again for: npm test *' },
       no: { key: '4', label: 'No' },
     },
+    fingerprint: FINGERPRINT,
   },
   ...patch,
 });
+
+// The same alert with `alert_prompt_text = false`: no prompt text at all.
+const keysOnly = (patch: Partial<PushData> = {}): PushData =>
+  pushData({
+    prompt: {
+      category: 'prompt_yes_always_no',
+      actions: { yes: { key: '1' }, always: { key: '2' }, no: { key: '4' } },
+      fingerprint: FINGERPRINT,
+    },
+    ...patch,
+  });
 
 function fakeServer(opts: { status?: string; seq?: number; text?: string; ready?: boolean } = {}) {
   const calls: [string, Record<string, unknown>][] = [];
@@ -121,10 +134,22 @@ describe('parsePushPrompt', () => {
     });
   });
 
+  it('reads a push without prompt text', () => {
+    expect(parsePushPrompt(keysOnly().prompt)).toEqual({
+      category: 'prompt_yes_always_no',
+      fingerprint: FINGERPRINT,
+      actions: { yes: { key: '1' }, always: { key: '2' }, no: { key: '4' } },
+    });
+  });
+
   it('rejects junk', () => {
     expect(parsePushPrompt(undefined)).toBeNull();
     expect(parsePushPrompt({ question: 'x' })).toBeNull();
     expect(parsePushPrompt({ category: 'c', question: '' })).toBeNull();
+    // No text and no fingerprint: nothing to check the screen against.
+    expect(parsePushPrompt({ category: 'c', actions: { yes: { key: '1' } } })).toBeNull();
+    expect(parsePushPrompt({ category: 'c', fingerprint: 'abc', actions: {} })).toBeNull();
+    expect(parsePushPrompt({ category: 'c', fingerprint: FINGERPRINT, detail: 'x', actions: {} })).toBeNull();
   });
 });
 
@@ -217,6 +242,54 @@ describe('answerFromPush', () => {
     expect(await answerFromPush(deps(server.client, true).d, pushData(), 'yes')).toBe('no-prompt');
     expect(server.calls).toEqual([]);
     expect(notes).toEqual(["Couldn't answer checkout. Open flockr.", "Couldn't answer checkout. Open flockr."]);
+  });
+
+  describe('without prompt text', () => {
+    it.each([
+      ['yes', '1'],
+      ['always', '2'],
+      ['no', '4'],
+    ] as const)('%s sends %s when the fingerprint matches', async (action, key) => {
+      const server = fakeServer();
+      const { d } = deps(server.client);
+      expect(await answerFromPush(d, keysOnly(), action)).toBe('sent');
+      expect(sent(server.calls)).toEqual([[key]]);
+    });
+
+    it('still answers when only the cursor moved', async () => {
+      const text = screen.replace('❯ 1. Yes', '  1. Yes').replace('   4. No', ' ❯ 4. No');
+      const server = fakeServer({ text });
+      expect(await answerFromPush(deps(server.client).d, keysOnly(), 'yes')).toBe('sent');
+    });
+
+    it.each([
+      ['the command', screen.replace(' npm test 2>&1 | tail -100\n╌', ' rm -rf build\n╌')],
+      ['an option the push has no button for', screen.replace('switch to auto mode ·', 'allow all commands ·')],
+      ['the question', screen.replace('Do you want to proceed?', 'Do you want to deploy?')],
+    ])('sends nothing when %s changed', async (_, text) => {
+      const server = fakeServer({ text });
+      const { d, notes } = deps(server.client);
+      expect(await answerFromPush(d, keysOnly(), 'yes')).toBe('changed');
+      expect(sent(server.calls)).toEqual([]);
+      expect(notes).toEqual(["Couldn't answer checkout. Open flockr."]);
+    });
+
+    it('sends nothing when the agent blocked again or stopped', async () => {
+      const again = fakeServer({ seq: 18 });
+      expect(await answerFromPush(deps(again.client).d, keysOnly(), 'yes')).toBe('changed');
+      const working = fakeServer({ status: 'working' });
+      expect(await answerFromPush(deps(working.client).d, keysOnly(), 'yes')).toBe('not-blocked');
+      expect([...sent(again.calls), ...sent(working.calls)]).toEqual([]);
+    });
+
+    it('sends nothing when the key is not on the screen', async () => {
+      const server = fakeServer();
+      const data = keysOnly({
+        prompt: { category: 'prompt_yes_no', actions: { yes: { key: '1' }, no: { key: '7' } }, fingerprint: FINGERPRINT },
+      });
+      expect(await answerFromPush(deps(server.client).d, data, 'no')).toBe('changed');
+      expect(sent(server.calls)).toEqual([]);
+    });
   });
 
   it('still reports the answer when the note cannot be posted', async () => {
