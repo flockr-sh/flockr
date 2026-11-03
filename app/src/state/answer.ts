@@ -3,7 +3,7 @@
 // still the one the person saw before sending the option's digit.
 import { useEffect, useState } from 'react';
 import { normalizeStatus, type AgentRow, type GatewayClient } from '../protocol';
-import { parsePrompt, samePrompt, type Prompt, type PromptOption } from '../protocol/prompt';
+import { parsePrompt, promptFingerprint, samePrompt, type Prompt, type PromptOption } from '../protocol/prompt';
 
 /** How often a blocked agent's screen is read again while it stays blocked. */
 export const PROMPT_POLL_MS = 4000;
@@ -38,17 +38,50 @@ export async function answerPrompt(
   option: PromptOption,
   opts: { stateChangeSeq?: number } = {},
 ): Promise<AnswerResult> {
+  return answerIf(client, paneId, option.key, opts.stateChangeSeq, (now) => {
+    const same = now.options.find((o) => o.key === option.key);
+    return samePrompt(now, seen) && same?.label === option.label;
+  });
+}
+
+/**
+ * Like `answerPrompt`, for a push that carried no prompt text: the screen's
+ * prompt must have exactly `fingerprint` (see `promptFingerprint`) and an
+ * option under `key`.
+ */
+export async function answerFingerprint(
+  client: Api,
+  paneId: string,
+  fingerprint: string,
+  key: string,
+  opts: { stateChangeSeq?: number } = {},
+): Promise<AnswerResult> {
+  return answerIf(
+    client,
+    paneId,
+    key,
+    opts.stateChangeSeq,
+    (now) => promptFingerprint(now) === fingerprint && now.options.some((o) => o.key === key),
+  );
+}
+
+async function answerIf(
+  client: Api,
+  paneId: string,
+  key: string,
+  stateChangeSeq: number | undefined,
+  matches: (now: Prompt) => boolean,
+): Promise<AnswerResult> {
   const got = await client.api<{ agent?: { agent_status?: string; state_change_seq?: number } }>('agent.get', {
     target: paneId,
   });
   if (normalizeStatus(got.agent?.agent_status) !== 'blocked') return 'not-blocked';
   // With a seq (from a push), the agent must still be in the same blocked spell.
-  if (opts.stateChangeSeq !== undefined && got.agent?.state_change_seq !== opts.stateChangeSeq) return 'changed';
+  if (stateChangeSeq !== undefined && got.agent?.state_change_seq !== stateChangeSeq) return 'changed';
   const now = await readPrompt(client, paneId);
-  const same = now?.options.find((o) => o.key === option.key);
-  if (!now || !samePrompt(now, seen) || !same || same.label !== option.label) return 'changed';
+  if (!now || !matches(now)) return 'changed';
   // Claude Code and Codex pick an option on its digit; no Enter.
-  await client.api('agent.send_keys', { target: paneId, keys: [option.key] });
+  await client.api('agent.send_keys', { target: paneId, keys: [key] });
   return 'sent';
 }
 
