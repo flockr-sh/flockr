@@ -76,16 +76,18 @@ const DEFAULT_CONFIG: &str = r##"# flockr configuration
 # onboarding = true
 
 [theme]
-# Built-in themes: catppuccin, terminal, tokyo-night, dracula, nord,
-#                  gruvbox, one-dark, solarized, kanagawa, rose-pine,
-#                  vesper
-# name = "catppuccin"
+# Built-in themes: terminal (your terminal's own colors), flockr,
+#                  catppuccin, tokyo-night, dracula, nord, gruvbox,
+#                  one-dark, solarized, kanagawa, rose-pine, vesper
+# name = "terminal"
 
 # Follow host terminal light/dark appearance and switch Flockr UI themes.
 # Existing manual behavior is unchanged unless this is true.
 # auto_switch = false
-# dark_name = "catppuccin"
-# light_name = "catppuccin-latte"
+# Unset, they follow name: flockr pairs with flockr-light, catppuccin
+# with catppuccin-latte, and so on. terminal pairs with itself.
+# dark_name = "flockr"
+# light_name = "flockr-light"
 
 # Override individual color tokens on top of the base theme.
 # Accepts: hex (#rrggbb), named colors, rgb(r,g,b), or panel_bg = "reset"

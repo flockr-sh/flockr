@@ -46,6 +46,13 @@
 - `flockr integration install claude` and `codex` also install the flockr
   skill, which tells agents how to message each other and to act on the
   messages they receive.
+- A flockr theme, dark (`flockr`) and light (`flockr-light`), in the
+  colors of the phone app. With `auto_switch` on, they pair with each
+  other.
+
+### Changed
+- The default theme is now `terminal`, which uses your terminal's colors.
+  Set `[theme] name = "catppuccin"` to keep the old look.
 
 ### Fixed
 - The TUI client stays attached across `flockr server live-handoff`. It

@@ -599,6 +599,8 @@ fn sidebar_row(buffer: &ratatui::buffer::Buffer, y: u16, width: u16) -> String {
 #[test]
 fn sidebar_chrome_defaults_draw_header_bands_counts_chips_and_a_grip() {
     let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    // The terminal theme leaves chip backgrounds unset; check them on an RGB theme.
+    state.config.palette = Palette::catppuccin();
     state.set_snapshot(Box::new(snapshot()));
     state.set_pane_surface(surface());
     let frame = state.compose(106, 30).expect("sidebar");
@@ -644,6 +646,7 @@ fn sidebar_chrome_text_styles_keep_the_plain_look() {
     )
     .expect("config");
     let mut state = ClientShellState::new(ClientShellConfig::from_config(&config));
+    state.config.palette = Palette::catppuccin();
     state.set_snapshot(Box::new(snapshot()));
     state.set_pane_surface(surface());
     let frame = state.compose(106, 30).expect("sidebar");
@@ -671,6 +674,7 @@ fn collapsed_sidebar_toggle_is_a_chip_unless_buttons_are_text() {
     for (config, chip) in [("", true), ("[ui.sidebar]\nbuttons = \"text\"\n", false)] {
         let config: Config = toml::from_str(config).expect("config");
         let mut state = ClientShellState::new(ClientShellConfig::from_config(&config));
+        state.config.palette = Palette::catppuccin();
         state.set_snapshot(Box::new(snapshot()));
         state.set_pane_surface(surface());
         state.sidebar_collapsed = true;
