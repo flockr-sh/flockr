@@ -588,8 +588,7 @@ const DEFAULT_CONFIG: &str = r##"# flockr configuration
 # dir = ""
 "##;
 
-// Bundled at build time so the printed skill always matches this binary's release.
-const SKILL: &str = include_str!("../skills/flockr/SKILL.md");
+const SKILL: &str = integration::FLOCKR_SKILL;
 
 fn should_block_nested(config: &config::Config) -> bool {
     should_block_nested_for_env(config, std::env::var(FLOCKR_ENV_VAR).ok().as_deref())

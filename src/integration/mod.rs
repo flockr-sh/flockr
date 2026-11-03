@@ -28,6 +28,10 @@ pub(crate) use types::{
     IntegrationStatusKind,
 };
 
+/// The agent skill, bundled at build time so it always matches this binary.
+/// `flockr --skill` prints it; Claude and Codex installs write it.
+pub(crate) const FLOCKR_SKILL: &str = include_str!("../../skills/flockr/SKILL.md");
+
 /// CLI labels for experimental integrations that are intentionally not part of
 /// the frozen client endpoint `IntegrationTarget` enum. Empty this list once the
 /// agent registry provides first-class target registration.

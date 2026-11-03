@@ -1,6 +1,8 @@
 use std::fs;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+use super::FLOCKR_SKILL;
 
 pub(crate) fn remove_file_if_exists(path: &Path) -> io::Result<bool> {
     match fs::remove_file(path) {
@@ -56,4 +58,29 @@ pub(crate) fn make_executable(_path: &Path) -> io::Result<()> {
     }
 
     Ok(())
+}
+
+/// Writes the flockr skill to `<agent dir>/skills/flockr/SKILL.md`.
+pub(crate) fn install_skill(agent_dir: &Path) -> io::Result<PathBuf> {
+    let skill_dir = agent_dir.join("skills").join("flockr");
+    fs::create_dir_all(&skill_dir)?;
+    let path = skill_dir.join("SKILL.md");
+    fs::write(&path, FLOCKR_SKILL)?;
+    Ok(path)
+}
+
+/// The path `install_skill` writes for this agent directory.
+pub(crate) fn skill_path(agent_dir: &Path) -> PathBuf {
+    agent_dir.join("skills").join("flockr").join("SKILL.md")
+}
+
+/// Removes the flockr skill, and its folder when nothing else is in it.
+pub(crate) fn uninstall_skill(agent_dir: &Path) -> io::Result<bool> {
+    let path = skill_path(agent_dir);
+    let removed = remove_file_if_exists(&path)?;
+    if let Some(dir) = path.parent() {
+        // Fails when the folder still holds other files; leave those.
+        let _ = fs::remove_dir(dir);
+    }
+    Ok(removed)
 }

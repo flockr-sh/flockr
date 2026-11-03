@@ -4,6 +4,7 @@ use std::path::PathBuf;
 pub(crate) struct ClaudeInstallPaths {
     pub hook_path: PathBuf,
     pub settings_path: PathBuf,
+    pub skill_path: PathBuf,
 }
 
 #[derive(Debug)]
@@ -11,6 +12,7 @@ pub(crate) struct CodexInstallPaths {
     pub hook_path: PathBuf,
     pub hooks_path: PathBuf,
     pub config_path: PathBuf,
+    pub skill_path: PathBuf,
 }
 
 #[derive(Debug)]
@@ -210,6 +212,8 @@ pub(crate) struct ClaudeUninstallResult {
     pub settings_path: PathBuf,
     pub removed_hook_file: bool,
     pub updated_settings: bool,
+    pub skill_path: PathBuf,
+    pub removed_skill: bool,
 }
 
 #[derive(Debug)]
@@ -219,6 +223,8 @@ pub(crate) struct CodexUninstallResult {
     pub config_path: PathBuf,
     pub removed_hook_file: bool,
     pub updated_hooks: bool,
+    pub skill_path: PathBuf,
+    pub removed_skill: bool,
 }
 
 #[derive(Debug)]

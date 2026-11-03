@@ -21,12 +21,14 @@ use super::config_edit::{
 };
 use super::config_file::{check_config_targets, write_config};
 use super::env::{
-    antigravity_cli_dir, claude_dir, codex_dir, copilot_dir, cursor_dir, devin_dir, droid_dir,
-    grok_dir, hermes_dir, hermes_plugin_dir, kilo_dir, kimi_dir, letta_dir, mastracode_dir,
-    omp_extension_dir, opencode_dir, opencode_state_dir, pi_extension_dir, qodercli_dir, qwen_dir,
+    agents_dir, antigravity_cli_dir, claude_dir, codex_dir, copilot_dir, cursor_dir, devin_dir,
+    droid_dir, grok_dir, hermes_dir, hermes_plugin_dir, kilo_dir, kimi_dir, letta_dir,
+    mastracode_dir, omp_extension_dir, opencode_dir, opencode_state_dir, pi_extension_dir,
+    qodercli_dir, qwen_dir,
 };
 use super::file_ops::{
-    make_executable, remove_dir_all_if_exists, remove_file_if_exists, remove_legacy_bash_hook_file,
+    install_skill, make_executable, remove_dir_all_if_exists, remove_file_if_exists,
+    remove_legacy_bash_hook_file, skill_path, uninstall_skill,
 };
 use super::opencode_config::{
     add_cli_plugin, add_tui_plugin, remove_cli_plugin, remove_tui_plugin,
@@ -150,10 +152,12 @@ pub(crate) fn install_claude() -> io::Result<ClaudeInstallPaths> {
     if updated_settings != existing_settings {
         write_config(&settings_path, updated_settings)?;
     }
+    let skill_path = install_skill(&dir)?;
 
     Ok(ClaudeInstallPaths {
         hook_path,
         settings_path,
+        skill_path,
     })
 }
 
@@ -215,10 +219,13 @@ pub(crate) fn install_codex() -> io::Result<CodexInstallPaths> {
         write_config(&config_path, new_config)?;
     }
 
+    let skill_path = install_skill(&agents_dir()?)?;
+
     Ok(CodexInstallPaths {
         hook_path,
         hooks_path,
         config_path,
+        skill_path,
     })
 }
 
@@ -591,12 +598,15 @@ pub(crate) fn uninstall_claude() -> io::Result<ClaudeUninstallResult> {
 
     let removed_hook_file =
         remove_file_if_exists(&hook_path)? | remove_legacy_bash_hook_file(&hook_path)?;
+    let removed_skill = uninstall_skill(&dir)?;
 
     Ok(ClaudeUninstallResult {
         hook_path,
         settings_path,
         removed_hook_file,
         updated_settings,
+        skill_path: skill_path(&dir),
+        removed_skill,
     })
 }
 
@@ -640,6 +650,8 @@ pub(crate) fn uninstall_codex() -> io::Result<CodexUninstallResult> {
 
     let removed_hook_file =
         remove_file_if_exists(&hook_path)? | remove_legacy_bash_hook_file(&hook_path)?;
+    let agents = agents_dir()?;
+    let removed_skill = uninstall_skill(&agents)?;
 
     Ok(CodexUninstallResult {
         hook_path,
@@ -647,6 +659,8 @@ pub(crate) fn uninstall_codex() -> io::Result<CodexUninstallResult> {
         config_path,
         removed_hook_file,
         updated_hooks,
+        skill_path: skill_path(&agents),
+        removed_skill,
     })
 }
 

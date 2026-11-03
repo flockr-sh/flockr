@@ -59,6 +59,11 @@ pub(crate) fn claude_dir() -> io::Result<PathBuf> {
     config_dir_from_env_or_home(CLAUDE_CONFIG_DIR_ENV_VAR, &[".claude"])
 }
 
+/// `~/.agents`, where Codex reads user skills.
+pub(crate) fn agents_dir() -> io::Result<PathBuf> {
+    Ok(home_dir()?.join(".agents"))
+}
+
 pub(crate) fn codex_dir() -> io::Result<PathBuf> {
     config_dir_from_env_or_home(CODEX_HOME_ENV_VAR, &[".codex"])
 }
