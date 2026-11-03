@@ -1597,6 +1597,9 @@ pub struct MobilePushConfig {
     pub confirm_delay_ms: u64,
     /// Optional Expo access token sent as `Authorization: Bearer`.
     pub expo_access_token: Option<String>,
+    /// Show a blocked agent's question and command in the alert text.
+    /// Answer buttons are sent either way. Default: true.
+    pub alert_prompt_text: bool,
 }
 
 impl Default for MobilePushConfig {
@@ -1607,6 +1610,7 @@ impl Default for MobilePushConfig {
             done: true,
             confirm_delay_ms: 5000,
             expo_access_token: None,
+            alert_prompt_text: true,
         }
     }
 }
@@ -1632,6 +1636,7 @@ impl std::fmt::Debug for MobilePushConfig {
             .field("blocked", &self.blocked)
             .field("done", &self.done)
             .field("confirm_delay_ms", &self.confirm_delay_ms)
+            .field("alert_prompt_text", &self.alert_prompt_text)
             .field(
                 "expo_access_token",
                 &self.access_token().map(|_| "<redacted>"),
@@ -1948,6 +1953,7 @@ mod tests {
         assert!(default_config.mobile.push.enabled);
         assert!(default_config.mobile.push.blocked);
         assert!(default_config.mobile.push.done);
+        assert!(default_config.mobile.push.alert_prompt_text);
         assert_eq!(
             default_config.mobile.push.confirm_delay(),
             std::time::Duration::from_secs(5)
@@ -1970,6 +1976,7 @@ blocked = false
 done = true
 confirm_delay_ms = 999999
 expo_access_token = "secret"
+alert_prompt_text = false
 "#,
         )
         .unwrap();
@@ -1991,6 +1998,7 @@ expo_access_token = "secret"
         assert_eq!(mobile.advertised_hosts(), vec!["dk.netbird.cloud"]);
         assert!(!mobile.push.enabled);
         assert!(!mobile.push.blocked);
+        assert!(!mobile.push.alert_prompt_text);
         assert_eq!(
             mobile.push.confirm_delay(),
             std::time::Duration::from_secs(60)

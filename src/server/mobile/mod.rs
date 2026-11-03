@@ -11,6 +11,7 @@ pub(crate) mod cells;
 pub(crate) mod connection;
 pub(crate) mod listener;
 pub(crate) mod noise;
+pub(crate) mod prompt;
 pub(crate) mod protocol;
 pub(crate) mod push;
 pub(crate) mod surface;

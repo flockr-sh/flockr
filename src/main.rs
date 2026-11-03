@@ -550,6 +550,13 @@ const DEFAULT_CONFIG: &str = r##"# flockr configuration
 # done = true
 # Re-check delay before sending; drops alerts for status flicker (0..=60000).
 # confirm_delay_ms = 5000
+# Blocked alerts read the agent's permission prompt and, when it is a plain
+# Yes / No question, carry Yes, "Yes, don't ask again", No, and Open buttons
+# (long-press the notification). The app re-reads the screen and answers only
+# if the prompt is unchanged. This key shows the question and command in the
+# alert text; set it false to keep them off the lock screen. The buttons stay,
+# and the push data still carries the prompt so the app can check it.
+# alert_prompt_text = true
 # Optional Expo access token ("enhanced push security"), sent as a Bearer token.
 # expo_access_token = ""
 

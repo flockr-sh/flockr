@@ -49,6 +49,12 @@
 - A flockr theme, dark (`flockr`) and light (`flockr-light`), in the
   colors of the phone app. With `auto_switch` on, they pair with each
   other.
+- Blocked alerts on the phone show the agent's question and command
+  ("Do you want to proceed? · npm test") and, for plain Yes / No prompts,
+  carry answer buttons: long-press for Yes, Yes don't ask again, No, or
+  Open. The app checks the prompt is unchanged before it answers.
+  `[mobile.push] alert_prompt_text = false` keeps the question and command
+  off the lock screen; the buttons stay.
 
 ### Changed
 - The default theme is now `terminal`, which uses your terminal's colors.
