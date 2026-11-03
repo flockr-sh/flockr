@@ -53,8 +53,8 @@
   ("Do you want to proceed? · npm test") and, for plain Yes / No prompts,
   carry answer buttons: long-press for Yes, Yes don't ask again, No, or
   Open. The app checks the prompt is unchanged before it answers.
-  `[mobile.push] alert_prompt_text = false` keeps the question and command
-  off the lock screen; the buttons stay.
+  `[mobile.push] alert_prompt_text = false` keeps the question, command,
+  and option labels out of the push entirely; the buttons stay.
 
 ### Changed
 - The default theme is now `terminal`, which uses your terminal's colors.

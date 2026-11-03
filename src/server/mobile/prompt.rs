@@ -7,6 +7,8 @@
 //! re-parses the screen before it answers and only sends a digit when its
 //! parse matches what the alert carried.
 
+use sha2::{Digest, Sha256};
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PromptOption {
     /// The digit that picks this option.
@@ -320,6 +322,33 @@ fn find_detail(lines: &[Line], q: usize, first: usize) -> Option<String> {
     None
 }
 
+/// A hash of what the prompt says, sent in a push instead of the text when
+/// `alert_prompt_text` is off. The app hashes its own parse of the screen the
+/// same way (`promptFingerprint` in `src/protocol/prompt.ts`) and answers only
+/// on an exact match.
+///
+/// SHA-256 of the UTF-8 lines `q:<question>`, `d:<detail, or empty>`, then
+/// `<key>:<label>` for each option in screen order, joined with `\n` (no
+/// trailing newline); the first 16 bytes as lowercase hex. The cursor
+/// position is left out so moving it does not block an answer.
+pub(crate) fn prompt_fingerprint(prompt: &Prompt) -> String {
+    let mut lines = vec![
+        format!("q:{}", prompt.question),
+        format!("d:{}", prompt.detail.as_deref().unwrap_or_default()),
+    ];
+    lines.extend(
+        prompt
+            .options
+            .iter()
+            .map(|option| format!("{}:{}", option.key, option.label)),
+    );
+    let digest = Sha256::digest(lines.join("\n").as_bytes());
+    digest[..16]
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
 /// The fixed answer-button sets the phone app registers as notification
 /// categories. Expo warns against `:` and `-` in category ids.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -562,6 +591,36 @@ mod tests {
             fixture("claude-bash.txt")
         );
         assert_eq!(parse_prompt(&text), None);
+    }
+
+    /// The app's prompt tests assert the same value for the same fixture, so
+    /// the two canonical forms cannot drift apart.
+    #[test]
+    fn fingerprints_the_question_detail_and_options() {
+        let prompt = parse_prompt(&fixture("claude-bash.txt")).unwrap();
+        assert_eq!(
+            prompt_fingerprint(&prompt),
+            "36dfc8675e9d416e241ddc54a4bb19d3"
+        );
+        let moved = Prompt {
+            selected: "3".to_owned(),
+            ..prompt.clone()
+        };
+        assert_eq!(prompt_fingerprint(&moved), prompt_fingerprint(&prompt));
+        let mut other = prompt.clone();
+        other.detail = Some("rm -rf build".to_owned());
+        assert_ne!(prompt_fingerprint(&other), prompt_fingerprint(&prompt));
+        let mut relabeled = prompt.clone();
+        relabeled.options[3].label = "Yes, always".to_owned();
+        assert_ne!(prompt_fingerprint(&relabeled), prompt_fingerprint(&prompt));
+        let mut no_detail = prompt;
+        no_detail.detail = None;
+        let mut empty_detail = no_detail.clone();
+        empty_detail.detail = Some(String::new());
+        assert_eq!(
+            prompt_fingerprint(&no_detail),
+            prompt_fingerprint(&empty_detail)
+        );
     }
 
     #[test]

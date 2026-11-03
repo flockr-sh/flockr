@@ -54,7 +54,7 @@ changed).
 | `mobile.push.done` | bool | `true` | Push when an agent becomes Done. |
 | `mobile.push.confirm_delay_ms` | u64 | `5000` | Re-check delay before sending. Clamped to 0..=60000. |
 | `mobile.push.expo_access_token` | string? | unset | Optional Expo "enhanced push security" token, sent as `Authorization: Bearer`. |
-| `mobile.push.alert_prompt_text` | bool | `true` | Show a blocked agent's question and command in the alert text (11.3). Answer buttons and the `data.prompt` check are sent either way. |
+| `mobile.push.alert_prompt_text` | bool | `true` | Show a blocked agent's question and command in the alert text (11.3). Off, the push carries no prompt text at all: `data.prompt` has only option keys and a fingerprint (11.4). Answer buttons are sent either way. |
 
 Sample config text (append to `src/main.rs` sample):
 
@@ -1280,18 +1280,42 @@ A blocked alert whose prompt maps to buttons also has
     "yes": { "key": "1", "label": "Yes" },
     "always": { "key": "2", "label": "Yes, and don’t ask again for: npm test *" },
     "no": { "key": "4", "label": "No" }
-  }
+  },
+  "fingerprint": "36dfc8675e9d416e241ddc54a4bb19d3"
 }
 ```
 
 `detail` is `null` when the screen shows none; `always` is absent for
 `prompt_yes_no`. `detail` is the full parsed detail, not the cut text.
 
+With `alert_prompt_text = false` the push carries no prompt text (it passes
+through Expo and Apple or Google): no `question`, no `detail`, no labels.
+
+```json
+"prompt": {
+  "category": "prompt_yes_always_no",
+  "actions": { "yes": { "key": "1" }, "always": { "key": "2" }, "no": { "key": "4" } },
+  "fingerprint": "36dfc8675e9d416e241ddc54a4bb19d3"
+}
+```
+
+`fingerprint` is the lowercase hex of the first 16 bytes of the SHA-256 of
+the parsed prompt's canonical text, UTF-8: the lines `q:<question>`,
+`d:<detail>` (empty when there is none), then `<key>:<label>` for every
+option in screen order, joined with `\n`, no trailing newline. Question,
+detail, and labels are the parser's output (trimmed, whitespace collapsed,
+key hints dropped). The cursor position is not included. Both
+`prompt_fingerprint` (`src/server/mobile/prompt.rs`) and the app's
+`promptFingerprint` (`src/protocol/prompt.ts`) test that the
+`claude-bash.txt` fixture gives the value above.
+
 App on a button (actions need Face ID or the passcode and open the app):
 connect to `data.server_id`, then answer only if `agent.get` says the agent
 is still `blocked` with the same `state_change_seq`, and a fresh
-`agent.read` parses to the same question and detail with the same label
-under the action's key. Then `agent.send_keys` with the digit, no Enter.
+`agent.read` parses to a prompt that has the action's key and that matches
+the push: with text, the same question and detail and the same label under
+that key; without text, the same fingerprint. Then `agent.send_keys` with
+the digit, no Enter.
 Otherwise it sends nothing and posts "Couldn't answer". Open (and a plain
 tap) opens the pane.
 

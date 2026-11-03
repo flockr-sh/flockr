@@ -554,8 +554,10 @@ const DEFAULT_CONFIG: &str = r##"# flockr configuration
 # Yes / No question, carry Yes, "Yes, don't ask again", No, and Open buttons
 # (long-press the notification). The app re-reads the screen and answers only
 # if the prompt is unchanged. This key shows the question and command in the
-# alert text; set it false to keep them off the lock screen. The buttons stay,
-# and the push data still carries the prompt so the app can check it.
+# alert text; set it false to keep all prompt text (question, command, and
+# option labels) out of the push entirely, so it never passes through Expo,
+# Apple, or Google. The buttons stay: the push carries only the option keys
+# and a hash of the prompt, which the app checks against the screen.
 # alert_prompt_text = true
 # Optional Expo access token ("enhanced push security"), sent as a Bearer token.
 # expo_access_token = ""

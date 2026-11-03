@@ -1597,8 +1597,9 @@ pub struct MobilePushConfig {
     pub confirm_delay_ms: u64,
     /// Optional Expo access token sent as `Authorization: Bearer`.
     pub expo_access_token: Option<String>,
-    /// Show a blocked agent's question and command in the alert text.
-    /// Answer buttons are sent either way. Default: true.
+    /// Show a blocked agent's question and command in the alert text and
+    /// push data. Off, the push carries no prompt text, only option keys and
+    /// a fingerprint. Answer buttons are sent either way. Default: true.
     pub alert_prompt_text: bool,
 }
 

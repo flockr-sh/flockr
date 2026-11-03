@@ -15,7 +15,9 @@ use serde_json::{json, Value};
 use tracing::{debug, warn};
 
 use super::api_proxy::result_field;
-use super::prompt::{parse_prompt, prompt_actions, Prompt, PromptActions, PromptOption};
+use super::prompt::{
+    parse_prompt, prompt_actions, prompt_fingerprint, Prompt, PromptActions, PromptOption,
+};
 use super::{Gateway, RateWindow, PUSHES_PER_DEVICE_PER_MINUTE};
 use crate::api::schema::{AgentStatus, EventData};
 use crate::mobile::store;
@@ -150,6 +152,9 @@ pub(crate) struct Alert {
     pub prompt: Option<Prompt>,
     /// Answer buttons for that prompt, when its options map cleanly.
     pub actions: Option<PromptActions>,
+    /// Whether the prompt's text may leave the machine (in the alert body and
+    /// push data). Off, the push carries only keys and a fingerprint.
+    pub prompt_text: bool,
 }
 
 fn str_field<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
@@ -243,27 +248,38 @@ pub(crate) fn build_alert(
             .unwrap_or(0),
         prompt,
         actions,
+        prompt_text,
     }
 }
 
-fn option_json(option: &PromptOption) -> Value {
-    json!({ "key": option.key, "label": option.label })
+fn option_json(option: &PromptOption, text: bool) -> Value {
+    if text {
+        json!({ "key": option.key, "label": option.label })
+    } else {
+        json!({ "key": option.key })
+    }
 }
 
 /// What the app checks against the screen before it answers from a button.
-fn prompt_data(prompt: &Prompt, actions: &PromptActions) -> Value {
+/// With `text` off it carries no prompt text at all (it passes through Expo
+/// and Apple or Google): only the button keys and the prompt's fingerprint.
+fn prompt_data(prompt: &Prompt, actions: &PromptActions, text: bool) -> Value {
     let mut buttons = serde_json::Map::new();
-    buttons.insert("yes".to_owned(), option_json(&actions.yes));
+    buttons.insert("yes".to_owned(), option_json(&actions.yes, text));
     if let Some(always) = &actions.always {
-        buttons.insert("always".to_owned(), option_json(always));
+        buttons.insert("always".to_owned(), option_json(always, text));
     }
-    buttons.insert("no".to_owned(), option_json(&actions.no));
-    json!({
+    buttons.insert("no".to_owned(), option_json(&actions.no, text));
+    let mut data = json!({
         "category": actions.category.id(),
-        "question": prompt.question,
-        "detail": prompt.detail,
         "actions": buttons,
-    })
+        "fingerprint": prompt_fingerprint(prompt),
+    });
+    if text {
+        data["question"] = json!(prompt.question);
+        data["detail"] = json!(prompt.detail);
+    }
+    data
 }
 
 pub(crate) fn notify_message(alert: &Alert) -> String {
@@ -310,7 +326,7 @@ pub(crate) fn expo_message(alert: &Alert, to: &str, server_id: &str, server_name
     });
     if let (Some(prompt), Some(actions)) = (&alert.prompt, &alert.actions) {
         message["categoryId"] = json!(actions.category.id());
-        message["data"]["prompt"] = prompt_data(prompt, actions);
+        message["data"]["prompt"] = prompt_data(prompt, actions, alert.prompt_text);
     }
     message
 }
@@ -825,6 +841,7 @@ mod tests {
                     "always": { "key": "2", "label": "Yes, and don’t ask again for: npm test *" },
                     "no": { "key": "4", "label": "No" },
                 },
+                "fingerprint": "36dfc8675e9d416e241ddc54a4bb19d3",
             })
         );
 
@@ -845,7 +862,22 @@ mod tests {
         assert_eq!(alert.body, "storefront › checkout · dk-desktop");
         let message = expo_message(&alert, "x", "s", "h");
         assert_eq!(message["categoryId"], "prompt_yes_always_no");
-        assert_eq!(message["data"]["prompt"]["actions"]["yes"]["key"], "1");
+        assert_eq!(
+            message["data"]["prompt"],
+            json!({
+                "category": "prompt_yes_always_no",
+                "actions": {
+                    "yes": { "key": "1" },
+                    "always": { "key": "2" },
+                    "no": { "key": "4" },
+                },
+                "fingerprint": "36dfc8675e9d416e241ddc54a4bb19d3",
+            })
+        );
+        let wire = message.to_string();
+        for text in ["proceed", "npm test", "Yes", "No"] {
+            assert!(!wire.contains(text), "{text} leaked into {wire}");
+        }
     }
 
     #[test]
