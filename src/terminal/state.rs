@@ -33,6 +33,22 @@ pub(crate) struct HandoffAgentState {
     acquisition_pending: bool,
 }
 
+/// Done/seen bookkeeping and the screen-detected agent state carried across a
+/// live handoff. Whether a finished agent was seen is not on screen, so the
+/// replacement server cannot detect it again.
+#[cfg(unix)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct HandoffAgentAttention {
+    pub seen: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    detected_agent: Option<String>,
+    fallback_state: AgentState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    state_change_seq: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    completion_seq: Option<u64>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct SuppressedFullLifecycleHookReport {
     agent_label: String,
@@ -160,6 +176,10 @@ pub struct TerminalState {
     pub respawn_shell_on_exit: bool,
     recent_agent_process_exit: Option<RecentAgentProcessExit>,
     agent_process_acquisition_pending: bool,
+    /// The agent a live handoff carried over. The replacement server's
+    /// detector reports it again as a new process; that report must not
+    /// restart acquisition and erase the carried state.
+    handoff_restored_agent: Option<Agent>,
     pub pending_agent_resume_plan: Option<crate::agent_resume::AgentResumePlan>,
     pub restore_error: Option<String>,
     pub agent_launch_args: Option<AgentLaunchArgs>,
@@ -217,6 +237,7 @@ impl TerminalState {
             respawn_shell_on_exit: false,
             recent_agent_process_exit: None,
             agent_process_acquisition_pending: false,
+            handoff_restored_agent: None,
             pending_agent_resume_plan: None,
             restore_error: None,
             agent_launch_args: None,
@@ -231,6 +252,14 @@ impl TerminalState {
         agent: Agent,
         now: Instant,
     ) -> TerminalStateMutation {
+        if self.handoff_restored_agent.take() == Some(agent) && self.detected_agent == Some(agent) {
+            // The same process, seen again by the replacement server.
+            return TerminalStateMutation {
+                effective_state_change: None,
+                session_ref_changed: false,
+                agent_released: false,
+            };
+        }
         let starts_acquisition = !self
             .should_ignore_detected_state_under_full_lifecycle_hook(Some(agent), false)
             && !self.detected_state_observed_before_release_suppression(Some(agent), now);
@@ -261,6 +290,39 @@ impl TerminalState {
             sequence: self.hook_report_sequences.get(&authority.source).copied(),
             acquisition_pending: self.agent_process_acquisition_pending,
         })
+    }
+
+    #[cfg(unix)]
+    pub(crate) fn handoff_agent_attention(&self, seen: bool) -> HandoffAgentAttention {
+        HandoffAgentAttention {
+            seen,
+            detected_agent: self
+                .detected_agent
+                .map(|agent| crate::detect::agent_label(agent).to_string()),
+            fallback_state: self.fallback_state,
+            state_change_seq: self.last_agent_state_change_seq,
+            completion_seq: self.last_agent_completion_seq,
+        }
+    }
+
+    /// Restores the carried detection state and completion sequences. Call
+    /// before `restore_handoff_agent_state` so a carried hook status wins.
+    #[cfg(unix)]
+    pub(crate) fn restore_handoff_agent_attention(&mut self, attention: &HandoffAgentAttention) {
+        let agent = attention
+            .detected_agent
+            .as_deref()
+            .and_then(crate::detect::parse_agent_label);
+        self.detected_agent = agent;
+        self.handoff_restored_agent = agent;
+        self.fallback_state = if agent.is_some() {
+            attention.fallback_state
+        } else {
+            AgentState::Unknown
+        };
+        self.state = self.fallback_state;
+        self.last_agent_state_change_seq = attention.state_change_seq;
+        self.last_agent_completion_seq = attention.completion_seq;
     }
 
     #[cfg(unix)]
@@ -401,6 +463,9 @@ impl TerminalState {
         process_exited: bool,
         now: Instant,
     ) -> TerminalStateMutation {
+        if process_exited || agent != self.handoff_restored_agent {
+            self.handoff_restored_agent = None;
+        }
         let previous_agent_label = self.effective_agent_label().map(str::to_string);
         let previous_known_agent = self.effective_known_agent();
         let previous_state = self.state;

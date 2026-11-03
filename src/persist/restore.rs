@@ -622,6 +622,10 @@ fn restore_tab(
         let handoff_agent_state = imported_runtime
             .as_ref()
             .and_then(|imported| imported.state.agent_state.clone());
+        #[cfg(unix)]
+        let handoff_attention = imported_runtime
+            .as_ref()
+            .and_then(|imported| imported.state.attention.clone());
         let pending_native_agent_restore = if was_imported {
             None
         } else {
@@ -770,10 +774,21 @@ fn restore_tab(
                     );
                 }
                 #[cfg(unix)]
+                let seen = handoff_attention.as_ref().map(|attention| {
+                    terminal.restore_handoff_agent_attention(attention);
+                    attention.seen
+                });
+                #[cfg(not(unix))]
+                let seen = None;
+                let pane = PaneState {
+                    seen: seen.unwrap_or(true),
+                    ..PaneState::new(terminal_id.clone())
+                };
+                #[cfg(unix)]
                 if let Some(agent_state) = handoff_agent_state {
                     terminal.restore_handoff_agent_state(agent_state);
                 }
-                panes.insert(*id, PaneState::new(terminal_id.clone()));
+                panes.insert(*id, pane);
                 terminal_runtimes.insert(terminal_id, runtime);
                 terminals.push(terminal);
             }
@@ -2217,6 +2232,154 @@ mod tests {
                 state_before_handoff == AgentState::Blocked
             );
         }
+    }
+
+    /// Exports the only pane, marked `seen`, after its agent finished, and
+    /// imports it through a live handoff. Without `send_attention` it acts as
+    /// an older server that did not send the field.
+    #[cfg(unix)]
+    fn handoff_screen_detected_agent(
+        seen: bool,
+        completion_seq: Option<u64>,
+        send_attention: bool,
+    ) -> (bool, crate::terminal::TerminalState) {
+        let (snapshot, _) = snapshot_with_saved_pane_history();
+        let (events, _events_rx) = mpsc::channel(32);
+        let (mut workspaces, mut terminals, runtimes) = restore(
+            &snapshot,
+            None,
+            24,
+            80,
+            4096,
+            test_restore_shell(),
+            crate::config::ShellModeConfig::NonLogin,
+            false,
+            events.clone(),
+            Arc::new(Notify::new()),
+            Arc::new(RenderSignal::new()),
+        );
+        let terminal = terminals.values_mut().next().unwrap();
+        let now = std::time::Instant::now();
+        terminal.set_detected_agent_process_at(crate::detect::Agent::Pi, now);
+        terminal.set_detected_state(Some(crate::detect::Agent::Pi), AgentState::Working);
+        terminal.set_detected_state(Some(crate::detect::Agent::Pi), AgentState::Idle);
+        terminal.finish_agent_process_acquisition();
+        terminal.last_agent_state_change_seq = Some(7);
+        terminal.last_agent_completion_seq = completion_seq;
+        assert_eq!(terminal.state, AgentState::Idle);
+        let pane_id = workspaces[0].tabs[0].panes.keys().next().copied().unwrap();
+        workspaces[0].tabs[0].panes.get_mut(&pane_id).unwrap().seen = seen;
+
+        let runtimes = crate::terminal::TerminalRuntimeRegistry::from(runtimes);
+        let snapshot = crate::persist::capture(&workspaces, &terminals, &runtimes, Some(0), 0);
+        let runtime = runtimes.values().next().unwrap();
+        runtime
+            .pause_handoff_reader(std::time::Duration::from_secs(2))
+            .unwrap();
+        let mut state = runtime.handoff_runtime_state(pane_id.raw());
+        let terminal = terminals.values().next().unwrap();
+        state.agent_state = terminal.handoff_agent_state();
+        if send_attention {
+            state.attention = Some(terminal.handoff_agent_attention(seen));
+        }
+        let state = serde_json::from_value(serde_json::to_value(state).unwrap()).unwrap();
+        let mut imports = HashMap::from([(
+            pane_id.raw(),
+            crate::handoff_runtime::ImportedHandoffRuntime {
+                master_fd: runtime.duplicate_handoff_fd().unwrap(),
+                state,
+            },
+        )]);
+        let (restored_workspaces, mut restored_terminals, restored_runtimes) = restore_handoff(
+            &snapshot,
+            4096,
+            test_restore_shell(),
+            crate::config::ShellModeConfig::NonLogin,
+            &mut imports,
+            events,
+            Arc::new(Notify::new()),
+            Arc::new(RenderSignal::new()),
+        )
+        .unwrap();
+        drop(restored_runtimes);
+        drop(runtimes);
+        let restored_seen = restored_workspaces[0].tabs[0]
+            .panes
+            .values()
+            .next()
+            .unwrap()
+            .seen;
+        let terminal_id = restored_terminals.keys().next().cloned().unwrap();
+        (
+            restored_seen,
+            restored_terminals.remove(&terminal_id).unwrap(),
+        )
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn live_handoff_keeps_unseen_completion_through_first_detection() {
+        let (seen, mut terminal) = handoff_screen_detected_agent(false, Some(7), true);
+        assert!(!seen, "an unseen completion must stay unseen");
+        assert_eq!(terminal.state, AgentState::Idle);
+        assert_eq!(terminal.last_agent_state_change_seq, Some(7));
+        assert_eq!(terminal.last_agent_completion_seq, Some(7));
+
+        // The replacement server's detector finds the same agent process and
+        // then reads the same idle screen; neither is a new state.
+        let mutation = terminal
+            .set_detected_agent_process_at(crate::detect::Agent::Pi, std::time::Instant::now());
+        assert!(mutation.effective_state_change.is_none());
+        assert!(!terminal.finish_agent_process_acquisition());
+        assert!(terminal
+            .set_detected_state(Some(crate::detect::Agent::Pi), AgentState::Idle)
+            .is_none());
+        assert_eq!(terminal.state, AgentState::Idle);
+        assert_eq!(terminal.last_agent_completion_seq, Some(7));
+
+        // Only the first report is the carried process; a later one is a new
+        // process and acquires as usual.
+        terminal.set_detected_agent_process_at(crate::detect::Agent::Pi, std::time::Instant::now());
+        assert_eq!(terminal.state, AgentState::Unknown);
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn live_handoff_keeps_seen_idle_agent_idle() {
+        let (seen, terminal) = handoff_screen_detected_agent(true, None, true);
+        assert!(seen);
+        assert_eq!(terminal.state, AgentState::Idle);
+        assert_eq!(terminal.last_agent_completion_seq, None);
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn live_handoff_from_older_server_without_attention_redetects() {
+        let (seen, terminal) = handoff_screen_detected_agent(false, Some(7), false);
+        assert!(
+            seen,
+            "without carried attention the pane starts seen, as before"
+        );
+        assert_eq!(terminal.state, AgentState::Unknown);
+        assert_eq!(terminal.detected_agent, None);
+        assert_eq!(terminal.last_agent_completion_seq, None);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn handoff_attention_that_does_not_parse_is_dropped() {
+        let state: crate::handoff_runtime::HandoffRuntimeState =
+            serde_json::from_value(serde_json::json!({
+                "pane_id": 1,
+                "child_pid": 2,
+                "rows": 24,
+                "cols": 80,
+                "cell_width_px": 8,
+                "cell_height_px": 16,
+                "attention": {"seen": false, "fallback_state": "Sleeping"}
+            }))
+            .unwrap();
+        assert!(state.attention.is_none());
     }
 
     #[tokio::test]
