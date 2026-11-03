@@ -11,9 +11,9 @@ waiting on you, or done.
 
 ![flockr demo](assets/demo.gif)
 
-flockr is a hard fork of [herdr](https://github.com/herdrdev/herdr) by Can
-Celik and contributors (Apache-2.0). It runs beside a stock herdr without
-either one seeing the other.
+flockr is a hard fork of [herdr](https://github.com/herdrdev/herdr)
+(Apache-2.0). It runs beside a stock herdr without either one seeing the
+other.
 
 ## Install
 
