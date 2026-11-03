@@ -773,15 +773,17 @@ fn restore_tab(
                         std::time::Instant::now(),
                     );
                 }
+                // Without carried attention (an older server), the pane starts
+                // seen, as before. Live handoff is Unix only.
                 #[cfg(unix)]
-                let seen = handoff_attention.as_ref().map(|attention| {
+                let seen = handoff_attention.as_ref().is_none_or(|attention| {
                     terminal.restore_handoff_agent_attention(attention);
                     attention.seen
                 });
                 #[cfg(not(unix))]
-                let seen = None;
+                let seen = true;
                 let pane = PaneState {
-                    seen: seen.unwrap_or(true),
+                    seen,
                     ..PaneState::new(terminal_id.clone())
                 };
                 #[cfg(unix)]
