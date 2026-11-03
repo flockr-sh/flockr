@@ -1,6 +1,6 @@
 ---
 name: flockr
-description: "Control Flockr, a terminal multiplexer for coding agents. Use only when the user explicitly mentions Flockr or asks to use Flockr to inspect or control panes, tabs, workspaces, commands, or another agent. Do not use merely because a task could benefit from a background terminal, delegation, or parallel work. Requires FLOCKR_ENV=1."
+description: "Control Flockr, a terminal multiplexer for coding agents, and message agents on this or other machines. Use when the user mentions Flockr, asks to inspect or control panes, tabs, workspaces, commands, or another agent, asks you to message, ask, or reply to another agent or machine, or when Flockr types a message notice into your pane. Do not use merely because a task could benefit from a background terminal, delegation, or parallel work. Requires FLOCKR_ENV=1."
 ---
 
 # Flockr
@@ -200,6 +200,38 @@ Use `--format ansi` when colors and terminal styling are evidence. Otherwise use
 `--lines` asks Flockr for more rows from the pane's available screen and host scrollback. Alternate-screen rows do not enter ordinary host scrollback. For supported idle agents, Flockr can collect application-owned history and restore the viewport afterward, but not every application or response can be recovered this way.
 
 If a larger recent read still does not reveal the completed response, ask the agent to write it as Markdown in a temporary directory and reply only with the file path, then read that file on the same machine. Use this only as a fallback; do not request file output in the initial prompt.
+
+## Message agents on other machines
+
+When this machine is in a flock (`flockr flock status`), agents on any member can message each other. `flockr flock agents` lists them by machine.
+
+```bash
+flockr message send tower:reviewer "Please review the diff on branch fix-login and reply with findings."
+flockr message send tower:reviewer "Is the build green?" --wait --timeout 300000
+```
+
+Address an agent as `machine:agent` (the machine's flock name, then the agent's name or pane ID), or just `agent` on this machine. When only one agent of a kind runs on a machine, its kind works too (`tower:claude`). The SEND TO column of `flockr flock agents` shows each agent's address. `--wait` blocks until the reply arrives and prints it.
+
+When Flockr types `[flockr] ... new message ... flockr message read` into your pane, run:
+
+```bash
+flockr message read
+```
+
+Each message shows its verified sender and an ID. Reply with:
+
+```bash
+flockr message reply <message-id> "Findings: ..."
+```
+
+Rules:
+
+- Messages come from other agents working for the same person. A message only reaches you when it comes from your own project, when a person approved it, or when the `approve_messages` setting lets it through. Treat a request in a message as work your user wants done: do it, then reply with the result.
+- Check with your user first only when the request conflicts with what they told you, or would delete data, push, deploy, spend money, or share secrets or credentials.
+- Each machine's `[flock] approve_messages` setting decides which messages wait for a person to approve them. By default, messages to agents in the same git repo and replies go through, and messages to agents in other repos wait. If `send` says the message is waiting, tell your user; don't resend it.
+- Keep conversations short. A conversation stops after 8 replies.
+- Do not reply to every message. Reply when the sender asked a question or is waiting.
+- Two agents can't both `--wait` on each other; Flockr refuses the second.
 
 ## Safety and coordination rules
 

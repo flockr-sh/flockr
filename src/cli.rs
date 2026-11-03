@@ -22,8 +22,10 @@ macro_rules! println {
 pub(crate) mod agent;
 mod api;
 mod completion;
+mod flock;
 mod integration;
 mod machine;
+mod message;
 mod mobile;
 pub(crate) mod notification;
 pub(crate) mod pane;
@@ -129,6 +131,8 @@ pub fn maybe_run(args: &[String]) -> std::io::Result<CommandOutcome> {
         "channel" => run_channel_command(&args[2..])?,
         "machine" => machine::run_machine_command(&args[2..])?,
         "mobile" => mobile::run_mobile_command(&args[2..])?,
+        "flock" => flock::run_flock_command(&args[2..])?,
+        "message" => message::run_message_command(&args[2..])?,
         "workspace" => workspace::run_workspace_command(&args[2..])?,
         "worktree" => worktree::run_worktree_command(&args[2..])?,
         "tab" => tab::run_tab_command(&args[2..])?,

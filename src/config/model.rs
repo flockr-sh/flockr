@@ -329,6 +329,8 @@ pub struct Config {
     pub experimental: ExperimentalConfig,
     pub remote: RemoteConfig,
     pub mobile: MobileConfig,
+    pub flock: FlockConfig,
+    pub web: WebConfig,
 }
 
 #[derive(Debug)]
@@ -1433,6 +1435,154 @@ fn parse_mobile_listen_entry(
     Ok(addr)
 }
 
+/// Default TCP port for flock connections between members.
+pub const DEFAULT_FLOCK_PORT: u16 = 47392;
+
+/// When a message from an agent waits for a person to approve it. Read for
+/// each message, so a change applies without a restart.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum ApproveMessages {
+    /// Only between agents in different repos, unless it answers a message
+    /// the recipient sent or a person allowed the pair.
+    #[default]
+    OtherProjects,
+    /// Never: every message goes through.
+    Never,
+    /// Every message from an agent, unless a person allowed the pair.
+    Always,
+}
+
+/// `[flock]`: this server's part in a flock. On the hub, the encrypted
+/// listener members connect to; elsewhere, the connection to the hub. Every
+/// key but `approve_messages` needs a server restart.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct FlockConfig {
+    /// Run the flock node. Default: false.
+    pub enabled: bool,
+    /// Literal IP addresses to bind on the hub, optionally with `:port`
+    /// (`[v6]:port`).
+    /// Unspecified addresses (`0.0.0.0`, `::`) and host names are rejected.
+    pub listen: Vec<String>,
+    /// Port for `listen` entries without one. Default: 47392.
+    pub port: u16,
+    /// This machine's name in the flock. Default: host name.
+    pub name: Option<String>,
+    /// When messages from agents to this machine's agents wait for a person.
+    pub approve_messages: ApproveMessages,
+}
+
+impl Default for FlockConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            listen: Vec::new(),
+            port: DEFAULT_FLOCK_PORT,
+            name: None,
+            approve_messages: ApproveMessages::default(),
+        }
+    }
+}
+
+impl FlockConfig {
+    /// Parsed `listen` addresses plus one diagnostic per rejected entry.
+    pub fn listen_addrs(&self) -> (Vec<std::net::SocketAddr>, Vec<String>) {
+        let mut addrs = Vec::new();
+        let mut diagnostics = Vec::new();
+        for entry in &self.listen {
+            match parse_mobile_listen_entry(entry, self.port) {
+                Ok(addr) => {
+                    if !addrs.contains(&addr) {
+                        addrs.push(addr);
+                    }
+                }
+                Err(reason) => diagnostics.push(format!("flock.listen entry {entry:?} {reason}")),
+            }
+        }
+        (addrs, diagnostics)
+    }
+
+    /// Config warnings for `[flock]`. An empty `listen` is fine: only the
+    /// hub listens, and `flockr flock init` and `invite` warn there.
+    pub fn diagnostics(&self) -> Vec<String> {
+        self.listen_addrs().1
+    }
+
+    /// This machine's name in the flock.
+    pub fn display_name(&self) -> String {
+        self.name
+            .as_deref()
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .map(str::to_owned)
+            .or_else(crate::platform::hostname)
+            .unwrap_or_else(|| "flockr".to_owned())
+    }
+}
+
+/// Default TCP port for the web app.
+pub const DEFAULT_WEB_PORT: u16 = 47393;
+
+/// `[web]`: serves the flockr web app (the phone app built for a browser)
+/// over plain HTTP. Every key needs a server restart.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct WebConfig {
+    /// Serve the web app. Default: false.
+    pub enabled: bool,
+    /// Literal IP addresses to bind, optionally with `:port` (`[v6]:port`).
+    /// Unspecified addresses (`0.0.0.0`, `::`) and host names are rejected.
+    pub listen: Vec<String>,
+    /// Port for `listen` entries without one. Default: 47393.
+    pub port: u16,
+    /// Folder with the built web app (`npm run export:web` in flockr-mobile
+    /// writes it to `dist/`).
+    pub dir: Option<String>,
+}
+
+impl Default for WebConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            listen: Vec::new(),
+            port: DEFAULT_WEB_PORT,
+            dir: None,
+        }
+    }
+}
+
+impl WebConfig {
+    /// Parsed `listen` addresses plus one diagnostic per rejected entry.
+    pub fn listen_addrs(&self) -> (Vec<std::net::SocketAddr>, Vec<String>) {
+        let mut addrs = Vec::new();
+        let mut diagnostics = Vec::new();
+        for entry in &self.listen {
+            match parse_mobile_listen_entry(entry, self.port) {
+                Ok(addr) => {
+                    if !addrs.contains(&addr) {
+                        addrs.push(addr);
+                    }
+                }
+                Err(reason) => diagnostics.push(format!("web.listen entry {entry:?} {reason}")),
+            }
+        }
+        (addrs, diagnostics)
+    }
+
+    /// Config warnings for `[web]`.
+    pub fn diagnostics(&self) -> Vec<String> {
+        let (addrs, mut diagnostics) = self.listen_addrs();
+        if self.enabled && addrs.is_empty() {
+            diagnostics.push("web.enabled is true but web.listen has no usable address".to_owned());
+        }
+        if self.enabled && self.dir.as_deref().is_none_or(|dir| dir.trim().is_empty()) {
+            diagnostics.push("web.enabled is true but web.dir is not set".to_owned());
+        }
+        diagnostics
+    }
+}
+
 /// `[mobile.push]`: Expo push notifications for Blocked and Done agents.
 #[derive(Clone, Deserialize)]
 #[serde(default)]
@@ -1447,6 +1597,10 @@ pub struct MobilePushConfig {
     pub confirm_delay_ms: u64,
     /// Optional Expo access token sent as `Authorization: Bearer`.
     pub expo_access_token: Option<String>,
+    /// Show a blocked agent's question and command in the alert text and
+    /// push data. Off, the push carries no prompt text, only option keys and
+    /// a fingerprint. Answer buttons are sent either way. Default: true.
+    pub alert_prompt_text: bool,
 }
 
 impl Default for MobilePushConfig {
@@ -1457,6 +1611,7 @@ impl Default for MobilePushConfig {
             done: true,
             confirm_delay_ms: 5000,
             expo_access_token: None,
+            alert_prompt_text: true,
         }
     }
 }
@@ -1482,6 +1637,7 @@ impl std::fmt::Debug for MobilePushConfig {
             .field("blocked", &self.blocked)
             .field("done", &self.done)
             .field("confirm_delay_ms", &self.confirm_delay_ms)
+            .field("alert_prompt_text", &self.alert_prompt_text)
             .field(
                 "expo_access_token",
                 &self.access_token().map(|_| "<redacted>"),
@@ -1798,6 +1954,7 @@ mod tests {
         assert!(default_config.mobile.push.enabled);
         assert!(default_config.mobile.push.blocked);
         assert!(default_config.mobile.push.done);
+        assert!(default_config.mobile.push.alert_prompt_text);
         assert_eq!(
             default_config.mobile.push.confirm_delay(),
             std::time::Duration::from_secs(5)
@@ -1820,6 +1977,7 @@ blocked = false
 done = true
 confirm_delay_ms = 999999
 expo_access_token = "secret"
+alert_prompt_text = false
 "#,
         )
         .unwrap();
@@ -1841,12 +1999,68 @@ expo_access_token = "secret"
         assert_eq!(mobile.advertised_hosts(), vec!["dk.netbird.cloud"]);
         assert!(!mobile.push.enabled);
         assert!(!mobile.push.blocked);
+        assert!(!mobile.push.alert_prompt_text);
         assert_eq!(
             mobile.push.confirm_delay(),
             std::time::Duration::from_secs(60)
         );
         assert_eq!(mobile.push.access_token(), Some("secret"));
         assert!(!format!("{:?}", mobile.push).contains("secret"));
+    }
+
+    #[test]
+    fn web_config_parses_and_needs_a_dir_and_address() {
+        let default_config = Config::default();
+        assert!(!default_config.web.enabled);
+        assert_eq!(default_config.web.port, DEFAULT_WEB_PORT);
+        assert!(default_config.web.diagnostics().is_empty());
+        let config: Config = toml::from_str(
+            "[web]\nenabled = true\nlisten = [\"10.0.0.1\", \"0.0.0.0\"]\ndir = \"/srv/flockr-web\"\n",
+        )
+        .unwrap();
+        let (addrs, diagnostics) = config.web.listen_addrs();
+        assert_eq!(addrs, vec!["10.0.0.1:47393".parse().unwrap()]);
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(config.web.dir.as_deref(), Some("/srv/flockr-web"));
+        let config: Config = toml::from_str("[web]\nenabled = true\n").unwrap();
+        assert_eq!(config.web.diagnostics().len(), 2);
+    }
+
+    #[test]
+    fn flock_config_parses_and_reports_bad_listen_entries() {
+        let default_config = Config::default();
+        assert!(!default_config.flock.enabled);
+        assert_eq!(default_config.flock.port, DEFAULT_FLOCK_PORT);
+        assert!(default_config.flock.diagnostics().is_empty());
+        let config: Config = toml::from_str(
+            "[flock]\nenabled = true\nlisten = [\"10.0.0.1\", \"0.0.0.0\", \"[fd00::1]:9\"]\nport = 5000\nname = \" tower \"\n",
+        )
+        .unwrap();
+        let (addrs, diagnostics) = config.flock.listen_addrs();
+        assert_eq!(
+            addrs,
+            vec![
+                "10.0.0.1:5000".parse().unwrap(),
+                "[fd00::1]:9".parse().unwrap()
+            ]
+        );
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(config.flock.display_name(), "tower");
+        let config: Config = toml::from_str("[flock]\nenabled = true\n").unwrap();
+        assert!(config.flock.diagnostics().is_empty());
+        assert_eq!(
+            config.flock.approve_messages,
+            ApproveMessages::OtherProjects
+        );
+        for (text, mode) in [
+            ("never", ApproveMessages::Never),
+            ("always", ApproveMessages::Always),
+            ("other-projects", ApproveMessages::OtherProjects),
+        ] {
+            let config: Config =
+                toml::from_str(&format!("[flock]\napprove_messages = \"{text}\"\n")).unwrap();
+            assert_eq!(config.flock.approve_messages, mode);
+        }
     }
 
     #[test]

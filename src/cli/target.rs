@@ -17,10 +17,40 @@ thread_local! {
 }
 
 struct MachineTarget {
-    profile: SavedSshEndpoint,
-    bridge: Option<crate::remote::SavedSshApiBridge>,
+    route: MachineRoute,
     #[cfg(test)]
     client_override: Option<ApiClient>,
+}
+
+/// How `--machine` reaches the machine: a flock member through the hub, or
+/// a saved SSH machine.
+enum MachineRoute {
+    Flock {
+        member: crate::flock::store::Member,
+        bridge: Option<crate::flock::client::FlockApiBridge>,
+    },
+    Ssh {
+        profile: SavedSshEndpoint,
+        bridge: Option<Box<crate::remote::SavedSshApiBridge>>,
+    },
+}
+
+/// A flock member named `selector` comes first; otherwise a saved SSH
+/// machine.
+fn resolve_route(selector: &str) -> Result<MachineRoute, String> {
+    let dir = crate::flock::store::flock_dir();
+    if let Some(member) = crate::flock::client::find_member(&dir, selector)? {
+        return Ok(MachineRoute::Flock {
+            member,
+            bridge: None,
+        });
+    }
+    let profiles = EndpointCatalog::load_profiles().map_err(|error| error.to_string())?;
+    let profile = resolve_machine(&profiles, selector)?.clone();
+    Ok(MachineRoute::Ssh {
+        profile,
+        bridge: None,
+    })
 }
 
 struct TargetScope(Option<MachineTarget>);
@@ -44,15 +74,13 @@ pub(super) fn maybe_run(args: &[String]) -> Option<io::Result<super::CommandOutc
         if super::spec::print_requested_help(&args)? {
             return Ok(super::CommandOutcome::Handled(0));
         }
-        let profiles = EndpointCatalog::load_profiles().map_err(io::Error::other)?;
-        let profile = match resolve_machine(&profiles, &selector) {
-            Ok(profile) => profile.clone(),
+        let route = match resolve_route(&selector) {
+            Ok(route) => route,
             Err(error) => return usage_error(error),
         };
         let _scope = TARGET.with(|target| {
             TargetScope(target.replace(Some(MachineTarget {
-                profile,
-                bridge: None,
+                route,
                 #[cfg(test)]
                 client_override: None,
             })))
@@ -80,30 +108,47 @@ pub(super) fn api_client() -> io::Result<ApiClient> {
         if let Some(client) = &target.client_override {
             return Ok(client.clone());
         }
-        if target.bridge.is_none() {
-            target.bridge = Some(
-                crate::remote::SavedSshApiBridge::start(
-                    target.profile.id.as_str(),
-                    &target.profile.target,
-                    &target.profile.session,
-                    true,
-                    true,
-                )
-                .map_err(|error| {
-                    io::Error::new(
-                        error.kind(),
-                        format!("machine '{}': {error}", target.profile.label),
-                    )
-                })?,
-            );
-        }
-        let bridge = target
-            .bridge
-            .as_ref()
-            .ok_or_else(|| io::Error::other("machine bridge unavailable"))?;
-        Ok(ApiClient::for_target(ConnectionTarget::SocketPath(
-            bridge.socket_path().to_owned(),
-        )))
+        let socket = match &mut target.route {
+            MachineRoute::Flock { member, bridge } => {
+                if bridge.is_none() {
+                    *bridge = Some(crate::flock::client::FlockApiBridge::start(member).map_err(
+                        |error| {
+                            io::Error::new(
+                                error.kind(),
+                                format!("machine '{}': {error}", member.name),
+                            )
+                        },
+                    )?);
+                }
+                bridge
+                    .as_ref()
+                    .map(|bridge| bridge.socket_path().to_owned())
+            }
+            MachineRoute::Ssh { profile, bridge } => {
+                if bridge.is_none() {
+                    *bridge = Some(Box::new(
+                        crate::remote::SavedSshApiBridge::start(
+                            profile.id.as_str(),
+                            &profile.target,
+                            &profile.session,
+                            true,
+                            true,
+                        )
+                        .map_err(|error| {
+                            io::Error::new(
+                                error.kind(),
+                                format!("machine '{}': {error}", profile.label),
+                            )
+                        })?,
+                    ));
+                }
+                bridge
+                    .as_ref()
+                    .map(|bridge| bridge.socket_path().to_owned())
+            }
+        };
+        let socket = socket.ok_or_else(|| io::Error::other("machine bridge unavailable"))?;
+        Ok(ApiClient::for_target(ConnectionTarget::SocketPath(socket)))
     })
 }
 
@@ -125,31 +170,33 @@ pub(super) fn server_status(
     // the probe must never be replayed after an ambiguous SSH failure.
     TARGET.with(|target| {
         let mut target = target.borrow_mut();
-        let Some(target) = target.as_mut() else {
+        let Some(MachineRoute::Ssh { profile, bridge }) =
+            target.as_mut().map(|target| &mut target.route)
+        else {
             return Err(error);
         };
-        let Some(bridge) = target.bridge.as_ref() else {
+        let Some(current) = bridge.as_ref() else {
             return Err(error);
         };
-        let failure = bridge.reported_failure();
-        let stale_metadata = bridge.used_cached_metadata
+        let failure = current.reported_failure();
+        let stale_metadata = current.used_cached_metadata
             && failure
                 .as_ref()
                 .is_some_and(crate::remote::SavedSshApiBridge::stale_metadata_failure);
-        if !bridge.can_retry || (!stale_metadata && !bridge.recover_transport()) {
+        if !current.can_retry || (!stale_metadata && !current.recover_transport()) {
             return Err(failure.map(Into::into).unwrap_or(error));
         }
         if stale_metadata {
-            bridge.invalidate_metadata();
+            current.invalidate_metadata();
         }
-        target.bridge.take();
-        target.bridge = Some(crate::remote::SavedSshApiBridge::start(
-            target.profile.id.as_str(),
-            &target.profile.target,
-            &target.profile.session,
+        bridge.take();
+        *bridge = Some(Box::new(crate::remote::SavedSshApiBridge::start(
+            profile.id.as_str(),
+            &profile.target,
+            &profile.session,
             !stale_metadata,
             false,
-        )?);
+        )?));
         Ok(())
     })?;
     probe()
@@ -158,38 +205,44 @@ pub(super) fn server_status(
 pub(super) fn remote_error(error: io::Error) -> io::Error {
     TARGET.with(|target| {
         let target = target.borrow();
-        let Some(target) = target.as_ref() else {
-            return error;
-        };
-        let error = target
-            .bridge
-            .as_ref()
-            .and_then(|bridge| bridge.reported_failure())
-            .unwrap_or(error);
-        io::Error::new(
-            error.kind(),
-            format!(
-                "machine '{}' (session {}): {error}",
-                target.profile.label, target.profile.session
+        match target.as_ref().map(|target| &target.route) {
+            None => error,
+            Some(MachineRoute::Flock { member, .. }) => io::Error::new(
+                error.kind(),
+                format!("machine '{}' (flock): {error}", member.name),
             ),
-        )
+            Some(MachineRoute::Ssh { profile, bridge }) => {
+                let error = bridge
+                    .as_ref()
+                    .and_then(|bridge| bridge.reported_failure())
+                    .unwrap_or(error);
+                io::Error::new(
+                    error.kind(),
+                    format!(
+                        "machine '{}' (session {}): {error}",
+                        profile.label, profile.session
+                    ),
+                )
+            }
+        }
     })
 }
 
 pub(super) fn restart_guidance() -> String {
-    TARGET.with(|target| match target.borrow().as_ref() {
-        Some(target) => format!("Update Flockr and restart the server on machine '{}' (session {}). Stopping the server exits its pane processes.", target.profile.label, target.profile.session),
+    TARGET.with(|target| match target.borrow().as_ref().map(|target| &target.route) {
+        Some(MachineRoute::Flock { member, .. }) => format!("Update Flockr and restart the server on machine '{}'. Stopping the server exits its pane processes.", member.name),
+        Some(MachineRoute::Ssh { profile, .. }) => format!("Update Flockr and restart the server on machine '{}' (session {}). Stopping the server exits its pane processes.", profile.label, profile.session),
         None => crate::session::active_restart_after_update_guidance(),
     })
 }
 
 pub(super) fn remote_identity() -> Option<(String, String)> {
     TARGET.with(|target| {
-        target.borrow().as_ref().map(|target| {
-            (
-                target.profile.id.to_string(),
-                target.profile.session.clone(),
-            )
+        target.borrow().as_ref().map(|target| match &target.route {
+            // A flock member serves its API from the server running its
+            // flock node.
+            MachineRoute::Flock { member, .. } => (member.id.clone(), "flock".to_owned()),
+            MachineRoute::Ssh { profile, .. } => (profile.id.to_string(), profile.session.clone()),
         })
     })
 }
@@ -238,7 +291,9 @@ fn parse_machine_prefix(args: &[String]) -> Result<Option<(String, Vec<String>)>
                     .ok_or("missing value for --machine")?
             };
             if value.trim().is_empty() || value.starts_with('-') {
-                return Err("--machine requires a saved machine label or profile ID".into());
+                return Err(
+                    "--machine requires a flock member, saved machine label or profile ID".into(),
+                );
             }
             machine = Some(value);
         } else if arg.starts_with('-') && arg != "--" {
@@ -279,9 +334,11 @@ pub(super) fn resolve_machine<'a>(
         profile
     } else {
         let mut matches = profiles.iter().filter(|profile| profile.label == selector);
-        let profile = matches
-            .next()
-            .ok_or_else(|| format!("unknown machine '{selector}'; use `flockr machine list`"))?;
+        let profile = matches.next().ok_or_else(|| {
+            format!(
+                "unknown machine '{selector}'; use `flockr flock members` or `flockr machine list`"
+            )
+        })?;
         if matches.next().is_some() {
             return Err(format!(
                 "machine label '{selector}' is ambiguous; use its profile ID"
@@ -331,9 +388,11 @@ pub(super) fn with_test_client<T>(client: ApiClient, run: impl FnOnce() -> T) ->
     let _scope = TARGET.with(|target| {
         TargetScope(
             target.replace(Some(MachineTarget {
-                profile: SavedSshEndpoint::new("test-machine", "unused", "remote-session")
-                    .expect("valid test profile"),
-                bridge: None,
+                route: MachineRoute::Ssh {
+                    profile: SavedSshEndpoint::new("test-machine", "unused", "remote-session")
+                        .expect("valid test profile"),
+                    bridge: None,
+                },
                 client_override: Some(client),
             })),
         )

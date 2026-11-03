@@ -446,8 +446,8 @@ fn completion_command_prints_zsh_script_without_session_startup() {
         "zsh completions should not suggest equals-style direction values: {stdout}"
     );
     assert!(
-        !stdout.contains("live-handoff"),
-        "internal server handoff command should not be completed: {stdout}"
+        stdout.contains("live-handoff"),
+        "flockr has no self-update, so live-handoff is a user command and should complete: {stdout}"
     );
 }
 

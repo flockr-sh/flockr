@@ -15,6 +15,9 @@ use serde_json::{json, Value};
 use tracing::{debug, warn};
 
 use super::api_proxy::result_field;
+use super::prompt::{
+    parse_prompt, prompt_actions, prompt_fingerprint, Prompt, PromptActions, PromptOption,
+};
 use super::{Gateway, RateWindow, PUSHES_PER_DEVICE_PER_MINUTE};
 use crate::api::schema::{AgentStatus, EventData};
 use crate::mobile::store;
@@ -25,6 +28,8 @@ const EXPO_URL: &str = "https://exp.host/--/api/v2/push/send";
 const EXPO_BATCH: usize = 100;
 const EXPO_QUEUE: usize = 256;
 const EXPO_RETRIES: [Duration; 2] = [Duration::from_secs(2), Duration::from_secs(8)];
+/// Longest command or file shown in an alert's text; the push data keeps it whole.
+const ALERT_DETAIL_CHARS: usize = 80;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum AlertKind {
@@ -142,6 +147,14 @@ pub(crate) struct Alert {
     pub workspace_id: String,
     pub tab_id: String,
     pub terminal_id: String,
+    pub state_change_seq: u64,
+    /// The permission prompt on a blocked agent's screen, when one parsed.
+    pub prompt: Option<Prompt>,
+    /// Answer buttons for that prompt, when its options map cleanly.
+    pub actions: Option<PromptActions>,
+    /// Whether the prompt's text may leave the machine (in the alert body and
+    /// push data). Off, the push carries only keys and a fingerprint.
+    pub prompt_text: bool,
 }
 
 fn str_field<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
@@ -160,13 +173,38 @@ fn label_for(list: &Value, id_key: &str, id: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
+fn shorten(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_owned();
+    }
+    let mut cut: String = text.chars().take(max - 1).collect();
+    cut.push('…');
+    cut
+}
+
+/// "Do you want to proceed? · npm test", the detail cut short.
+fn prompt_line(prompt: &Prompt) -> String {
+    match &prompt.detail {
+        Some(detail) => format!(
+            "{} · {}",
+            prompt.question,
+            shorten(detail, ALERT_DETAIL_CHARS)
+        ),
+        None => prompt.question.clone(),
+    }
+}
+
 /// Builds the alert from an `AgentInfo` JSON object and the label lists.
+/// `prompt` is the parsed screen of a blocked agent; `prompt_text` puts its
+/// question and command in the alert text.
 pub(crate) fn build_alert(
     kind: AlertKind,
     agent: &Value,
     workspaces: &Value,
     tabs: &Value,
     host: &str,
+    prompt: Option<Prompt>,
+    prompt_text: bool,
 ) -> Alert {
     let name = str_field(agent, "display_agent")
         .or_else(|| str_field(agent, "name"))
@@ -184,9 +222,16 @@ pub(crate) fn build_alert(
         AlertKind::Blocked => format!("{name} is blocked"),
         AlertKind::Done => format!("{name} finished"),
     };
+    let prompt = prompt.filter(|_| kind == AlertKind::Blocked);
+    let location = format!("{workspace} › {tab} · {host}");
+    let body = match &prompt {
+        Some(prompt) if prompt_text => format!("{}\n{location}", prompt_line(prompt)),
+        _ => location,
+    };
+    let actions = prompt.as_ref().and_then(prompt_actions);
     Alert {
         kind,
-        body: format!("{workspace} › {tab} · {host}"),
+        body,
         title,
         agent: name,
         workspace,
@@ -197,7 +242,44 @@ pub(crate) fn build_alert(
         terminal_id: str_field(agent, "terminal_id")
             .unwrap_or_default()
             .to_owned(),
+        state_change_seq: agent
+            .get("state_change_seq")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+        prompt,
+        actions,
+        prompt_text,
     }
+}
+
+fn option_json(option: &PromptOption, text: bool) -> Value {
+    if text {
+        json!({ "key": option.key, "label": option.label })
+    } else {
+        json!({ "key": option.key })
+    }
+}
+
+/// What the app checks against the screen before it answers from a button.
+/// With `text` off it carries no prompt text at all (it passes through Expo
+/// and Apple or Google): only the button keys and the prompt's fingerprint.
+fn prompt_data(prompt: &Prompt, actions: &PromptActions, text: bool) -> Value {
+    let mut buttons = serde_json::Map::new();
+    buttons.insert("yes".to_owned(), option_json(&actions.yes, text));
+    if let Some(always) = &actions.always {
+        buttons.insert("always".to_owned(), option_json(always, text));
+    }
+    buttons.insert("no".to_owned(), option_json(&actions.no, text));
+    let mut data = json!({
+        "category": actions.category.id(),
+        "actions": buttons,
+        "fingerprint": prompt_fingerprint(prompt),
+    });
+    if text {
+        data["question"] = json!(prompt.question);
+        data["detail"] = json!(prompt.detail);
+    }
+    data
 }
 
 pub(crate) fn notify_message(alert: &Alert) -> String {
@@ -215,7 +297,7 @@ pub(crate) fn notify_message(alert: &Alert) -> String {
 }
 
 pub(crate) fn expo_message(alert: &Alert, to: &str, server_id: &str, server_name: &str) -> Value {
-    json!({
+    let mut message = json!({
         "to": to,
         "title": alert.title,
         "body": alert.body,
@@ -239,8 +321,14 @@ pub(crate) fn expo_message(alert: &Alert, to: &str, server_id: &str, server_name
             "tab": alert.tab,
             "pane_id": alert.pane_id,
             "terminal_id": alert.terminal_id,
+            "state_change_seq": alert.state_change_seq,
         }
-    })
+    });
+    if let (Some(prompt), Some(actions)) = (&alert.prompt, &alert.actions) {
+        message["categoryId"] = json!(actions.category.id());
+        message["data"]["prompt"] = prompt_data(prompt, actions, alert.prompt_text);
+    }
+    message
 }
 
 /// Starts the trigger worker thread.
@@ -322,12 +410,18 @@ fn confirm_and_send(
             .and_then(|response| result_field(&response, key).cloned())
             .unwrap_or(Value::Null)
     };
+    let prompt = match kind {
+        AlertKind::Blocked => read_prompt(gateway, pane_id),
+        AlertKind::Done => None,
+    };
     let alert = build_alert(
         kind,
         &agent,
         &list("workspace.list", "workspaces"),
         &list("tab.list", "tabs"),
         &gateway.name,
+        prompt,
+        gateway.push.alert_prompt_text,
     );
     let devices = gateway.state().devices.devices.clone();
     let now = Instant::now();
@@ -353,6 +447,21 @@ fn confirm_and_send(
             token: push.expo_token.clone(),
             message: expo_message(&alert, &push.expo_token, &gateway.server_id, &gateway.name),
         });
+    }
+}
+
+/// The permission prompt on a blocked agent's detection screen, if any.
+fn read_prompt(gateway: &Gateway, pane_id: &str) -> Option<Prompt> {
+    let params = json!({ "target": pane_id, "source": "detection", "format": "text" });
+    match gateway.api.call("agent.read", params) {
+        Ok(response) => result_field(&response, "read")
+            .and_then(|read| read.get("text"))
+            .and_then(Value::as_str)
+            .and_then(parse_prompt),
+        Err(err) => {
+            debug!(pane_id, err = %err, "push: agent.read failed");
+            None
+        }
     }
 }
 
@@ -631,7 +740,15 @@ mod tests {
         });
         let workspaces = json!([{ "workspace_id": "w_1", "label": "flockr" }]);
         let tabs = json!([{ "tab_id": "tab_2", "label": "mobile" }]);
-        let alert = build_alert(AlertKind::Blocked, &agent, &workspaces, &tabs, "dk-desktop");
+        let alert = build_alert(
+            AlertKind::Blocked,
+            &agent,
+            &workspaces,
+            &tabs,
+            "dk-desktop",
+            None,
+            true,
+        );
         assert_eq!(alert.title, "Claude is blocked");
         assert_eq!(alert.body, "flockr › mobile · dk-desktop");
         let notify: Value = serde_json::from_str(&notify_message(&alert)).unwrap();
@@ -647,20 +764,170 @@ mod tests {
         let message = expo_message(&alert, "ExponentPushToken[x]", "sid", "dk-desktop");
         assert_eq!(message["interruptionLevel"], "time-sensitive");
         assert_eq!(message["data"]["pane_id"], "p_3");
+        assert!(message.get("categoryId").is_none());
+        assert!(message["data"].get("prompt").is_none());
         let done = build_alert(
             AlertKind::Done,
             &json!({ "name": "builder" }),
             &Value::Null,
             &Value::Null,
             "h",
+            None,
+            true,
         );
         assert_eq!(done.title, "builder finished");
         assert_eq!(
             expo_message(&done, "x", "s", "h")["interruptionLevel"],
             "active"
         );
-        let unnamed = build_alert(AlertKind::Done, &json!({}), &Value::Null, &Value::Null, "h");
+        let unnamed = build_alert(
+            AlertKind::Done,
+            &json!({}),
+            &Value::Null,
+            &Value::Null,
+            "h",
+            None,
+            true,
+        );
         assert_eq!(unnamed.agent, "Agent");
+    }
+
+    fn prompt_fixture(name: &str) -> Prompt {
+        let text = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/prompts")
+                .join(name),
+        )
+        .unwrap();
+        parse_prompt(&text).unwrap()
+    }
+
+    fn blocked_alert(prompt: Option<Prompt>, prompt_text: bool) -> Alert {
+        let agent = json!({
+            "terminal_id": "t_5", "pane_id": "p_3", "workspace_id": "w_1", "tab_id": "tab_2",
+            "display_agent": "Claude", "agent_status": "blocked", "state_change_seq": 17,
+        });
+        let workspaces = json!([{ "workspace_id": "w_1", "label": "storefront" }]);
+        let tabs = json!([{ "tab_id": "tab_2", "label": "checkout" }]);
+        build_alert(
+            AlertKind::Blocked,
+            &agent,
+            &workspaces,
+            &tabs,
+            "dk-desktop",
+            prompt,
+            prompt_text,
+        )
+    }
+
+    #[test]
+    fn blocked_alert_shows_the_prompt_and_carries_buttons() {
+        let alert = blocked_alert(Some(prompt_fixture("claude-bash.txt")), true);
+        assert_eq!(
+            alert.body,
+            "Do you want to proceed? · npm test 2>&1 | tail -100\nstorefront › checkout · dk-desktop"
+        );
+        let message = expo_message(&alert, "ExponentPushToken[x]", "sid", "dk-desktop");
+        assert_eq!(message["categoryId"], "prompt_yes_always_no");
+        assert_eq!(message["data"]["state_change_seq"], 17);
+        assert_eq!(
+            message["data"]["prompt"],
+            json!({
+                "category": "prompt_yes_always_no",
+                "question": "Do you want to proceed?",
+                "detail": "npm test 2>&1 | tail -100",
+                "actions": {
+                    "yes": { "key": "1", "label": "Yes" },
+                    "always": { "key": "2", "label": "Yes, and don’t ask again for: npm test *" },
+                    "no": { "key": "4", "label": "No" },
+                },
+                "fingerprint": "36dfc8675e9d416e241ddc54a4bb19d3",
+            })
+        );
+
+        let edit = expo_message(
+            &blocked_alert(Some(prompt_fixture("claude-edit.txt")), true),
+            "x",
+            "s",
+            "h",
+        );
+        assert_eq!(edit["categoryId"], "prompt_yes_no");
+        assert!(edit["data"]["prompt"]["actions"].get("always").is_none());
+        assert_eq!(edit["data"]["prompt"]["actions"]["no"]["key"], "3");
+    }
+
+    #[test]
+    fn prompt_text_off_keeps_buttons_but_not_the_text() {
+        let alert = blocked_alert(Some(prompt_fixture("claude-bash.txt")), false);
+        assert_eq!(alert.body, "storefront › checkout · dk-desktop");
+        let message = expo_message(&alert, "x", "s", "h");
+        assert_eq!(message["categoryId"], "prompt_yes_always_no");
+        assert_eq!(
+            message["data"]["prompt"],
+            json!({
+                "category": "prompt_yes_always_no",
+                "actions": {
+                    "yes": { "key": "1" },
+                    "always": { "key": "2" },
+                    "no": { "key": "4" },
+                },
+                "fingerprint": "36dfc8675e9d416e241ddc54a4bb19d3",
+            })
+        );
+        let wire = message.to_string();
+        for text in ["proceed", "npm test", "Yes", "No"] {
+            assert!(!wire.contains(text), "{text} leaked into {wire}");
+        }
+    }
+
+    #[test]
+    fn long_details_are_cut_in_the_text_only() {
+        let mut prompt = prompt_fixture("codex-allow.txt");
+        let long = format!("npm test -- {}", "x".repeat(200));
+        prompt.detail = Some(long.clone());
+        let alert = blocked_alert(Some(prompt), true);
+        let first_line = alert.body.lines().next().unwrap();
+        assert!(first_line.starts_with("Allow command? · npm test -- xxx"));
+        assert!(first_line.ends_with('…'));
+        assert_eq!(
+            first_line.chars().count(),
+            "Allow command? · ".chars().count() + ALERT_DETAIL_CHARS
+        );
+        assert_eq!(
+            expo_message(&alert, "x", "s", "h")["data"]["prompt"]["detail"],
+            long
+        );
+    }
+
+    #[test]
+    fn unmapped_prompts_alert_without_buttons() {
+        let mut prompt = prompt_fixture("claude-edit.txt");
+        prompt.options[2].label = "Nope".to_owned();
+        let alert = blocked_alert(Some(prompt), true);
+        assert!(alert
+            .body
+            .starts_with("Do you want to make this edit to Cart.tsx?"));
+        let message = expo_message(&alert, "x", "s", "h");
+        assert!(message.get("categoryId").is_none());
+        assert!(message["data"].get("prompt").is_none());
+    }
+
+    #[test]
+    fn done_alerts_ignore_a_prompt() {
+        let agent = json!({ "name": "builder" });
+        let alert = build_alert(
+            AlertKind::Done,
+            &agent,
+            &Value::Null,
+            &Value::Null,
+            "h",
+            Some(prompt_fixture("claude-bash.txt")),
+            true,
+        );
+        assert_eq!(alert.prompt, None);
+        assert!(expo_message(&alert, "x", "s", "h")
+            .get("categoryId")
+            .is_none());
     }
 
     #[test]

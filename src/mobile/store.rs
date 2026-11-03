@@ -38,7 +38,7 @@ pub(crate) fn now_unix() -> u64 {
         .unwrap_or(0)
 }
 
-fn ensure_dir(dir: &Path) -> io::Result<()> {
+pub(crate) fn ensure_dir(dir: &Path) -> io::Result<()> {
     fs::create_dir_all(dir)?;
     crate::ipc::restrict_socket_permissions(dir, 0o700)
 }
@@ -83,7 +83,7 @@ pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
 
 /// Like [`atomic_write`], but never replaces an existing file: `Ok(false)`
 /// when `path` already exists.
-fn atomic_create(path: &Path, bytes: &[u8]) -> io::Result<bool> {
+pub(crate) fn atomic_create(path: &Path, bytes: &[u8]) -> io::Result<bool> {
     let tmp_path = write_temp(path, bytes)?;
     let linked = fs::hard_link(&tmp_path, path);
     let _ = fs::remove_file(&tmp_path);

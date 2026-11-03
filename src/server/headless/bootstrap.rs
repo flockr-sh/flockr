@@ -90,7 +90,9 @@ pub fn run_server() -> io::Result<()> {
             Err(err) => return Err(err),
         };
 
-        let _mobile_gateway = start_mobile_gateway(&loaded_config.config, &server);
+        let (_mobile_gateway, mobile) = start_mobile_gateway(&loaded_config.config, &server);
+        let _flock_node = crate::server::flock::start(&loaded_config.config.flock, mobile);
+        let _web = crate::server::web::start(&loaded_config.config.web);
         info!(
             api_socket = %api::socket_path().display(),
             client_socket = %client_socket_path().display(),
@@ -111,7 +113,10 @@ pub fn run_server() -> io::Result<()> {
 fn start_mobile_gateway(
     config: &config::Config,
     server: &HeadlessServer,
-) -> Option<crate::server::mobile::MobileGatewayHandle> {
+) -> (
+    Option<crate::server::mobile::MobileGatewayHandle>,
+    Option<std::sync::Arc<crate::server::mobile::Gateway>>,
+) {
     crate::server::mobile::start(
         &config.mobile,
         crate::server::mobile::GatewayDeps {
@@ -119,6 +124,7 @@ fn start_mobile_gateway(
             event_hub: server.app.event_hub.clone(),
             api_socket: api::socket_path(),
         },
+        config.flock.enabled,
     )
 }
 
@@ -225,7 +231,9 @@ fn run_handoff_import_server(socket_path: &Path, token: &str) -> io::Result<()> 
         if let Err(err) = crate::server::handoff::report_owned(&mut received.stream) {
             warn!(err = %err, "failed to report handoff ownership; continuing as owner");
         }
-        let _mobile_gateway = start_mobile_gateway(&loaded_config.config, &server);
+        let (_mobile_gateway, mobile) = start_mobile_gateway(&loaded_config.config, &server);
+        let _flock_node = crate::server::flock::start(&loaded_config.config.flock, mobile);
+        let _web = crate::server::web::start(&loaded_config.config.web);
         info!("handoff import server started");
         print_ready_message(&api::socket_path(), &client_socket_path());
         server.app.run_plugin_startup_hooks();

@@ -1651,6 +1651,156 @@ fn live_handoff_keeps_unmanaged_agent_name_bound_to_saved_session() {
     cleanup_test_base(&base);
 }
 
+fn agent_status_and_completion(socket_path: &Path, pane_id: &str) -> (String, Option<u64>) {
+    let agents = request(
+        socket_path,
+        serde_json::json!({"id":"test:agent-list","method":"agent.list","params":{}}),
+    );
+    agents["result"]["agents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|agent| agent["pane_id"].as_str() == Some(pane_id))
+        .map(|agent| {
+            (
+                agent["agent_status"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string(),
+                agent["completion_seq"].as_u64(),
+            )
+        })
+        .unwrap_or_default()
+}
+
+#[test]
+fn live_handoff_keeps_unseen_done_agent_done() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let _lock = test_lock();
+    let base = unique_test_dir();
+    let config_home = base.join("config");
+    let runtime_dir = base.join("runtime");
+    let api_socket = runtime_dir.join("flockr.sock");
+    let session = base.join("session.jsonl");
+    let started_marker = base.join("agent-started");
+    let fake_pi = base.join("pi");
+    fs::create_dir_all(&base).unwrap();
+    fs::write(
+        &fake_pi,
+        format!(
+            "#!/bin/sh\nexport FLOCKR_AGENT=pi\necho started > {}\n/bin/sleep 30\n:\n",
+            started_marker.display()
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&fake_pi, fs::Permissions::from_mode(0o755)).unwrap();
+
+    let spawned = spawn_server(&config_home, &runtime_dir, &api_socket);
+    wait_for_socket(&api_socket, Duration::from_secs(10));
+    register_runtime_dir(&runtime_dir);
+    let created = request(
+        &api_socket,
+        serde_json::json!({
+            "id": "test:workspace:create",
+            "method": "workspace.create",
+            "params": {"cwd": "/tmp", "focus": true}
+        }),
+    );
+    let pane_id = created["result"]["root_pane"]["pane_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_ok(request(
+        &api_socket,
+        serde_json::json!({
+            "id": "test:pane:start-agent",
+            "method": "pane.send_input",
+            "params": {"pane_id": pane_id, "text": fake_pi, "keys": ["Enter"]}
+        }),
+    ));
+    support::wait_for_file(&started_marker, Duration::from_secs(5));
+    assert_ok(request(
+        &api_socket,
+        serde_json::json!({
+            "id": "test:agent:session",
+            "method": "pane.report_agent_session",
+            "params": {
+                "pane_id": pane_id,
+                "source": "flockr:pi",
+                "agent": "pi",
+                "seq": 1,
+                "agent_session_path": session,
+                "session_start_source": "startup"
+            }
+        }),
+    ));
+    let report = |seq: u64, state: &str| {
+        assert_ok(request(
+            &api_socket,
+            serde_json::json!({
+                "id": "test:agent:report",
+                "method": "pane.report_agent",
+                "params": {
+                    "pane_id": pane_id,
+                    "source": "flockr:pi",
+                    "agent": "pi",
+                    "state": state,
+                    "seq": seq,
+                    "agent_session_path": session
+                }
+            }),
+        ));
+    };
+    // Settle the agent's start first; its first idle is not a completion.
+    report(2, "idle");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while agent_status_and_completion(&api_socket, &pane_id).0 != "idle" {
+        assert!(Instant::now() < deadline, "agent did not start");
+        thread::sleep(Duration::from_millis(25));
+    }
+    report(3, "working");
+    report(4, "idle");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let completion_seq = loop {
+        let (status, completion_seq) = agent_status_and_completion(&api_socket, &pane_id);
+        if status == "done" && completion_seq.is_some() {
+            break completion_seq;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "agent did not finish unseen before handoff: {status} {completion_seq:?}"
+        );
+        thread::sleep(Duration::from_millis(25));
+    };
+
+    assert_ok(request(
+        &api_socket,
+        serde_json::json!({"id":"test:handoff","method":"server.live_handoff","params":{}}),
+    ));
+    drop(spawned);
+    wait_for_api(&api_socket, Duration::from_secs(10));
+
+    // Watch past the replacement detector's process probe and startup grace,
+    // which used to turn the agent unknown and then idle.
+    let until = Instant::now() + Duration::from_secs(3);
+    while Instant::now() < until {
+        let (status, after) = agent_status_and_completion(&api_socket, &pane_id);
+        assert_eq!(status, "done", "unseen completion was lost in handoff");
+        assert_eq!(
+            after, completion_seq,
+            "completion sequence changed in handoff"
+        );
+        thread::sleep(Duration::from_millis(100));
+    }
+
+    let _ = request(
+        &api_socket,
+        serde_json::json!({"id":"test:stop","method":"server.stop","params":{}}),
+    );
+    cleanup_test_base(&base);
+}
+
 #[test]
 fn live_handoff_keeps_agent_started_pane_after_agent_exits() {
     use std::os::unix::fs::PermissionsExt;

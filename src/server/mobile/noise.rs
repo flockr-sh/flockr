@@ -82,7 +82,7 @@ pub(crate) struct Session {
 }
 
 impl Session {
-    fn new(transport: TransportState) -> Self {
+    pub(crate) fn new(transport: TransportState) -> Self {
         Self {
             transport,
             partial: Vec::new(),

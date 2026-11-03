@@ -6808,6 +6808,19 @@
             "pane_id": {
               "type": "string"
             },
+            "person_input_idle_ms": {
+              "description": "Milliseconds since a person last typed into the agent's terminal;\nabsent when nobody has since the server started.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "person_input_pending": {
+              "description": "A person typed into the agent's terminal since its state last\nchanged, so its prompt may hold their unsent draft.",
+              "type": "boolean"
+            },
             "revision": {
               "format": "uint64",
               "minimum": 0,

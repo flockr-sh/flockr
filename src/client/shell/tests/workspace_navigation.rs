@@ -152,9 +152,11 @@ fn navigation_highlights_only_the_preview_and_activates_on_enter() {
         for terminal_theme in [false, true] {
             let (mut state, remote) = navigation_state(workspaces(2));
             state.sidebar_collapsed = compact;
-            if terminal_theme {
-                state.config.palette = Palette::terminal();
-            }
+            state.config.palette = if terminal_theme {
+                Palette::terminal()
+            } else {
+                Palette::catppuccin()
+            };
             state.compose(cols, 28).unwrap();
             enter_navigation(&mut state);
             for (endpoint, collision, steps) in [

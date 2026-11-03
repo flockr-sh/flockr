@@ -958,6 +958,14 @@ fn install_claude_writes_hook_and_updates_settings() {
         claude_dir.join("hooks").join(CLAUDE_HOOK_INSTALL_NAME)
     );
     assert_eq!(hook_content, CLAUDE_HOOK_ASSET);
+    assert_eq!(
+        installed.skill_path,
+        claude_dir.join("skills").join("flockr").join("SKILL.md")
+    );
+    assert_eq!(
+        fs::read_to_string(&installed.skill_path).unwrap(),
+        FLOCKR_SKILL
+    );
     assert!(settings["permissions"]["allow"].is_array());
     assert_eq!(
         settings["hooks"]["SessionStart"][0]["matcher"],
@@ -1457,6 +1465,17 @@ fn install_codex_writes_hook_and_updates_hooks_and_config() {
     assert_eq!(installed.hooks_path, codex_dir.join("hooks.json"));
     assert_eq!(installed.config_path, codex_dir.join("config.toml"));
     assert_eq!(hook_content, CODEX_HOOK_ASSET);
+    assert_eq!(
+        installed.skill_path,
+        home.join(".agents")
+            .join("skills")
+            .join("flockr")
+            .join("SKILL.md")
+    );
+    assert_eq!(
+        fs::read_to_string(&installed.skill_path).unwrap(),
+        FLOCKR_SKILL
+    );
     assert!(hooks["hooks"]["SessionStart"][0]["hooks"][0]["command"]
         .as_str()
         .unwrap()
@@ -5191,5 +5210,30 @@ fn grok_dir_honors_grok_home_after_config_dir_seam() {
 
     std::env::remove_var(GROK_HOME_ENV_VAR);
     clear_integration_path_env();
+    let _ = fs::remove_dir_all(base);
+}
+
+#[test]
+fn uninstall_claude_removes_the_skill_and_keeps_other_skills() {
+    let _lock = integration_env_lock();
+    let base = unique_base();
+    let home = base.join("home");
+    let claude_dir = home.join(".claude");
+    fs::create_dir_all(&claude_dir).unwrap();
+    std::env::set_var("HOME", &home);
+
+    let installed = install_claude().unwrap();
+    let other = claude_dir.join("skills").join("other").join("SKILL.md");
+    fs::create_dir_all(other.parent().unwrap()).unwrap();
+    fs::write(&other, "keep").unwrap();
+
+    let result = uninstall_claude().unwrap();
+
+    assert!(result.removed_skill);
+    assert!(!installed.skill_path.exists());
+    assert!(!installed.skill_path.parent().unwrap().exists());
+    assert!(other.exists());
+
+    std::env::remove_var("HOME");
     let _ = fs::remove_dir_all(base);
 }

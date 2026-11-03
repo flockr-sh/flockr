@@ -206,8 +206,7 @@ fn print_agent_manifest_status(response: &serde_json::Value) {
 
 pub(super) fn live_handoff_command() -> clap::Command {
     projection::command("live-handoff", ServerLiveHandoffProjection::arguments())
-        .about("Hand off live panes to a new local server")
-        .hide(true)
+        .about("Switch to a new flockr build without stopping running panes")
 }
 
 fn server_live_handoff(args: &[String]) -> std::io::Result<i32> {
@@ -350,12 +349,14 @@ mod tests {
     }
 
     #[test]
-    fn live_handoff_projection_preserves_defaults_and_stays_hidden() {
+    fn live_handoff_projection_preserves_defaults_and_is_listed() {
         assert_eq!(
             serde_json::to_value(parse_live_handoff_params(&[]).unwrap()).unwrap(),
             serde_json::json!({})
         );
-        assert!(live_handoff_command().is_hide_set());
+        // flockr has no self-update, so this is how people move to a new
+        // build without losing their agents; it belongs in --help.
+        assert!(!live_handoff_command().is_hide_set());
         let args = vec!["--help".into()];
         assert!(
             matches!(parse_live_handoff_params(&args), Err(ParseError::Clap(error)) if error.exit_code() == 0)

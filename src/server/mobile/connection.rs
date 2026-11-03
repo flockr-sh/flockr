@@ -338,25 +338,74 @@ fn authenticate(gateway: &Gateway, hello: &Hello, ip: IpAddr) -> Result<Authenti
 }
 
 fn welcome(gateway: &Gateway, auth: &Authenticated, max_in_flight: u32) -> String {
-    let mut device = json!({
-        "device_id": auth.device.device_id,
-        "name": auth.device.name,
-    });
+    let mut welcome = welcome_value(
+        gateway,
+        &auth.device.device_id,
+        &auth.device.name,
+        &gateway.name,
+        max_in_flight,
+    );
     if let Some(token) = &auth.token {
-        device["token"] = json!(token);
+        welcome["device"]["token"] = json!(token);
     }
+    if let Some(machines) = flock_machines() {
+        welcome["machines"] = machines;
+    }
+    welcome.to_string()
+}
+
+/// The other computers in this server's flock, for the phone to show, or
+/// `None` when it is in no flock.
+fn flock_machines() -> Option<Value> {
+    let dir = crate::flock::store::flock_dir();
+    let (members, me) = crate::flock::client::known_members(&dir).ok().flatten()?;
+    let connected = if crate::flock::store::load_hub(&dir).ok().flatten().is_some() {
+        crate::flock::store::load_node(&dir)
+            .map(|node| node.connected)
+            .unwrap_or_default()
+    } else {
+        crate::flock::store::load_members_cache(&dir)
+            .map(|cache| cache.connected)
+            .unwrap_or_default()
+    };
+    let machines: Vec<Value> = members
+        .iter()
+        .filter(|member| member.kind == crate::flock::store::Kind::Computer)
+        .map(|member| {
+            json!({
+                "id": member.id,
+                "name": member.name,
+                "this": member.id == me,
+                "online": member.id == me || connected.contains(&member.id),
+            })
+        })
+        .collect();
+    Some(json!(machines))
+}
+
+fn welcome_value(
+    gateway: &Gateway,
+    device_id: &str,
+    device_name: &str,
+    server_name: &str,
+    max_in_flight: u32,
+) -> Value {
+    let device = json!({
+        "device_id": device_id,
+        "name": device_name,
+    });
     json!({
         "t": "welcome",
         "version": protocol::VERSION,
         "server": {
-            "name": gateway.name,
+            "name": server_name,
             "server_id": gateway.server_id,
             "flockr_version": env!("CARGO_PKG_VERSION"),
             "boot_id": gateway.boot_id,
         },
         "device": device,
         "features": gateway.features(),
-        "methods": api_proxy::ALLOWED_METHODS,
+        "methods": gateway.methods(),
         "limits": {
             "max_in_flight": max_in_flight,
             "max_subscriptions": MAX_SUBSCRIPTIONS,
@@ -366,7 +415,6 @@ fn welcome(gateway: &Gateway, auth: &Authenticated, max_in_flight: u32) -> Strin
             "max_rows": MAX_ROWS,
         }
     })
-    .to_string()
 }
 
 /// Reads the next binary frame (skipping pings/pongs). `Err` carries a
@@ -546,6 +594,7 @@ pub(crate) async fn serve(gateway: Arc<Gateway>, stream: TcpStream, peer: Socket
                 conn_id,
                 ConnEntry {
                     device_id: device_id.clone(),
+                    relayed: false,
                     out: out.clone(),
                     foreground: false,
                     last_inbound: Instant::now(),
@@ -569,6 +618,36 @@ pub(crate) async fn serve(gateway: Arc<Gateway>, stream: TcpStream, peer: Socket
     slot.release();
     touch_last_seen(&gateway, &device_id, false);
 
+    let machine = match relay_target(&hello) {
+        Ok(machine) => machine,
+        Err(reason) => {
+            gateway.state().conns.remove(&conn_id);
+            link.close(
+                close::PROTOCOL_ERROR,
+                Some(protocol::error(None, ErrorCode::BadRequest, reason)),
+            )
+            .await;
+            return;
+        }
+    };
+    if let Some(machine) = machine {
+        info!(%peer, device_id = %device_id, %machine, "mobile device relayed to a flock machine");
+        relay_session(
+            &gateway,
+            link,
+            source,
+            out_rx,
+            &auth,
+            &machine,
+            hello.max_in_flight(),
+        )
+        .await;
+        gateway.state().conns.remove(&conn_id);
+        touch_last_seen(&gateway, &device_id, true);
+        info!(%peer, device_id = %device_id, "relayed mobile session ended");
+        return;
+    }
+
     let welcome = welcome(&gateway, &auth, hello.max_in_flight());
     if !link.send(&welcome, WRITE_TIMEOUT).await {
         gateway.state().conns.remove(&conn_id);
@@ -582,6 +661,7 @@ pub(crate) async fn serve(gateway: Arc<Gateway>, stream: TcpStream, peer: Socket
         gateway: gateway.clone(),
         conn_id,
         device_id: device_id.clone(),
+        relayed: false,
         out,
         max_in_flight: hello.max_in_flight(),
         subs: HashMap::new(),
@@ -627,6 +707,298 @@ fn touch_last_seen(gateway: &Gateway, device_id: &str, force: bool) {
     }
 }
 
+/// The flock member `hello` asks for, unless it is this server. Asking for
+/// a machine on a server in no flock is an error.
+fn relay_target(hello: &Hello) -> Result<Option<String>, String> {
+    let Some(machine) = hello
+        .machine
+        .as_deref()
+        .filter(|machine| !machine.is_empty())
+    else {
+        return Ok(None);
+    };
+    let dir = crate::flock::store::flock_dir();
+    let (members, me) = crate::flock::client::known_members(&dir)
+        .ok()
+        .flatten()
+        .ok_or("this server is in no flock")?;
+    if machine == me {
+        return Ok(None);
+    }
+    if !members.iter().any(|member| member.id == machine) {
+        return Err(format!("no flock machine {machine}"));
+    }
+    Ok(Some(machine.to_owned()))
+}
+
+/// The line that closes a relayed session, with the close code and error
+/// for the phone.
+const RELAY_CLOSE: &str = "relay.close";
+
+/// Relays an authenticated phone session to another flock member, which
+/// serves it as if the phone were connected there (`serve_relayed`). This
+/// server keeps the Noise channel and the WebSocket; the member gets the
+/// phone's messages as lines.
+async fn relay_session(
+    gateway: &Arc<Gateway>,
+    mut link: Link,
+    mut source: WsSource,
+    out_rx: OutboundRx,
+    auth: &Authenticated,
+    machine: &str,
+    max_in_flight: u32,
+) {
+    let OutboundRx {
+        text: mut ignored,
+        close: mut close_rx,
+        queued,
+    } = out_rx;
+    let unavailable =
+        |reason: String| Some(protocol::error(None, ErrorCode::ServerUnavailable, reason));
+    let dir = crate::flock::store::flock_dir();
+    let opened =
+        crate::flock::client::open_stream(&dir, machine, crate::flock::client::MOBILE_SERVICE)
+            .await;
+    let (tx, mut events) = match opened {
+        Ok(stream) => stream,
+        Err(err) => {
+            link.close(close::SERVER_SHUTDOWN, unavailable(err.to_string()))
+                .await;
+            return;
+        }
+    };
+    let mut first = json!({
+        "device_id": auth.device.device_id,
+        "name": auth.device.name,
+        "max_in_flight": max_in_flight,
+    })
+    .to_string()
+    .into_bytes();
+    first.push(b'\n');
+    if tx.send(first).is_err() {
+        return;
+    }
+    let mut lines = crate::flock::pipe::LineBuffer::default();
+    let mut shutdown = gateway.shutdown.clone();
+    let mut ping = tokio::time::interval(PING_INTERVAL);
+    ping.tick().await;
+    let mut last_pong = Instant::now();
+    loop {
+        tokio::select! {
+            biased;
+            changed = close_rx.changed() => {
+                if changed.is_err() {
+                    return;
+                }
+                let request = close_rx.borrow_and_update().clone();
+                if let Some((code, error)) = request {
+                    link.close(code, error).await;
+                    return;
+                }
+            }
+            _ = shutdown.changed() => {
+                let bye = json!({ "t": "bye", "reason": "server_shutdown" }).to_string();
+                if link.send(&bye, CLOSE_WRITE_TIMEOUT).await {
+                    close_plain(&mut link.sink, close::SERVER_SHUTDOWN).await;
+                }
+                return;
+            }
+            // This server's own notices (push worker, in-band alerts) belong
+            // to the phone's direct session, not this machine's.
+            Some(text) = ignored.recv() => {
+                queued.fetch_sub(text.len(), Ordering::AcqRel);
+            }
+            event = events.recv() => match event {
+                Some(crate::flock::client::StreamEvent::Data(bytes)) => {
+                    for line in lines.push(&bytes) {
+                        let text = String::from_utf8_lossy(&line);
+                        let text = text.trim_end_matches('\n');
+                        let mut parsed = serde_json::from_str::<Value>(text).ok();
+                        // The phone pinned this server's ID at pairing; the
+                        // machine's welcome says which machine it reached.
+                        if let Some(welcome) = parsed.as_mut().filter(|value| value["t"] == "welcome") {
+                            welcome["server"]["server_id"] = json!(gateway.server_id);
+                            welcome["machine"] = json!(machine);
+                            if !link.send(&welcome.to_string(), WRITE_TIMEOUT).await {
+                                return;
+                            }
+                            continue;
+                        }
+                        if let Some(control) = parsed {
+                            if control["t"] == RELAY_CLOSE {
+                                let code = control["code"]
+                                    .as_u64()
+                                    .and_then(|code| u16::try_from(code).ok())
+                                    .unwrap_or(close::SERVER_SHUTDOWN);
+                                let error = control["error"].as_str().map(str::to_owned);
+                                link.close(code, error).await;
+                                return;
+                            }
+                        }
+                        if !link.send(text, WRITE_TIMEOUT).await {
+                            return;
+                        }
+                    }
+                }
+                Some(crate::flock::client::StreamEvent::Closed(reason)) => {
+                    let reason = reason.unwrap_or_else(|| "the machine ended the session".to_owned());
+                    link.close(close::SERVER_SHUTDOWN, unavailable(reason)).await;
+                    return;
+                }
+                None => {
+                    link.close(close::SERVER_SHUTDOWN, unavailable("the machine ended the session".to_owned())).await;
+                    return;
+                }
+            },
+            incoming = source.next() => match incoming {
+                None | Some(Ok(Message::Close(_))) => return,
+                Some(Ok(Message::Binary(frame))) => {
+                    match link.session.open(&frame, MAX_INBOUND_MESSAGE_BYTES) {
+                        Ok(None) => {}
+                        Ok(Some(mut bytes)) => {
+                            // One message per line: a raw newline is only
+                            // whitespace between JSON tokens.
+                            for byte in &mut bytes {
+                                if *byte == b'\n' {
+                                    *byte = b' ';
+                                }
+                            }
+                            bytes.push(b'\n');
+                            if tx.send(bytes).is_err() {
+                                return;
+                            }
+                        }
+                        Err(err) => {
+                            close_plain(&mut link.sink, open_error_code(err)).await;
+                            return;
+                        }
+                    }
+                }
+                Some(Ok(Message::Text(_))) => {
+                    link.close(
+                        close::PROTOCOL_ERROR,
+                        Some(protocol::error(None, ErrorCode::BadRequest, "text frames are not supported")),
+                    )
+                    .await;
+                    return;
+                }
+                Some(Ok(Message::Pong(_))) => last_pong = Instant::now(),
+                Some(Ok(_)) => {}
+                Some(Err(WsError::Capacity(_))) => {
+                    close_plain(&mut link.sink, close::TOO_BIG).await;
+                    return;
+                }
+                Some(Err(_)) => return,
+            },
+            _ = ping.tick() => {
+                if last_pong.elapsed() > PONG_TIMEOUT {
+                    return;
+                }
+                if !send_timed(&mut link.sink, Message::Ping(Vec::new().into()), WRITE_TIMEOUT).await {
+                    return;
+                }
+            }
+        }
+    }
+}
+
+/// What a relayed session sends back toward the phone.
+pub(crate) enum RelayOut {
+    Text(String),
+    Close(u16, Option<String>),
+}
+
+impl RelayOut {
+    /// The line the member writes on the flock stream.
+    pub(crate) fn into_line(self) -> Vec<u8> {
+        let mut line = match self {
+            Self::Text(text) => text.into_bytes(),
+            Self::Close(code, error) => json!({ "t": RELAY_CLOSE, "code": code, "error": error })
+                .to_string()
+                .into_bytes(),
+        };
+        line.push(b'\n');
+        line
+    }
+}
+
+/// The phone a relayed session belongs to, as the hub stamped it.
+pub(crate) struct RelayedDevice {
+    pub device_id: String,
+    pub name: String,
+    pub max_in_flight: u32,
+    /// This machine's name in the flock.
+    pub server_name: String,
+}
+
+/// Serves a phone session the hub relays here: the same messages as a
+/// direct connection, with the phone already authenticated by the hub.
+pub(crate) async fn serve_relayed(
+    gateway: Arc<Gateway>,
+    device: RelayedDevice,
+    inbound: mpsc::UnboundedReceiver<String>,
+    outbound: mpsc::UnboundedSender<RelayOut>,
+) {
+    let (out, out_rx) = Outbound::new();
+    let conn_id = gateway.next_conn_id();
+    let registered = {
+        let mut state = gateway.state();
+        let allowed = state.conns.len() < MAX_CONNECTIONS;
+        if allowed {
+            state.conns.insert(
+                conn_id,
+                ConnEntry {
+                    device_id: device.device_id.clone(),
+                    relayed: true,
+                    out: out.clone(),
+                    foreground: false,
+                    last_inbound: Instant::now(),
+                },
+            );
+        }
+        allowed
+    };
+    if !registered {
+        let error = protocol::error(None, ErrorCode::TooManyConnections, "too many connections");
+        let _ = outbound.send(RelayOut::Close(close::TOO_MANY_CONNECTIONS, Some(error)));
+        return;
+    }
+    let welcome = welcome_value(
+        &gateway,
+        &device.device_id,
+        &device.name,
+        &device.server_name,
+        device.max_in_flight,
+    );
+    if outbound.send(RelayOut::Text(welcome.to_string())).is_err() {
+        gateway.state().conns.remove(&conn_id);
+        return;
+    }
+    info!(device_id = %device.device_id, "relayed mobile session started");
+    let (sub_ended_tx, sub_ended_rx) = mpsc::unbounded_channel();
+    let (api_done_tx, api_done_rx) = mpsc::unbounded_channel();
+    let mut conn = Conn {
+        gateway: gateway.clone(),
+        conn_id,
+        device_id: device.device_id.clone(),
+        relayed: true,
+        out,
+        max_in_flight: device.max_in_flight,
+        subs: HashMap::new(),
+        api: HashMap::new(),
+        agents_watch: None,
+        inbound: super::RateWindow::default(),
+        last_rate_error: None,
+        sub_ended_tx,
+        api_done_tx,
+    };
+    conn.run_relay(inbound, outbound, out_rx, sub_ended_rx, api_done_rx)
+        .await;
+    conn.cleanup();
+    gateway.state().conns.remove(&conn_id);
+    info!(device_id = %device.device_id, "relayed mobile session ended");
+}
+
 enum Flow {
     Continue,
     Close(u16, Option<String>),
@@ -636,6 +1008,8 @@ struct Conn {
     gateway: Arc<Gateway>,
     conn_id: u64,
     device_id: String,
+    /// The hub relays this session; push and device removal belong there.
+    relayed: bool,
     out: Outbound,
     max_in_flight: u32,
     subs: HashMap<u32, SubHandle>,
@@ -753,6 +1127,72 @@ impl Conn {
                         return;
                     }
                     if !send_timed(&mut link.sink, Message::Ping(Vec::new().into()), WRITE_TIMEOUT).await {
+                        return;
+                    }
+                }
+                Some(sub) = sub_ended_rx.recv() => {
+                    self.subs.remove(&sub);
+                }
+                Some(id) = api_done_rx.recv() => {
+                    self.api.remove(&id);
+                }
+            }
+        }
+    }
+
+    /// Like `run`, for a session the hub relays: messages arrive and leave as
+    /// plain text, already decrypted by the hub.
+    async fn run_relay(
+        &mut self,
+        mut inbound: mpsc::UnboundedReceiver<String>,
+        outbound: mpsc::UnboundedSender<RelayOut>,
+        out_rx: OutboundRx,
+        mut sub_ended_rx: mpsc::UnboundedReceiver<u32>,
+        mut api_done_rx: mpsc::UnboundedReceiver<String>,
+    ) {
+        let OutboundRx {
+            text: mut out_rx,
+            close: mut close_rx,
+            queued,
+        } = out_rx;
+        let mut shutdown = self.gateway.shutdown.clone();
+        loop {
+            tokio::select! {
+                biased;
+                changed = close_rx.changed() => {
+                    if changed.is_err() {
+                        return;
+                    }
+                    let request = close_rx.borrow_and_update().clone();
+                    if let Some((code, error)) = request {
+                        let _ = outbound.send(RelayOut::Close(code, error));
+                        return;
+                    }
+                }
+                _ = shutdown.changed() => {
+                    let bye = json!({ "t": "bye", "reason": "server_shutdown" }).to_string();
+                    let _ = outbound.send(RelayOut::Text(bye));
+                    let _ = outbound.send(RelayOut::Close(close::SERVER_SHUTDOWN, None));
+                    return;
+                }
+                message = out_rx.recv() => match message {
+                    Some(text) => {
+                        queued.fetch_sub(text.len(), Ordering::AcqRel);
+                        if outbound.send(RelayOut::Text(text)).is_err() {
+                            return;
+                        }
+                    }
+                    None => return,
+                },
+                text = inbound.recv() => {
+                    let Some(text) = text else {
+                        return;
+                    };
+                    if let Some(conn) = self.gateway.state().conns.get_mut(&self.conn_id) {
+                        conn.last_inbound = Instant::now();
+                    }
+                    if let Flow::Close(code, error) = self.handle_text(&text).await {
+                        let _ = outbound.send(RelayOut::Close(code, error));
                         return;
                     }
                 }
@@ -953,7 +1393,12 @@ impl Conn {
             }
             ClientMessage::PushRegister(request) => {
                 let id = request.id.as_deref();
-                if !self.gateway.push.enabled {
+                if self.relayed {
+                    // The phone registers push with the server it paired with.
+                    if let Some(id) = id {
+                        self.send(protocol::reply("push.ok", id));
+                    }
+                } else if !self.gateway.push.enabled {
                     self.error(
                         id,
                         ErrorCode::PushUnavailable,
@@ -983,6 +1428,11 @@ impl Conn {
                     }
                 }
             }
+            ClientMessage::PushUnregister { id } if self.relayed => {
+                if let Some(id) = id {
+                    self.send(protocol::reply("push.ok", &id));
+                }
+            }
             ClientMessage::PushUnregister { id } => {
                 let result = self.gateway.update_devices(|devices| {
                     if let Some(device) = devices.find_mut(&self.device_id) {
@@ -1002,6 +1452,13 @@ impl Conn {
                 if let Some(conn) = self.gateway.state().conns.get_mut(&self.conn_id) {
                     conn.foreground = state.foreground;
                 }
+            }
+            ClientMessage::DeviceForget { id } if self.relayed => {
+                self.error(
+                    id.as_deref(),
+                    ErrorCode::BadRequest,
+                    "remove this phone on the server it paired with",
+                );
             }
             ClientMessage::DeviceForget { id } => {
                 let device_id = self.device_id.clone();
@@ -1030,8 +1487,17 @@ impl Conn {
         Flow::Continue
     }
 
-    fn api_request(&mut self, request: protocol::ApiRequest) {
-        if !api_proxy::method_allowed(&request.method) {
+    fn api_request(&mut self, mut request: protocol::ApiRequest) {
+        // Message methods go to the flock message service, as a person.
+        let messages = if api_proxy::MESSAGE_METHODS.contains(&request.method.as_str()) {
+            if let Some(params) = request.params.as_object_mut() {
+                params.remove("caller_pane");
+            }
+            self.gateway.messages.clone()
+        } else {
+            None
+        };
+        if messages.is_none() && !api_proxy::method_allowed(&request.method) {
             self.error(
                 Some(&request.id),
                 ErrorCode::MethodNotAllowed,
@@ -1057,7 +1523,7 @@ impl Conn {
         }
         let cancel = Arc::new(AtomicBool::new(false));
         self.api.insert(request.id.clone(), cancel.clone());
-        let api = self.gateway.api.clone();
+        let api = messages.unwrap_or_else(|| self.gateway.api.clone());
         let out = self.out.clone();
         let done = self.api_done_tx.clone();
         tokio::task::spawn_blocking(move || {

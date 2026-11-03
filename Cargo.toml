@@ -50,7 +50,7 @@ serde_json = "1"
 sha2 = "0.10"
 time = { version = "0.3.47", features = ["formatting"] }
 # `net`: TCP listener for the opt-in mobile gateway.
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "process", "io-util", "signal", "net"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "process", "io-util", "signal", "net", "fs"] }
 # WebSocket handshake and framing for the mobile gateway. Encryption is Noise
 # (snow), not TLS; see docs/mobile/protocol.md.
 tokio-tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }

@@ -70,6 +70,16 @@ pub(crate) const ALLOWED_METHODS: &[&str] = &[
     "notification.show",
 ];
 
+/// Message methods, answered by this machine's flock message service rather
+/// than the API. Only on servers in a flock.
+pub(crate) const MESSAGE_METHODS: &[&str] = &[
+    "message.pending",
+    "message.approve",
+    "message.deny",
+    "message.settings",
+    "message.settings.set",
+];
+
 pub(crate) fn method_allowed(method: &str) -> bool {
     ALLOWED_METHODS.contains(&method)
 }

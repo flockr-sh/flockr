@@ -7,6 +7,7 @@ use super::{model::LoadedConfig, Config, CONFIG_PATH_ENV_VAR};
 const KNOWN_TOP_LEVEL_CONFIG_KEYS: &[&str] = &[
     "advanced",
     "experimental",
+    "flock",
     "keys",
     "mobile",
     "onboarding",
@@ -17,6 +18,7 @@ const KNOWN_TOP_LEVEL_CONFIG_KEYS: &[&str] = &[
     "theme",
     "ui",
     "update",
+    "web",
     "worktrees",
 ];
 
@@ -384,9 +386,27 @@ fn load_live_config_from_str(content: &str) -> Result<LoadedConfig, Vec<String>>
         &mut invalid_sections,
         |section| config.mobile = section,
     );
+    load_live_section(
+        table,
+        "flock",
+        "flock config",
+        &mut diagnostics,
+        &mut invalid_sections,
+        |section| config.flock = section,
+    );
+    load_live_section(
+        table,
+        "web",
+        "web config",
+        &mut diagnostics,
+        &mut invalid_sections,
+        |section| config.web = section,
+    );
 
     diagnostics.extend(config.theme.diagnostics());
     diagnostics.extend(config.mobile.diagnostics());
+    diagnostics.extend(config.flock.diagnostics());
+    diagnostics.extend(config.web.diagnostics());
 
     Ok(LoadedConfig {
         config,
@@ -918,6 +938,23 @@ name = "catppucin"
 
         assert_eq!(loaded.diagnostics.len(), 1);
         assert!(loaded.diagnostics[0].contains("theme.name = \"catppucin\""));
+    }
+
+    #[test]
+    fn flock_and_web_sections_are_known() {
+        let loaded = load_live_config_from_str(
+            r#"
+[flock]
+enabled = true
+
+[web]
+enabled = false
+"#,
+        )
+        .unwrap();
+
+        assert!(loaded.diagnostics.is_empty(), "{:?}", loaded.diagnostics);
+        assert!(loaded.config.flock.enabled);
     }
 
     #[test]

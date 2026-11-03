@@ -64,6 +64,10 @@ pub(crate) struct Hello {
     pub pair: Option<HelloPair>,
     #[serde(default)]
     pub max_in_flight: Option<u32>,
+    /// A flock member to reach through this server instead of this server
+    /// itself.
+    #[serde(default)]
+    pub machine: Option<String>,
 }
 
 impl Hello {

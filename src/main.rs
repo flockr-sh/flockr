@@ -24,6 +24,7 @@ mod config;
 mod copy_mode;
 mod detect;
 mod events;
+mod flock;
 use ghostty_vt as ghostty;
 mod handoff_runtime;
 mod input;
@@ -75,16 +76,18 @@ const DEFAULT_CONFIG: &str = r##"# flockr configuration
 # onboarding = true
 
 [theme]
-# Built-in themes: catppuccin, terminal, tokyo-night, dracula, nord,
-#                  gruvbox, one-dark, solarized, kanagawa, rose-pine,
-#                  vesper
-# name = "catppuccin"
+# Built-in themes: terminal (your terminal's own colors), flockr,
+#                  catppuccin, tokyo-night, dracula, nord, gruvbox,
+#                  one-dark, solarized, kanagawa, rose-pine, vesper
+# name = "terminal"
 
 # Follow host terminal light/dark appearance and switch Flockr UI themes.
 # Existing manual behavior is unchanged unless this is true.
 # auto_switch = false
-# dark_name = "catppuccin"
-# light_name = "catppuccin-latte"
+# Unset, they follow name: flockr pairs with flockr-light, catppuccin
+# with catppuccin-latte, and so on. terminal pairs with itself.
+# dark_name = "flockr"
+# light_name = "flockr-light"
 
 # Override individual color tokens on top of the base theme.
 # Accepts: hex (#rrggbb), named colors, rgb(r,g,b), or panel_bg = "reset"
@@ -187,10 +190,10 @@ const DEFAULT_CONFIG: &str = r##"# flockr configuration
 # resize_pane_down = "prefix+ctrl+j"
 # resize_pane_up = "prefix+ctrl+k"
 # resize_pane_right = "prefix+ctrl+l"
-# swap_pane_left = ""    # optional, unset by default; swaps the focused pane with its neighbor
-# swap_pane_down = ""
-# swap_pane_up = ""
-# swap_pane_right = ""
+# swap_pane_left = "prefix+shift+h"    # swaps the focused pane with its neighbor
+# swap_pane_down = "prefix+shift+j"
+# swap_pane_up = "prefix+shift+k"
+# swap_pane_right = "prefix+shift+l"
 # Layout presets, as in tmux. main_* layouts lead with the focused pane.
 # layout_even_horizontal = "prefix+alt+1"
 # layout_even_vertical = "prefix+alt+2"
@@ -299,7 +302,7 @@ const DEFAULT_CONFIG: &str = r##"# flockr configuration
 # editor move between its own splits first, like vim-tmux-navigator; the
 # editor calls `flockr pane focus --direction left` at its edge. Names match
 # the process name of the pane's foreground job leader.
-# pane_focus_passthrough = ["nvim"]
+# pane_focus_passthrough = []    # e.g. ["nvim"]
 
 # Force a full redraw when the outer terminal regains focus.
 # Set false to reduce visible flashing when switching back to Flockr.
@@ -547,12 +550,56 @@ const DEFAULT_CONFIG: &str = r##"# flockr configuration
 # done = true
 # Re-check delay before sending; drops alerts for status flicker (0..=60000).
 # confirm_delay_ms = 5000
+# Blocked alerts read the agent's permission prompt and, when it is a plain
+# Yes / No question, carry Yes, "Yes, don't ask again", No, and Open buttons
+# (long-press the notification). The app re-reads the screen and answers only
+# if the prompt is unchanged. This key shows the question and command in the
+# alert text; set it false to keep all prompt text (question, command, and
+# option labels) out of the push entirely, so it never passes through Expo,
+# Apple, or Google. The buttons stay: the push carries only the option keys
+# and a hash of the prompt, which the app checks against the screen.
+# alert_prompt_text = true
 # Optional Expo access token ("enhanced push security"), sent as a Bearer token.
 # expo_access_token = ""
+
+[flock]
+# Join this machine's server to a flock: several flockr servers that see each
+# other's agents through one hub, without SSH. Off by default. Start a flock
+# on the hub with `flockr flock init`, add machines with `flockr flock invite`
+# there and `flockr flock join` on the new machine. Members connect only to
+# the hub, over Noise with keys the hub checks against its member list. Only
+# the hub needs `listen`. Binds only to the listed IP addresses (for example a
+# NetBird address); 0.0.0.0 and :: are rejected. All keys need a server
+# restart.
+# enabled = false
+# Literal IP addresses, optionally with a port: ["100.92.14.3", "[fd00::1]:47392"].
+# listen = []
+# port = 47392
+# This machine's name in the flock. Default: host name.
+# name = ""
+# When a message from an agent to an agent on this machine waits for a person
+# to approve it (`flockr message pending`, or the phone and web app). Applies
+# without a restart.
+#   "other-projects": only between agents in different git repos. Replies to
+#     a message the recipient sent, and pairs a person allowed, go through.
+#   "never": every message goes through.
+#   "always": every message from an agent, unless a person allowed the pair.
+# approve_messages = "other-projects"
+
+[web]
+# Serve the flockr web app (the phone app built for a browser) over plain
+# HTTP, like other local web UIs. Off by default. Build it with
+# `npm run export:web` in flockr-mobile and point `dir` at its dist folder.
+# The app connects to the [mobile] gateway, so enable that too. Binds only to
+# the listed IP addresses; 0.0.0.0 and :: are rejected. All keys need a
+# server restart.
+# enabled = false
+# listen = []            # e.g. ["100.92.14.3"]
+# port = 47393
+# dir = ""
 "##;
 
-// Bundled at build time so the printed skill always matches this binary's release.
-const SKILL: &str = include_str!("../skills/flockr/SKILL.md");
+const SKILL: &str = integration::FLOCKR_SKILL;
 
 fn should_block_nested(config: &config::Config) -> bool {
     should_block_nested_for_env(config, std::env::var(FLOCKR_ENV_VAR).ok().as_deref())
@@ -609,7 +656,10 @@ fn finish_cli(outcome: io::Result<cli::CommandOutcome>) -> io::Result<()> {
             }
             std::process::exit(1);
         }
-        Err(err) => Err(err),
+        Err(err) => {
+            eprintln!("error: {err}");
+            std::process::exit(1);
+        }
     }
 }
 
@@ -718,15 +768,12 @@ fn main() -> io::Result<()> {
         println!("       flockr --remote <ssh-target> [--session <name>]");
         println!("       flockr session attach <name>");
         println!("       flockr completion zsh");
-        println!("       flockr update [--handoff]");
-        println!("       flockr channel set <stable|preview>");
         println!("       flockr machine <subcommand> ...");
         println!("       flockr server stop");
         println!("       flockr server reload-config");
         println!("       flockr api <subcommand> ...");
         println!("       flockr completion <shell>");
         println!("       flockr config <subcommand> ...");
-        println!("       flockr channel <subcommand> ...");
         println!("       flockr workspace <subcommand> ...");
         println!("       flockr worktree <subcommand> ...");
         println!("       flockr tab <subcommand> ...");
@@ -735,6 +782,8 @@ fn main() -> io::Result<()> {
         println!("       flockr pane <subcommand> ...");
         println!("       flockr session <subcommand> ...");
         println!("       flockr integration <subcommand> ...");
+        println!("       flockr flock <subcommand> ...");
+        println!("       flockr message <subcommand> ...");
         println!();
         println!("Common commands:");
         for (command, description) in [
@@ -743,7 +792,6 @@ fn main() -> io::Result<()> {
                 "flockr status [server|client]",
                 "Show local client and running server status",
             ),
-            ("flockr update", "Download and install the latest version"),
             (
                 "flockr completion zsh",
                 "Generate shell completions for zsh",
@@ -753,20 +801,12 @@ fn main() -> io::Result<()> {
                 "Stop the running server via the API socket",
             ),
             (
-                "flockr channel set <stable|preview>",
-                "Choose the stable or preview update channel",
-            ),
-            (
                 "flockr server reload-config",
                 "Reload config.toml in the running server",
             ),
             (
                 "flockr config reset-keys",
                 "Back up config.toml and remove custom keybindings",
-            ),
-            (
-                "flockr channel <subcommand>",
-                "Manage the stable or preview update channel",
             ),
             ("flockr machine <subcommand>", "Manage saved SSH machines"),
             (
@@ -815,7 +855,7 @@ fn main() -> io::Result<()> {
         println!("  --remote <target>   Attach through SSH to a remote Flockr server");
         println!("  --remote-keybindings <local|server>");
         println!("                      Keybindings for --remote app attach (default: local)");
-        println!("  --handoff           Opt into live handoff for update or remote attach");
+        println!("  --handoff           Opt into live handoff for remote attach");
         println!("  --default-config    Print default configuration and exit");
         println!("  --skill             Print the agent skill file and exit");
         println!("  --version, -V       Print version and exit");
@@ -905,8 +945,8 @@ fn main() -> io::Result<()> {
     let loaded_config = config::Config::load();
     exit_if_nested_disabled(&loaded_config.config);
 
-    let saved_federation =
-        client::endpoint::EndpointCatalog::load().is_ok_and(|catalog| catalog.has_enabled_ssh());
+    let saved_federation = client::endpoint::EndpointCatalog::load_for_client()
+        .is_ok_and(|catalog| catalog.has_enabled_ssh());
     if let Err(err) = server::autodetect::auto_detect_launch(saved_federation) {
         eprintln!("flockr: {err}");
         std::process::exit(1);
@@ -943,6 +983,23 @@ mod tests {
             "[mobile.push]",
             "# confirm_delay_ms = 5000",
             "# expo_access_token = \"\"",
+        ] {
+            assert!(DEFAULT_CONFIG.contains(key), "{key}");
+        }
+    }
+
+    #[test]
+    fn default_config_parses_and_documents_flock_keys() {
+        let config: config::Config = toml::from_str(DEFAULT_CONFIG).unwrap();
+        assert!(!config.flock.enabled);
+        assert!(!config.web.enabled);
+        for key in [
+            "[flock]",
+            "# port = 47392",
+            "# name = \"\"",
+            "[web]",
+            "# port = 47393",
+            "# dir = \"\"",
         ] {
             assert!(DEFAULT_CONFIG.contains(key), "{key}");
         }

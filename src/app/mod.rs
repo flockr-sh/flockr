@@ -241,8 +241,11 @@ fn normalize_theme_name(name: &str) -> String {
     name.to_lowercase().replace([' ', '_'], "-")
 }
 
-fn sibling_theme_names(name: &str) -> (String, String) {
+pub(crate) fn sibling_theme_names(name: &str) -> (String, String) {
     match normalize_theme_name(name).as_str() {
+        "flockr" | "flockr-dark" | "flockr-light" => {
+            ("flockr".to_string(), "flockr-light".to_string())
+        }
         "catppuccin" | "catppuccin-mocha" | "catppuccin-latte" | "latte" | "light" => {
             ("catppuccin".to_string(), "catppuccin-latte".to_string())
         }
@@ -276,7 +279,7 @@ fn theme_runtime_config(
         .theme
         .name
         .clone()
-        .unwrap_or_else(|| "catppuccin".to_string());
+        .unwrap_or_else(|| "terminal".to_string());
     let (default_dark, default_light) = sibling_theme_names(&manual_name);
     state::ThemeRuntimeConfig {
         manual_name,
@@ -308,7 +311,7 @@ fn resolve_palette_for_theme_name(
             fallback = fallback_name,
             "unknown theme, falling back"
         );
-        state::Palette::from_name(fallback_name).unwrap_or_else(state::Palette::catppuccin)
+        state::Palette::from_name(fallback_name).unwrap_or_else(state::Palette::terminal)
     });
 
     if let Some(custom) = &runtime.custom {
@@ -332,7 +335,7 @@ fn resolve_effective_theme(
         match appearance.unwrap_or(crate::terminal_theme::HostAppearance::Dark) {
             crate::terminal_theme::HostAppearance::Dark => (
                 &runtime.dark_name,
-                "catppuccin",
+                "terminal",
                 runtime
                     .custom
                     .as_ref()
@@ -340,7 +343,7 @@ fn resolve_effective_theme(
             ),
             crate::terminal_theme::HostAppearance::Light => (
                 &runtime.light_name,
-                "catppuccin-latte",
+                "terminal",
                 runtime
                     .custom
                     .as_ref()
@@ -348,7 +351,7 @@ fn resolve_effective_theme(
             ),
         }
     } else {
-        (&runtime.manual_name, "catppuccin", None)
+        (&runtime.manual_name, "terminal", None)
     };
     (
         resolve_palette_for_theme_name(name, fallback, runtime, mode_custom),
@@ -737,6 +740,21 @@ impl App {
         app.state.pane_id_aliases = pane_id_aliases;
         app.state.workspaces = workspaces;
         app.state.terminals = terminals;
+        // Carried completions keep their sequence numbers; new ones must
+        // follow them so clients still order acknowledgements correctly.
+        app.state.next_agent_state_change_seq = app
+            .state
+            .terminals
+            .values()
+            .flat_map(|terminal| {
+                [
+                    terminal.last_agent_state_change_seq,
+                    terminal.last_agent_completion_seq,
+                ]
+            })
+            .flatten()
+            .max()
+            .unwrap_or(0);
         app.terminal_runtimes = runtimes.into();
         app.state.active = snapshot
             .active
@@ -1501,6 +1519,50 @@ mod tests {
 
         assert_eq!(app.state.theme_name, "tokyo-night-day");
         assert_eq!(app.state.palette, state::Palette::tokyo_night_day());
+    }
+
+    #[test]
+    fn theme_defaults_to_terminal_in_every_mode() {
+        let runtime = theme_runtime_config(&Config::default(), false);
+
+        assert_eq!(runtime.manual_name, "terminal");
+        assert_eq!(runtime.dark_name, "terminal");
+        assert_eq!(runtime.light_name, "terminal");
+        let (palette, name) = resolve_effective_theme(&runtime, None);
+        assert_eq!(name, "terminal");
+        assert_eq!(palette, state::Palette::terminal());
+    }
+
+    #[test]
+    fn unknown_theme_falls_back_to_terminal() {
+        let mut config = Config::default();
+        config.theme.name = Some("no-such-theme".to_string());
+        let runtime = theme_runtime_config(&config, false);
+
+        let (palette, _) = resolve_effective_theme(&runtime, None);
+        assert_eq!(palette, state::Palette::terminal());
+    }
+
+    #[test]
+    fn flockr_theme_switches_to_its_light_sibling() {
+        for name in ["flockr", "flockr-dark", "flockr-light"] {
+            let mut config = Config::default();
+            config.theme.name = Some(name.to_string());
+            config.theme.auto_switch = true;
+            let runtime = theme_runtime_config(&config, false);
+
+            let (dark, _) = resolve_effective_theme(
+                &runtime,
+                Some(crate::terminal_theme::HostAppearance::Dark),
+            );
+            let (light, light_name) = resolve_effective_theme(
+                &runtime,
+                Some(crate::terminal_theme::HostAppearance::Light),
+            );
+            assert_eq!(dark, state::Palette::flockr(), "{name}");
+            assert_eq!(light, state::Palette::flockr_light(), "{name}");
+            assert_eq!(light_name, "flockr-light", "{name}");
+        }
     }
 
     #[test]

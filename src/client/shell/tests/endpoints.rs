@@ -14,6 +14,7 @@ fn remote_profile() -> SavedSshEndpoint {
         target: "dev@build.example".into(),
         session: "agents".into(),
         enabled: true,
+        flock_member: None,
     }
 }
 

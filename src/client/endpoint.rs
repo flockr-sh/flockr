@@ -41,6 +41,17 @@ impl ProfileId {
         Ok(Self(value))
     }
 
+    /// A stable ID for a flock member's machine entry.
+    pub(crate) fn for_flock_member(member: &str) -> Self {
+        let digest = Sha256::digest(format!("flockr.flock.member:{member}").as_bytes());
+        Self(
+            digest[..PROFILE_ID_BYTES]
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect(),
+        )
+    }
+
     pub(crate) fn generate() -> Self {
         use std::sync::atomic::{AtomicU64, Ordering};
         static NEXT_ID: AtomicU64 = AtomicU64::new(1);

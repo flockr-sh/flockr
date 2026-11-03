@@ -54,6 +54,7 @@ changed).
 | `mobile.push.done` | bool | `true` | Push when an agent becomes Done. |
 | `mobile.push.confirm_delay_ms` | u64 | `5000` | Re-check delay before sending. Clamped to 0..=60000. |
 | `mobile.push.expo_access_token` | string? | unset | Optional Expo "enhanced push security" token, sent as `Authorization: Bearer`. |
+| `mobile.push.alert_prompt_text` | bool | `true` | Show a blocked agent's question and command in the alert text (11.3). Off, the push carries no prompt text at all: `data.prompt` has only option keys and a fingerprint (11.4). Answer buttons are sent either way. |
 
 Sample config text (append to `src/main.rs` sample):
 
@@ -78,6 +79,7 @@ Sample config text (append to `src/main.rs` sample):
 # done = true
 # confirm_delay_ms = 5000
 # expo_access_token = ""
+# alert_prompt_text = true
 ```
 
 Binding: the gateway binds each `listen` address independently. If a bind
@@ -427,6 +429,10 @@ First connect from a QR:
   `server_id`, fail with `pairing_failed` (the QR was for another host).
 - `max_in_flight`: surface flow-control window (section 10.6), 1..=8,
   default 2.
+- `machine` (optional): a flock member ID from `welcome.machines`. The
+  server authenticates the phone as usual, then relays the session to that
+  machine (section 8.7). Unknown machine, or a server in no flock: close
+  `4000`. The server's own member ID serves the session locally.
 
 ### 8.3 Version negotiation
 
@@ -445,6 +451,8 @@ MUST NOT depend on a feature the server did not list. v2 servers list:
   Without it the app scrolls with `surface.scroll` only.
 - `"input.image"` if the server takes `input.image` (section 9.6).
   Without it the app hides image attach.
+- `"messages"` if the server is in a flock and takes the message methods
+  (section 9.2). Without it the app hides message approvals and settings.
 
 ### 8.4 Server checks
 
@@ -506,6 +514,31 @@ Auth path:
   server". The cryptographic check is the Noise handshake against `pk`;
   this one only gives a clearer message.
 - `methods`: the API allowlist (section 9.2) as sent by this server.
+- `machines` (optional): present when the server is in a flock. One entry
+  per computer: `{ "id", "name", "this", "online" }`; `this` marks the
+  server itself.
+- `machine` (optional): on a relayed session, the machine it reached.
+  `server.name` is that machine's name; `server.server_id` stays the
+  paired server's.
+
+### 8.7 Relayed sessions (flock)
+
+With `hello.machine` set, the paired server keeps the Noise channel and
+relays every message, decrypted, to the machine through the flock hub
+(the `mobile` stream service, one JSON message per line). The machine runs
+the session as if the phone were connected to it: same messages, methods
+and features, with `welcome` sent by the machine. Differences:
+
+- `push.register` and `push.unregister` answer `push.ok` and do nothing;
+  push is registered on the paired server's own session.
+- `device.forget` fails `bad_request`; remove the phone on the paired
+  server.
+- The paired server's own notices (in-band alerts) are not sent on a
+  relayed session.
+- If the machine is unreachable or goes away, the server closes `4009`
+  with `server_unavailable`; the app retries as for a restart.
+- Revoking the device on the paired server closes its relayed sessions
+  too. A phone may hold up to 8 connections to one server.
 
 ### 8.6 Revocation
 
@@ -617,6 +650,21 @@ worktree.list worktree.create worktree.open
 events.subscribe events.wait pane.wait_for_output
 notification.show
 ```
+
+On a server in a flock (feature `"messages"`), these go to the flock message
+service instead of the API, as a person (any `caller_pane` param is
+dropped):
+
+```
+message.pending                 -> {"pending": [Message]}
+message.approve {id, always?}   -> {"id", "to"}; always saves a rule for the pair
+message.deny {id}               -> {"id"}
+message.settings                -> {"approve_messages"}
+message.settings.set {approve_messages: "other-projects"|"never"|"always"}
+                                -> {"approve_messages"}; writes [flock] in config.toml
+```
+
+Over a relayed session (section 8.7) they act on that machine.
 
 Not allowed: `server.*`, `plugin.*`, `integration.*`, `client.*`,
 `client_shell.*`, `command.invoke`, `layout.*`, `pane.edit_scrollback`,
@@ -1168,6 +1216,20 @@ At check time:
 - Host: `mobile.name`.
 - Title: `"<agent> is blocked"` or `"<agent> finished"`.
 - Body: `"<workspace> › <tab> · <host>"`.
+- Blocked only: the worker reads the pane's detection screen (`agent.read`,
+  `source: "detection"`, `format: "text"`) and parses the permission prompt
+  (`src/server/mobile/prompt.rs`, a port of the app's
+  `src/protocol/prompt.ts`; both test against the same fixtures). When it
+  parses and `alert_prompt_text` is on, the body gets a first line
+  `"<question> · <detail>"` (detail cut to 80 characters), for example
+  `"Do you want to proceed? · npm test\nflockr › mobile · dk-desktop"`.
+- Answer buttons: the options map to buttons when there is exactly one
+  "Yes" (the label `Yes` or `Yes, proceed`), exactly one option starting
+  with the word "No", and at most one starting "Yes, and don't ask again".
+  Other options get no button. With an Always option the category is
+  `prompt_yes_always_no` (Yes, Yes don't ask again, No, Open), without it
+  `prompt_yes_no` (Yes, No, Open). Anything else: no category, a plain
+  alert that opens the pane.
 
 ### 11.4 Expo request
 
@@ -1198,11 +1260,64 @@ messages per request.
       "tab_id": "tab_2",
       "tab": "mobile",
       "pane_id": "p_3",
-      "terminal_id": "t_5"
+      "terminal_id": "t_5",
+      "state_change_seq": 17
     }
   }
 ]
 ```
+
+A blocked alert whose prompt maps to buttons also has
+`"categoryId": "prompt_yes_always_no"` (or `"prompt_yes_no"`) and
+`data.prompt`:
+
+```json
+"prompt": {
+  "category": "prompt_yes_always_no",
+  "question": "Do you want to proceed?",
+  "detail": "npm test 2>&1 | tail -100",
+  "actions": {
+    "yes": { "key": "1", "label": "Yes" },
+    "always": { "key": "2", "label": "Yes, and don’t ask again for: npm test *" },
+    "no": { "key": "4", "label": "No" }
+  },
+  "fingerprint": "36dfc8675e9d416e241ddc54a4bb19d3"
+}
+```
+
+`detail` is `null` when the screen shows none; `always` is absent for
+`prompt_yes_no`. `detail` is the full parsed detail, not the cut text.
+
+With `alert_prompt_text = false` the push carries no prompt text (it passes
+through Expo and Apple or Google): no `question`, no `detail`, no labels.
+
+```json
+"prompt": {
+  "category": "prompt_yes_always_no",
+  "actions": { "yes": { "key": "1" }, "always": { "key": "2" }, "no": { "key": "4" } },
+  "fingerprint": "36dfc8675e9d416e241ddc54a4bb19d3"
+}
+```
+
+`fingerprint` is the lowercase hex of the first 16 bytes of the SHA-256 of
+the parsed prompt's canonical text, UTF-8: the lines `q:<question>`,
+`d:<detail>` (empty when there is none), then `<key>:<label>` for every
+option in screen order, joined with `\n`, no trailing newline. Question,
+detail, and labels are the parser's output (trimmed, whitespace collapsed,
+key hints dropped). The cursor position is not included. Both
+`prompt_fingerprint` (`src/server/mobile/prompt.rs`) and the app's
+`promptFingerprint` (`src/protocol/prompt.ts`) test that the
+`claude-bash.txt` fixture gives the value above.
+
+App on a button (actions need Face ID or the passcode and open the app):
+connect to `data.server_id`, then answer only if `agent.get` says the agent
+is still `blocked` with the same `state_change_seq`, and a fresh
+`agent.read` parses to a prompt that has the action's key and that matches
+the push: with text, the same question and detail and the same label under
+that key; without text, the same fingerprint. Then `agent.send_keys` with
+the digit, no Enter.
+Otherwise it sends nothing and posts "Couldn't answer". Open (and a plain
+tap) opens the pane.
 
 - `interruptionLevel`: `"time-sensitive"` for blocked, `"active"` for done.
 - App on tap: find the server by `data.server_id`, connect, open the pane.
@@ -1249,7 +1364,7 @@ Limits (constants in `src/server/mobile/mod.rs`):
 | Limit | Value |
 |---|---|
 | Paired devices | `mobile.max_devices` (8) |
-| Connections per device | 4 |
+| Connections per device | 8 (one per flock machine shown) |
 | Connections total | 16 |
 | Unauthenticated connections | 8 at once, 3 per remote IP; refused (socket dropped, no upgrade) when full; upgrade, handshake, and `hello` within 10 s; a timeout or a failed handshake counts as an auth failure |
 | Outbound writes | one frame may take 30 s to write, then the connection closes |

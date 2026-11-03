@@ -74,7 +74,57 @@ pub struct Palette {
 }
 
 impl Palette {
-    /// Catppuccin Mocha — the default.
+    /// flockr — dark, with the Tide accent the phone and web apps use.
+    pub fn flockr() -> Self {
+        Self {
+            accent: Color::Rgb(42, 212, 217), // Tide #2ad4d9
+            panel_bg: Color::Rgb(24, 26, 34),
+            sidebar_bg: Color::Reset,
+            active_row_bg: Color::Rgb(31, 35, 48),
+            selection_bg: Color::Rgb(38, 42, 53),
+            surface0: Color::Rgb(35, 38, 47),
+            surface1: Color::Rgb(42, 46, 59),
+            surface_dim: Color::Rgb(23, 25, 32),
+            overlay0: Color::Rgb(111, 117, 135),
+            overlay1: Color::Rgb(138, 144, 162),
+            text: Color::Rgb(230, 232, 239),
+            subtext0: Color::Rgb(138, 144, 162),
+            mauve: Color::Rgb(192, 153, 255),
+            green: Color::Rgb(158, 206, 106),
+            yellow: Color::Rgb(224, 175, 104),
+            red: Color::Rgb(247, 118, 142),
+            blue: Color::Rgb(42, 212, 217),
+            teal: Color::Rgb(42, 212, 217),
+            peach: Color::Rgb(255, 158, 100),
+        }
+    }
+
+    /// flockr light — the light flockr flavor.
+    pub fn flockr_light() -> Self {
+        Self {
+            accent: Color::Rgb(7, 115, 122), // #07737a: 4.5:1 or more on every light surface
+            panel_bg: Color::Rgb(244, 242, 237),
+            sidebar_bg: Color::Reset,
+            active_row_bg: Color::Rgb(233, 230, 223),
+            selection_bg: Color::Rgb(217, 239, 239),
+            surface0: Color::Rgb(226, 223, 216),
+            surface1: Color::Rgb(211, 208, 200),
+            surface_dim: Color::Rgb(236, 233, 226),
+            overlay0: Color::Rgb(154, 154, 154),
+            overlay1: Color::Rgb(125, 125, 125),
+            text: Color::Rgb(16, 17, 22),
+            subtext0: Color::Rgb(92, 96, 112),
+            mauve: Color::Rgb(122, 79, 208),
+            green: Color::Rgb(47, 138, 59),
+            yellow: Color::Rgb(167, 107, 0),
+            red: Color::Rgb(200, 50, 77),
+            blue: Color::Rgb(7, 115, 122),
+            teal: Color::Rgb(7, 115, 122),
+            peach: Color::Rgb(194, 85, 26),
+        }
+    }
+
+    /// Catppuccin Mocha.
     pub fn catppuccin() -> Self {
         Self {
             accent: Color::Rgb(137, 180, 250), // blue
@@ -124,7 +174,7 @@ impl Palette {
         }
     }
 
-    /// Terminal 16-color theme.
+    /// Terminal 16-color theme that follows the terminal's own colors — the default.
     pub fn terminal() -> Self {
         Self {
             accent: Color::Blue,
@@ -527,9 +577,11 @@ impl Palette {
     /// Resolve a theme by name. Returns None for unknown names.
     pub fn from_name(name: &str) -> Option<Self> {
         match crate::config::canonical_theme_name(name)? {
+            "terminal" => Some(Self::terminal()),
+            "flockr" => Some(Self::flockr()),
+            "flockr-light" => Some(Self::flockr_light()),
             "catppuccin" => Some(Self::catppuccin()),
             "catppuccin-latte" => Some(Self::catppuccin_latte()),
-            "terminal" => Some(Self::terminal()),
             "tokyo-night" => Some(Self::tokyo_night()),
             "tokyo-night-day" => Some(Self::tokyo_night_day()),
             "dracula" => Some(Self::dracula()),
@@ -1124,12 +1176,12 @@ impl AppState {
             main_pane_width: crate::layout::MainPaneSize::Cells(80),
             main_pane_height: crate::layout::MainPaneSize::Cells(24),
             keybinds: Keybinds::default(),
-            palette: Palette::catppuccin(),
-            theme_name: "catppuccin".to_string(),
+            palette: Palette::terminal(),
+            theme_name: "terminal".to_string(),
             theme_runtime: ThemeRuntimeConfig {
-                manual_name: "catppuccin".to_string(),
-                dark_name: "catppuccin".to_string(),
-                light_name: "catppuccin-latte".to_string(),
+                manual_name: "terminal".to_string(),
+                dark_name: "terminal".to_string(),
+                light_name: "terminal".to_string(),
                 auto_switch: false,
                 custom: None,
                 legacy_accent: None,

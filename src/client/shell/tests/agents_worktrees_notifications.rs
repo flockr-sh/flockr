@@ -2135,6 +2135,8 @@ fn working_pulse_cycles_only_while_an_agent_works_and_the_setting_is_on() {
         session_empty: false,
     }];
     let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    // An RGB theme, so the pulse needs no host palette report.
+    state.config.palette = Palette::catppuccin();
     state.set_snapshot(Box::new(working.clone()));
     let epoch = state.working_pulse_epoch;
     let at = |ms| epoch + std::time::Duration::from_millis(ms);

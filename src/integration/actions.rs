@@ -122,6 +122,10 @@ fn install_target_inner(target: crate::api::schema::IntegrationTarget) -> io::Re
                     "ensured claude settings at {}",
                     installed.settings_path.display()
                 ),
+                format!(
+                    "installed flockr skill to {}",
+                    installed.skill_path.display()
+                ),
             ]
         }
         crate::api::schema::IntegrationTarget::Codex => {
@@ -135,6 +139,10 @@ fn install_target_inner(target: crate::api::schema::IntegrationTarget) -> io::Re
                 format!(
                     "ensured codex config at {}",
                     installed.config_path.display()
+                ),
+                format!(
+                    "installed flockr skill to {}",
+                    installed.skill_path.display()
                 ),
             ]
         }
@@ -380,6 +388,12 @@ pub(crate) fn uninstall_target(
                     result.settings_path.display()
                 ));
             }
+            if result.removed_skill {
+                messages.push(format!(
+                    "removed flockr skill at {}",
+                    result.skill_path.display()
+                ));
+            }
             messages
         }
         crate::api::schema::IntegrationTarget::Codex => {
@@ -405,6 +419,12 @@ pub(crate) fn uninstall_target(
                 messages.push(format!(
                     "no flockr codex hook entries found in {}",
                     result.hooks_path.display()
+                ));
+            }
+            if result.removed_skill {
+                messages.push(format!(
+                    "removed flockr skill at {}",
+                    result.skill_path.display()
                 ));
             }
             messages.push(format!(

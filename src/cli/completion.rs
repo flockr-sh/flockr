@@ -170,7 +170,12 @@ mod tests {
         for shell in super::SUPPORTED_SHELLS {
             let shell = super::parse_shell(shell).expect("supported shell");
             let full = script(shell, &root);
-            assert!(!full.contains("live-handoff"), "{shell}: hidden command");
+            assert!(full.contains("live-handoff"), "{shell}: public command");
+            // `update` is hidden; its description must not reach completions.
+            assert!(
+                !full.contains("Download and install the latest version"),
+                "{shell}: hidden command"
+            );
             assert!(!advertises(&full, "group"), "{shell}: hidden group");
             assert!(advertises(&full, "version"), "{shell}: public root flag");
             let worktree = script(shell, worktree);
