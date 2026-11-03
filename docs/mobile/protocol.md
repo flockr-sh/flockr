@@ -54,6 +54,7 @@ changed).
 | `mobile.push.done` | bool | `true` | Push when an agent becomes Done. |
 | `mobile.push.confirm_delay_ms` | u64 | `5000` | Re-check delay before sending. Clamped to 0..=60000. |
 | `mobile.push.expo_access_token` | string? | unset | Optional Expo "enhanced push security" token, sent as `Authorization: Bearer`. |
+| `mobile.push.alert_prompt_text` | bool | `true` | Show a blocked agent's question and command in the alert text (11.3). Answer buttons and the `data.prompt` check are sent either way. |
 
 Sample config text (append to `src/main.rs` sample):
 
@@ -78,6 +79,7 @@ Sample config text (append to `src/main.rs` sample):
 # done = true
 # confirm_delay_ms = 5000
 # expo_access_token = ""
+# alert_prompt_text = true
 ```
 
 Binding: the gateway binds each `listen` address independently. If a bind
@@ -1214,6 +1216,20 @@ At check time:
 - Host: `mobile.name`.
 - Title: `"<agent> is blocked"` or `"<agent> finished"`.
 - Body: `"<workspace> › <tab> · <host>"`.
+- Blocked only: the worker reads the pane's detection screen (`agent.read`,
+  `source: "detection"`, `format: "text"`) and parses the permission prompt
+  (`src/server/mobile/prompt.rs`, a port of the app's
+  `src/protocol/prompt.ts`; both test against the same fixtures). When it
+  parses and `alert_prompt_text` is on, the body gets a first line
+  `"<question> · <detail>"` (detail cut to 80 characters), for example
+  `"Do you want to proceed? · npm test\nflockr › mobile · dk-desktop"`.
+- Answer buttons: the options map to buttons when there is exactly one
+  "Yes" (the label `Yes` or `Yes, proceed`), exactly one option starting
+  with the word "No", and at most one starting "Yes, and don't ask again".
+  Other options get no button. With an Always option the category is
+  `prompt_yes_always_no` (Yes, Yes don't ask again, No, Open), without it
+  `prompt_yes_no` (Yes, No, Open). Anything else: no category, a plain
+  alert that opens the pane.
 
 ### 11.4 Expo request
 
@@ -1244,11 +1260,40 @@ messages per request.
       "tab_id": "tab_2",
       "tab": "mobile",
       "pane_id": "p_3",
-      "terminal_id": "t_5"
+      "terminal_id": "t_5",
+      "state_change_seq": 17
     }
   }
 ]
 ```
+
+A blocked alert whose prompt maps to buttons also has
+`"categoryId": "prompt_yes_always_no"` (or `"prompt_yes_no"`) and
+`data.prompt`:
+
+```json
+"prompt": {
+  "category": "prompt_yes_always_no",
+  "question": "Do you want to proceed?",
+  "detail": "npm test 2>&1 | tail -100",
+  "actions": {
+    "yes": { "key": "1", "label": "Yes" },
+    "always": { "key": "2", "label": "Yes, and don’t ask again for: npm test *" },
+    "no": { "key": "4", "label": "No" }
+  }
+}
+```
+
+`detail` is `null` when the screen shows none; `always` is absent for
+`prompt_yes_no`. `detail` is the full parsed detail, not the cut text.
+
+App on a button (actions need Face ID or the passcode and open the app):
+connect to `data.server_id`, then answer only if `agent.get` says the agent
+is still `blocked` with the same `state_change_seq`, and a fresh
+`agent.read` parses to the same question and detail with the same label
+under the action's key. Then `agent.send_keys` with the digit, no Enter.
+Otherwise it sends nothing and posts "Couldn't answer". Open (and a plain
+tap) opens the pane.
 
 - `interruptionLevel`: `"time-sensitive"` for blocked, `"active"` for done.
 - App on tap: find the server by `data.server_id`, connect, open the pane.
