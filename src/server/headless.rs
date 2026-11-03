@@ -1752,7 +1752,7 @@ impl HeadlessServer {
             self.send_to_client(
                 client_id,
                 ServerMessage::ServerShutdown {
-                    reason: Some(crate::server::handoff::LIVE_HANDOFF_SHUTDOWN_REASON.to_owned()),
+                    reason: Some(crate::server::LIVE_HANDOFF_SHUTDOWN_REASON.to_owned()),
                 },
             );
             if let Some(client) = self.clients.get_mut(&client_id) {
@@ -1895,9 +1895,7 @@ impl HeadlessServer {
                 if self.handoff_in_progress {
                     if let Ok(message) =
                         Self::frame_server_message(&ServerMessage::ServerShutdown {
-                            reason: Some(
-                                crate::server::handoff::LIVE_HANDOFF_SHUTDOWN_REASON.to_owned(),
-                            ),
+                            reason: Some(crate::server::LIVE_HANDOFF_SHUTDOWN_REASON.to_owned()),
                         })
                     {
                         let _ = writer.control.send(message);
@@ -1945,9 +1943,7 @@ impl HeadlessServer {
                 if self.handoff_in_progress {
                     if let Ok(message) =
                         Self::frame_server_message(&ServerMessage::ServerShutdown {
-                            reason: Some(
-                                crate::server::handoff::LIVE_HANDOFF_SHUTDOWN_REASON.to_owned(),
-                            ),
+                            reason: Some(crate::server::LIVE_HANDOFF_SHUTDOWN_REASON.to_owned()),
                         })
                     {
                         let _ = writer.control.send(message);

@@ -13,6 +13,13 @@ pub(crate) mod clipboard_image;
 pub(crate) mod flock;
 #[cfg(unix)]
 pub(crate) mod handoff;
+
+/// Sent to clients when a live handoff starts. Clients that see it reattach to
+/// the replacement server instead of exiting. Part of the wire behavior; keep
+/// the text stable. Defined here, outside the Unix-only `handoff` module,
+/// because the shared server code refers to it on every platform.
+pub(crate) const LIVE_HANDOFF_SHUTDOWN_REASON: &str =
+    "live update in progress; reconnect after handoff completes";
 pub mod headless;
 pub(crate) mod keybindings;
 pub(crate) mod mobile;

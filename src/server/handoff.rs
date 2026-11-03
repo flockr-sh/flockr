@@ -16,11 +16,7 @@ use serde::{Deserialize, Serialize};
 #[cfg(unix)]
 use tracing::{info, warn};
 
-/// Sent to clients when a live handoff starts. Clients that see it reattach to
-/// the replacement server instead of exiting. Part of the wire behavior; keep
-/// the text stable.
-pub(crate) const LIVE_HANDOFF_SHUTDOWN_REASON: &str =
-    "live update in progress; reconnect after handoff completes";
+pub(crate) use super::LIVE_HANDOFF_SHUTDOWN_REASON;
 
 #[cfg(unix)]
 const HANDOFF_VERSION: u32 = 1;
