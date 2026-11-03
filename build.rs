@@ -15,6 +15,10 @@ fn main() {
 /// (`npm run export:web`). Without an `index.html` there the file is empty
 /// and the binary has no web app, so builds work without Node.
 ///
+/// Files and folders whose names start with `.` are left out, and symlinks
+/// are skipped with a warning; that matches what the release workflow's
+/// artifact upload ships.
+///
 /// Format before zlib: for each file, sorted by path, a u32 LE path length,
 /// the `/`-separated relative path, a u64 LE data length, and the data.
 ///
@@ -25,12 +29,13 @@ fn embed_web_app() {
     println!("cargo:rerun-if-env-changed=FLOCKR_WEB_DIST");
     let out = PathBuf::from(std::env::var_os("OUT_DIR").expect("cargo sets OUT_DIR"))
         .join("web-app.zlib");
-    let dist = match std::env::var_os("FLOCKR_WEB_DIST").filter(|dir| !dir.is_empty()) {
+    let required = std::env::var_os("FLOCKR_WEB_DIST").filter(|dir| !dir.is_empty());
+    let dist = match &required {
         Some(dir) => PathBuf::from(dir),
         None => Path::new(env!("CARGO_MANIFEST_DIR")).join("app/dist"),
     };
     if !dist.join("index.html").is_file() {
-        if std::env::var_os("FLOCKR_WEB_DIST").is_some_and(|dir| !dir.is_empty()) {
+        if required.is_some() {
             panic!(
                 "FLOCKR_WEB_DIST={} has no index.html; build the web app first",
                 dist.display()
@@ -44,6 +49,7 @@ fn embed_web_app() {
     let mut files = Vec::new();
     collect_files(&dist, &dist, &mut files);
     files.sort();
+
     let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::best());
     for (name, path) in &files {
         let data =
@@ -65,10 +71,20 @@ fn collect_files(root: &Path, dir: &Path, files: &mut Vec<(String, PathBuf)>) {
     let entries =
         std::fs::read_dir(dir).unwrap_or_else(|err| panic!("read {}: {err}", dir.display()));
     for entry in entries {
-        let path = entry.expect("read web app folder entry").path();
-        if path.is_dir() {
+        let entry = entry.expect("read web app folder entry");
+        let path = entry.path();
+        if entry.file_name().to_string_lossy().starts_with('.') {
+            continue;
+        }
+        // DirEntry::file_type does not follow symlinks.
+        let file_type = entry
+            .file_type()
+            .unwrap_or_else(|err| panic!("stat {}: {err}", path.display()));
+        if file_type.is_symlink() {
+            println!("cargo:warning=web app: skipping symlink {}", path.display());
+        } else if file_type.is_dir() {
             collect_files(root, &path, files);
-        } else if path.is_file() {
+        } else if file_type.is_file() {
             let relative = path
                 .strip_prefix(root)
                 .expect("file is under the web app folder");
