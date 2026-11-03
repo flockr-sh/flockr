@@ -260,8 +260,27 @@ impl Node {
         id
     }
 
+    #[cfg(test)]
     pub(super) fn route(&self, id: u64) -> Option<Route> {
         self.shared().routes.get(&id).cloned()
+    }
+
+    /// The route, if `link_conn` is the link it was opened on.
+    pub(super) fn route_from(&self, id: u64, link_conn: u64) -> Option<Route> {
+        self.shared()
+            .routes
+            .get(&id)
+            .filter(|route| route.link_conn == link_conn)
+            .cloned()
+    }
+
+    /// Removes the route, if `link_conn` is the link it was opened on.
+    pub(super) fn remove_route_from(&self, id: u64, link_conn: u64) -> Option<Route> {
+        let mut shared = self.shared();
+        if shared.routes.get(&id)?.link_conn != link_conn {
+            return None;
+        }
+        shared.routes.remove(&id)
     }
 
     pub(super) fn remove_route(&self, id: u64) -> Option<Route> {
@@ -641,6 +660,25 @@ mod tests {
         assert_eq!(close["t"], "close");
         assert_eq!(close["s"], 7);
         assert!(node.link("m_a").is_none());
+    }
+
+    #[test]
+    fn only_the_link_a_stream_was_opened_on_can_answer_or_close_it() {
+        let node = hub_node();
+        let (link, _) = node.register("m_a", false, mpsc::unbounded_channel().0);
+        let (other, _) = node.register("m_b", false, mpsc::unbounded_channel().0);
+        let (client_tx, _client_rx) = mpsc::unbounded_channel();
+        let route = node.add_route(Route {
+            client_tx,
+            client_stream: 7,
+            link_conn: link,
+        });
+        assert!(node.route_from(route, other).is_none());
+        assert!(node.remove_route_from(route, other).is_none());
+        assert!(node.route(route).is_some(), "another link can't close it");
+        assert!(node.route_from(route, link).is_some());
+        assert!(node.remove_route_from(route, link).is_some());
+        assert!(node.route(route).is_none());
     }
 
     #[test]

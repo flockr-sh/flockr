@@ -172,7 +172,7 @@ async fn serve_connection(node: Arc<Node>, accepted: Accepted) {
                             true
                         }
                         Some("data" | "close") => {
-                            relay_answer(&node, &message);
+                            relay_answer(&node, conn, &message);
                             true
                         }
                         _ => true,
@@ -320,15 +320,16 @@ fn open_target(
     Ok(Target::Relay { route, link })
 }
 
-/// Passes a member's answer on a relayed stream back to the client.
-fn relay_answer(node: &Node, message: &Value) {
+/// Passes a member's answer on a relayed stream back to the client. Only the
+/// link the stream was opened on may answer it or close it.
+fn relay_answer(node: &Node, link_conn: u64, message: &Value) {
     let Some(route_id) = message["s"].as_u64() else {
         return;
     };
     let route = if message["t"] == "close" {
-        node.remove_route(route_id)
+        node.remove_route_from(route_id, link_conn)
     } else {
-        node.route(route_id)
+        node.route_from(route_id, link_conn)
     };
     let Some(route) = route else {
         return;
