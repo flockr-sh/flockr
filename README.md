@@ -9,6 +9,9 @@ A terminal workspace for running many coding agents side by side. Spaces,
 tabs, and split panes, with a sidebar that shows which agents are working,
 waiting on you, or done.
 
+[Website](https://flockr.sh) · [Docs](https://flockr.sh/docs) ·
+[Changelog](CHANGELOG.md) · [Support](https://flockr.sh/support)
+
 ![flockr demo](assets/demo.gif)
 
 flockr is a hard fork of [herdr](https://github.com/herdrdev/herdr)
@@ -74,6 +77,21 @@ The prefix key is `ctrl+b`, as in tmux.
 Settings live in `~/.config/flockr/config.toml`. The settings screen covers
 the common ones, and `flockr --default-config` prints every option with its
 documentation.
+
+## Across machines and on your phone
+
+- **Flock**: join your machines' flockr servers into one. One machine is the
+  hub; the others join with an invite, no SSH. Every agent on every machine
+  shows up in the sidebar. `flockr flock init`, `invite`, and `join`.
+- **Agents message each other**, on the same machine or another one:
+  `flockr message send tower:claude "..."`. Messages between projects can
+  wait for you to approve them (`[flock] approve_messages`).
+- **iPhone app**: pair with a QR code from `flockr mobile pair`, see every
+  agent, open its terminal, answer the one that's blocked, and get an alert
+  when one needs you. Encrypted end to end; no account.
+- **Web app**: the same app in a browser on your own network (`[web]`).
+
+See the [docs](https://flockr.sh/docs) to set them up.
 
 ## What flockr adds to herdr
 
