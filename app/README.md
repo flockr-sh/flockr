@@ -53,8 +53,9 @@ mock/                    mock gateway (Node + ws) with a fake terminal and a
 scripts/mock-gateway.ts  run the mock for the phone
 scripts/smoke.ts         drive the protocol client from Node
 tests/fixtures/mobile-v1 one JSON file per example in the spec
-__tests__/fixtures/      Noise NK test vectors (cacophony, snow); the flockr
-                         server's mobile-v2/noise-nk.json goes here too
+__tests__/fixtures/      Noise NK test vectors (cacophony, snow)
+../tests/fixtures/       shared with the server's Rust tests: mobile-v2/
+                         (noise-nk.json, pairing payload) and prompts/
 __tests__/protocol/      jest: pairing, grid, agents, encoder round trip,
                          Noise vectors and framing, client against the mock
 ```

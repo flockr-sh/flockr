@@ -1,5 +1,6 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { SHARED_FIXTURES } from '../sharedFixtures';
 import {
   CipherState,
   FrameError,
@@ -108,17 +109,9 @@ describe('Noise_NK_25519_ChaChaPoly_SHA256', () => {
 });
 
 // Cross-implementation vector from the flockr server (generated with snow).
-// Copied from flockr's tests/fixtures/mobile-v2/noise-nk.json.
-const serverFixture = join(__dirname, '../fixtures/mobile-v2/noise-nk.json');
-const haveServerFixture = existsSync(serverFixture);
-if (!haveServerFixture) {
-  console.warn(
-    `skipping the flockr server Noise replay: ${serverFixture} is missing. Copy it from flockr's ` +
-      'tests/fixtures/mobile-v2/noise-nk.json once the server side lands.',
-  );
-}
+const serverFixture = join(SHARED_FIXTURES, 'mobile-v2/noise-nk.json');
 
-(haveServerFixture ? describe : describe.skip)('flockr server fixture replay (mobile-v2/noise-nk.json)', () => {
+describe('flockr server fixture replay (mobile-v2/noise-nk.json)', () => {
   interface ServerFixture {
     protocol: string;
     prologue_hex: string;

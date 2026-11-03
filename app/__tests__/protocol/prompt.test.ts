@@ -1,8 +1,9 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
+import { SHARED_FIXTURES } from '../sharedFixtures';
 import { isNoOption, parsePrompt, promptFingerprint, shortLabel } from '../../src/protocol/prompt';
 
-const fixture = (name: string) => readFileSync(join(__dirname, '../fixtures/prompts', name), 'utf8');
+const fixture = (name: string) => readFileSync(join(SHARED_FIXTURES, 'prompts', name), 'utf8');
 
 describe('promptFingerprint', () => {
   // src/server/mobile/prompt.rs asserts the same value for the same fixture,
