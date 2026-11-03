@@ -2,16 +2,26 @@ import * as Linking from 'expo-linking';
 import { useFonts } from 'expo-font';
 import { StatusBar } from 'expo-status-bar';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AppState, BackHandler, Pressable, StyleSheet, Text, View } from 'react-native';
+import { AppState, BackHandler, Platform, Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { connections, InbandNotify } from './src/state/connections';
 import type { Nav, Route } from './src/state/nav';
-import { getPushToken, listenForTaps, pushSupported, setupNotifications } from './src/state/push';
+import {
+  getPushToken,
+  listenForTaps,
+  postLocalNotification,
+  pushSupported,
+  setupNotifications,
+} from './src/state/push';
+import { answerFromPush } from './src/state/pushActions';
 import { colors, statusColor } from './src/state/ui';
 import type { PushData } from './src/protocol';
+import { DesktopShell } from './src/desktop/DesktopShell';
 import { AgentsScreen } from './src/screens/AgentsScreen';
 import { PairScreen } from './src/screens/PairScreen';
+import { MessagesScreen } from './src/screens/MessagesScreen';
 import { ServersScreen } from './src/screens/ServersScreen';
+import { SettingsScreen } from './src/screens/SettingsScreen';
 import { TerminalScreen } from './src/screens/TerminalScreen';
 
 export default function App() {
@@ -22,6 +32,9 @@ export default function App() {
   const [stack, setStack] = useState<Route[]>([{ name: 'servers' }]);
   const [banner, setBanner] = useState<InbandNotify | null>(null);
   const [pushNote, setPushNote] = useState<string | null>(null);
+  // A wide browser window gets the desktop layout; phones and narrow windows the stack.
+  const { width } = useWindowDimensions();
+  const desktop = Platform.OS === 'web' && width >= 860;
   const bannerTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const nav: Nav = useMemo(
@@ -67,7 +80,8 @@ export default function App() {
   useEffect(() => {
     if (!ready) return;
     if (!pushSupported()) {
-      setPushNote('Push needs a dev build on a real device.');
+      // Only Expo Go and simulators land here; that's a developer's concern.
+      if (__DEV__) setPushNote('Push needs a dev build on a real device.');
       return;
     }
     void setupNotifications();
@@ -75,9 +89,23 @@ export default function App() {
       connections.setPushToken(r.token);
       setPushNote(r.token ? 'Push notifications on.' : (r.reason ?? null));
     });
-    return listenForTaps((d: PushData) =>
-      openPane(d.server_id, d.pane_id, `${d.agent ?? 'Agent'} · ${d.workspace ?? ''} › ${d.tab ?? ''}`),
-    );
+    const open = (d: PushData) =>
+      openPane(d.server_id, d.pane_id, `${d.agent ?? 'Agent'} · ${d.workspace ?? ''} › ${d.tab ?? ''}`);
+    return listenForTaps(open, (d, action) => {
+      // Answer buttons open the app (see pushActions.ts); answer now, and
+      // show the pane if the prompt could not be answered.
+      void answerFromPush(
+        {
+          client: (id) => connections.client(id),
+          isDemo: (id) => !!connections.server(id)?.demo,
+          notify: postLocalNotification,
+        },
+        d,
+        action,
+      ).then((r) => {
+        if (r !== 'sent') open(d);
+      });
+    });
   }, [ready, openPane]);
 
   // In-band alerts while the app is open.
@@ -100,9 +128,12 @@ export default function App() {
   const route = stack[stack.length - 1];
   let screen: React.ReactNode = null;
   if (!ready || (!fontsLoaded && !fontError)) screen = <View style={{ flex: 1, backgroundColor: colors.bg }} />;
+  else if (desktop) screen = <DesktopShell />;
   else if (route.name === 'servers') screen = <ServersScreen nav={nav} pushNote={pushNote} />;
   else if (route.name === 'pair') screen = <PairScreen nav={nav} initialUrl={route.initialUrl} />;
   else if (route.name === 'agents') screen = <AgentsScreen key={route.serverId} nav={nav} serverId={route.serverId} />;
+  else if (route.name === 'messages') screen = <MessagesScreen nav={nav} />;
+  else if (route.name === 'settings') screen = <SettingsScreen nav={nav} />;
   else
     screen = (
       <TerminalScreen
@@ -118,7 +149,7 @@ export default function App() {
     <SafeAreaProvider>
       <StatusBar style="light" />
       {screen}
-      {banner ? (
+      {banner && !desktop ? (
         <SafeAreaView edges={['top']} style={styles.bannerWrap} pointerEvents="box-none">
           <Pressable
             accessibilityRole="button"

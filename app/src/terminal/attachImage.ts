@@ -5,10 +5,10 @@ import type * as ImagePickerModule from 'expo-image-picker';
 import type * as ImageManipulatorModule from 'expo-image-manipulator';
 
 /** Long edge in px. Claude downsizes larger images to this anyway. */
-const MAX_EDGE = 1568;
+export const MAX_EDGE = 1568;
 /** Base64 budget, under the server's 1 MiB input cap with room for the JSON around it. */
-const MAX_BASE64 = 1024 * 1024 - 8 * 1024;
-const QUALITIES = [0.8, 0.6, 0.4, 0.25];
+export const MAX_BASE64 = 1024 * 1024 - 8 * 1024;
+export const QUALITIES = [0.8, 0.6, 0.4, 0.25];
 
 /**
  * Whether this build has the picker and manipulator native code. Builds made

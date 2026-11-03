@@ -1,6 +1,4 @@
 import './src/polyfills';
-import { registerRootComponent } from 'expo';
+import { start } from './src/startup';
 
-import App from './App';
-
-registerRootComponent(App);
+start();

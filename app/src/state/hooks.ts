@@ -34,11 +34,45 @@ interface AgentsState {
   msg: AgentsMessage | null;
 }
 
+interface AgentsStore {
+  msg: AgentsMessage | null;
+  listeners: Set<(msg: AgentsMessage) => void>;
+  stop: (() => void) | null;
+}
+
+// A client keeps one agents watch; every screen showing its agents shares it.
+const agentStores = new WeakMap<GatewayClient, AgentsStore>();
+
+function watchAgentsShared(client: GatewayClient, cb: (msg: AgentsMessage) => void): () => void {
+  let store = agentStores.get(client);
+  if (!store) {
+    store = { msg: null, listeners: new Set(), stop: null };
+    agentStores.set(client, store);
+  }
+  const shared = store;
+  shared.listeners.add(cb);
+  if (shared.msg) cb(shared.msg);
+  if (!shared.stop) {
+    shared.stop = client.watchAgents((msg) => {
+      shared.msg = msg;
+      for (const listener of Array.from(shared.listeners)) listener(msg);
+    });
+  }
+  return () => {
+    shared.listeners.delete(cb);
+    if (shared.listeners.size === 0) {
+      shared.stop?.();
+      shared.stop = null;
+      shared.msg = null;
+    }
+  };
+}
+
 export function useAgents(client: GatewayClient | null): AgentsState {
   const [state, setState] = useState<AgentsState>({ rows: [], loaded: false, msg: null });
   useEffect(() => {
     if (!client) return;
-    return client.watchAgents((msg) => setState({ rows: buildAgentRows(msg), loaded: true, msg }));
+    return watchAgentsShared(client, (msg) => setState({ rows: buildAgentRows(msg), loaded: true, msg }));
   }, [client]);
   return state;
 }
