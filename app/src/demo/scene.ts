@@ -229,6 +229,11 @@ export class DemoPane {
     return this.lastRows.map(rowText);
   }
 
+  /** The rows on screen now, as text. */
+  screen(): string[] {
+    return this.lastRows.slice(-this.term.rows).map(rowText);
+  }
+
   private layout(cols: number): { rows: Row[]; cursor: { x: number; y: number; visible: boolean } } {
     if (this.def.kind === 'shell') return this.layoutShell(cols);
     const rows: Row[] = [...this.header(cols), []];
