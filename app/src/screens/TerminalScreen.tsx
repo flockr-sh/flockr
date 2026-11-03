@@ -23,6 +23,7 @@ import { DesktopKeyboard } from '../desktop/DesktopKeyboard';
 import { prepareImage } from '../desktop/pasteImage';
 import { PerfOverlay } from '../terminal/PerfOverlay';
 import { TextSheet } from '../terminal/TextSheet';
+import { DemoTag } from './DemoTag';
 import { BASE_FONT_SIZE, makeViewStats, TerminalLayout, TerminalView } from '../terminal/TerminalView';
 
 interface Props {
@@ -246,6 +247,7 @@ export function TerminalScreen({ nav, serverId, paneId, title, variant = 'phone'
               </Text>
             ) : null}
           </View>
+          <DemoTag serverId={serverId} />
           <View style={[desk.pill, live ? desk.pillLive : desk.pillOff]}>
             <View style={[desk.pillDot, { backgroundColor: live ? colors.ok : colors.warn }]} />
             <Text style={desk.pillText} numberOfLines={1}>
@@ -308,6 +310,7 @@ export function TerminalScreen({ nav, serverId, paneId, title, variant = 'phone'
               {lastError ? ` · ${lastError}` : ''}
             </Text>
           </View>
+          <DemoTag serverId={serverId} />
         </View>
         <View style={styles.toolbar}>
           <Tool

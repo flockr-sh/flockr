@@ -24,6 +24,8 @@ export interface StoredServer {
   machine?: string;
   /** The paired server whose flock this machine belongs to. */
   via?: string;
+  /** A made-up machine from demo mode. Kept in memory only, never stored. */
+  demo?: boolean;
 }
 
 export type RepairReason = 'token' | 'key' | 'legacy';
@@ -138,4 +140,16 @@ export async function deleteServer(serverId: string): Promise<void> {
   await deleteItem(itemKey(serverId));
   const ids = (await readIndex()).filter((x) => x !== serverId);
   await setItem(INDEX_KEY, JSON.stringify(ids));
+}
+
+const DEMO_KEY = 'flockr.demo';
+
+/** Whether demo mode was on when the app last ran. */
+export async function loadDemoFlag(): Promise<boolean> {
+  return (await getItem(DEMO_KEY)) === '1';
+}
+
+export async function saveDemoFlag(on: boolean): Promise<void> {
+  if (on) await setItem(DEMO_KEY, '1');
+  else await deleteItem(DEMO_KEY);
 }
