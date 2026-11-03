@@ -258,10 +258,11 @@ there.
 `npm run export:web` copies Skia's `canvaskit.wasm` into `public/` and
 exports the web build to `dist/`. When `app/dist/index.html` exists, building
 flockr (`cargo build`, `just build`) embeds `dist/` in the binary, and
-`[web] enabled = true` serves it with no `dir`. Release builds always embed
-it. `[web] dir` points the server at another build instead, for example while
-working on the app. A flockr built without `app/dist` has no web app; it
-still builds without Node. Cargo does not watch a missing `app/dist`, so
+`[web] enabled = true` serves it with no `dir`. Release binaries from GitHub
+carry the web app; builds from source include it only if `app/dist` was built
+first (`npm run export:web` in `app/`). `[web] dir` points the server at
+another build instead, for example while working on the app. A flockr built
+without `app/dist` has no web app; it still builds without Node. Cargo does not watch a missing `app/dist`, so
 `npm run export:web` touches `../build.rs` when it finishes; the next flockr
 build then embeds the new export.
 
