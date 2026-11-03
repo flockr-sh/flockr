@@ -65,6 +65,7 @@ mod test_timing;
 mod thread_spawn;
 mod ui;
 mod update;
+mod web_app;
 mod workspace;
 mod worktree;
 
@@ -588,8 +589,9 @@ const DEFAULT_CONFIG: &str = r##"# flockr configuration
 
 [web]
 # Serve the flockr web app (the phone app built for a browser) over plain
-# HTTP, like other local web UIs. Off by default. Build it with
-# `npm run export:web` in flockr-mobile and point `dir` at its dist folder.
+# HTTP, like other local web UIs. Off by default. Release builds of flockr
+# carry the web app, so `dir` can stay empty. Set `dir` to serve another
+# build instead (`npm run export:web` in app/ writes one to app/dist).
 # The app connects to the [mobile] gateway, so enable that too. Binds only to
 # the listed IP addresses; 0.0.0.0 and :: are rejected. All keys need a
 # server restart.

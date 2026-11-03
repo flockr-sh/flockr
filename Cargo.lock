@@ -756,6 +756,7 @@ dependencies = [
  "clap_complete",
  "crossterm",
  "ctrlc",
+ "flate2",
  "futures-util",
  "getrandom 0.3.4",
  "ghostty-vt",
