@@ -12,6 +12,7 @@ import { colors, statusColor, ui } from '../state/ui';
 import { byAttention, type AgentRow, type AgentStatus } from '../protocol';
 import { AgentCard } from './AgentsScreen';
 import { DemoTag } from './DemoTag';
+import { NeedsYouCard } from './NeedsYouCard';
 
 type Counts = Partial<Record<AgentStatus, number>>;
 
@@ -148,14 +149,30 @@ function MachineSection({
         </Text>
         <Text style={styles.chevron}>›</Text>
       </Pressable>
-      {sorted.map((row) => (
-        <AgentCard
-          key={row.agent.pane_id}
-          row={row}
-          onPress={() => open(row)}
-          detail={[row.workspaceLabel, row.branch].filter(Boolean).join(' · ')}
-        />
-      ))}
+      {sorted.map((row) => {
+        const card = (
+          <AgentCard
+            key={row.agent.pane_id}
+            row={row}
+            onPress={() => open(row)}
+            detail={[row.workspaceLabel, row.branch].filter(Boolean).join(' · ')}
+            note={row.status === 'blocked' ? 'Open to answer' : undefined}
+          />
+        );
+        return row.status === 'blocked' ? (
+          <NeedsYouCard
+            key={row.agent.pane_id}
+            row={row}
+            client={client}
+            serverId={server.server_id}
+            where={[server.name, row.workspaceLabel].filter(Boolean).join(' · ')}
+            onOpen={() => open(row)}
+            fallback={card}
+          />
+        ) : (
+          card
+        );
+      })}
       {connected && loaded && rows.length === 0 ? <Text style={styles.none}>No agents running.</Text> : null}
     </View>
   );
