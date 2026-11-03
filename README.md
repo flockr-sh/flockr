@@ -91,6 +91,8 @@ documentation.
   when one needs you. Encrypted end to end; no account.
 - **Web app**: the same app in a browser on your own network (`[web]`).
 
+The iPhone and web app's source is in [`app/`](app/).
+
 See the [docs](https://flockr.sh/docs) to set them up.
 
 ## What flockr adds to herdr

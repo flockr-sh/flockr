@@ -118,6 +118,26 @@ Client and server talk over a versioned endpoint protocol.
 - `src/integration/`: agent hook installers and assets.
 - `crates/ghostty-vt/`, `vendor/libghostty-vt/`: terminal emulation core.
 
+## app/
+
+Expo (React Native, TypeScript) app: the iPhone app and the web app, built
+from the same code. It has its own `package.json`, `package-lock.json`, and
+Node version (`app/.nvmrc`); there is no workspace tooling.
+
+```bash
+cd app
+npm ci
+npx tsc --noEmit
+npx jest
+npm run export:web   # web build in app/dist
+```
+
+- It talks to the server over `mobile.v2` (`docs/mobile/protocol.md`). Wire
+  fixtures in `tests/fixtures/` are shared with the Rust tests; edit them
+  there.
+- TestFlight builds are manual (`app/scripts/testflight.sh`). Apple account
+  ids come from env vars (`app/fastlane/Fastfile`); never commit them.
+
 ## Agent detection
 
 - Base rules on evidence: `flockr agent read <pane> --source detection --format text`
