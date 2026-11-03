@@ -9,6 +9,8 @@
 //! Files under `state_dir()/flock/`, written only by the server:
 //! - `inbox/<terminal>/<id>.json`: received messages per recipient terminal.
 //! - `pending/<id>.json`: messages waiting for a person to approve them.
+//! - `sent/<id>.json`: messages this machine's agents sent, until they
+//!   expire, so the replies to them need no approval.
 //! - `message-rules.json`: sender and recipient pairs a person always allows.
 //! - `messages.jsonl`: the audit log of every message event.
 
@@ -33,6 +35,7 @@ const AUDIT_MAX_BYTES: u64 = 8 * 1024 * 1024;
 const RULES_FILE: &str = "message-rules.json";
 const INBOX_DIR: &str = "inbox";
 const PENDING_DIR: &str = "pending";
+const SENT_DIR: &str = "sent";
 pub(crate) const SOCKET_FILE: &str = "flock.sock";
 
 pub(crate) fn socket_path() -> PathBuf {
@@ -254,6 +257,48 @@ pub(crate) fn take_pending(dir: &Path, id: &str) -> Option<Message> {
     Some(message)
 }
 
+/// Keeps a message this machine sent, and drops sent messages that expired.
+pub(crate) fn save_sent(dir: &Path, message: &Message, now: u64) -> io::Result<()> {
+    if !valid_id(&message.id) {
+        return Err(io::Error::other("invalid message ID"));
+    }
+    for item in fs::read_dir(dir.join(SENT_DIR))
+        .into_iter()
+        .flatten()
+        .flatten()
+    {
+        let expired = fs::read(item.path())
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<Message>(&bytes).ok())
+            .is_none_or(|sent| sent.expires_at <= now);
+        if expired {
+            let _ = fs::remove_file(item.path());
+        }
+    }
+    let bytes = serde_json::to_vec_pretty(message).map_err(io::Error::other)?;
+    atomic_write(
+        &dir.join(SENT_DIR).join(format!("{}.json", message.id)),
+        &bytes,
+    )
+}
+
+/// Whether `message` replies to one this machine sent: from the agent it went
+/// to, to the agent that sent it, in the same conversation.
+fn answers_sent(dir: &Path, message: &Message) -> bool {
+    let Some(id) = message.reply_to.as_deref().filter(|id| valid_id(id)) else {
+        return false;
+    };
+    let Some(sent) = fs::read(dir.join(SENT_DIR).join(format!("{id}.json")))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Message>(&bytes).ok())
+    else {
+        return false;
+    };
+    sent.conversation == message.conversation
+        && sent.to.same_agent(&message.from)
+        && sent.from.same_agent(&message.to)
+}
+
 /// A sender and recipient pair a person always allows.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Rule {
@@ -302,6 +347,9 @@ pub(crate) fn allowed(dir: &Path, message: &Message) -> bool {
         return true;
     }
     if message.from.repo.is_some() && message.from.repo == message.to.repo {
+        return true;
+    }
+    if answers_sent(dir, message) {
         return true;
     }
     rule_for(message).is_some_and(|rule| load_rules(dir).allow.contains(&rule))
@@ -456,6 +504,49 @@ pub(crate) mod tests {
             !allowed(&dir, &unrepoed),
             "no repo on either side is not a match"
         );
+    }
+
+    #[test]
+    fn a_reply_to_a_sent_message_needs_no_approval() {
+        let dir = crate::mobile::store::tests::temp_dir("flock-message-replies");
+        let sent = message(
+            "m1",
+            party("m_a", Some("x"), Some("github.com/org/one")),
+            party("m_b", Some("y"), Some("github.com/org/two")),
+        );
+        save_sent(&dir, &sent, 100).unwrap();
+        let reply = |id: &str, from: Party, to: Party| Message {
+            reply_to: Some("m1".into()),
+            conversation: sent.conversation.clone(),
+            ..message(id, from, to)
+        };
+        assert!(allowed(
+            &dir,
+            &reply("r1", sent.to.clone(), sent.from.clone())
+        ));
+        let stranger = party("m_b", Some("z"), None);
+        assert!(
+            !allowed(&dir, &reply("r2", stranger, sent.from.clone())),
+            "only the agent it went to may answer"
+        );
+        let elsewhere = party("m_a", Some("w"), None);
+        assert!(
+            !allowed(&dir, &reply("r3", sent.to.clone(), elsewhere)),
+            "the answer goes to the agent that sent it"
+        );
+        let unsent = Message {
+            reply_to: Some("m9".into()),
+            ..reply("r4", sent.to.clone(), sent.from.clone())
+        };
+        assert!(!allowed(&dir, &unsent));
+
+        // Expired sent messages are dropped when the next one is saved.
+        let later = message("m2", sent.from.clone(), sent.to.clone());
+        save_sent(&dir, &later, sent.expires_at).unwrap();
+        assert!(!allowed(
+            &dir,
+            &reply("r5", sent.to.clone(), sent.from.clone())
+        ));
     }
 
     #[test]

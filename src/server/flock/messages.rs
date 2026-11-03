@@ -293,6 +293,9 @@ impl Messages {
             }
         };
         message::audit(&self.dir, "sent", &message, Some(&status));
+        if let Err(err) = message::save_sent(&self.dir, &message, now) {
+            tracing::warn!(err = %err, "could not keep the sent message");
+        }
         let mut result = json!({
             "id": message.id,
             "conversation": message.conversation,
