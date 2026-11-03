@@ -1,0 +1,25 @@
+[
+  {
+    "to": "ExponentPushToken[xxxxxxxxxxxxxxxxxxxxxx]",
+    "title": "Claude is blocked",
+    "body": "flockr › mobile · dk-desktop",
+    "sound": "default",
+    "priority": "high",
+    "channelId": "agents",
+    "interruptionLevel": "time-sensitive",
+    "ttl": 3600,
+    "data": {
+      "type": "agent_status",
+      "server_id": "Xb3k9QmT0aLz7Rwe2YvN1c",
+      "server_name": "dk-desktop",
+      "status": "blocked",
+      "agent": "Claude",
+      "workspace_id": "w_1",
+      "workspace": "flockr",
+      "tab_id": "tab_2",
+      "tab": "mobile",
+      "pane_id": "p_3",
+      "terminal_id": "t_5"
+    }
+  }
+]

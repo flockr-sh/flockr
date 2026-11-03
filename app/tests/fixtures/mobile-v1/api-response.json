@@ -1,0 +1,11 @@
+{
+  "t": "api.response",
+  "id": "r1",
+  "response": {
+    "id": "r1",
+    "result": {
+      "type": "agent_list",
+      "agents": []
+    }
+  }
+}
