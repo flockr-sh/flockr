@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+- The web app ships inside flockr. `[web] enabled = true` serves it with no
+  separate build; `[web] dir` is optional and serves another build instead.
+- The phone and web app's source now lives in `app/` of this repo.
+
 ## [1.2.0] - 2026-11-03
 
 ### Added

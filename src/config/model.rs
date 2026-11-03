@@ -1536,8 +1536,8 @@ pub struct WebConfig {
     pub listen: Vec<String>,
     /// Port for `listen` entries without one. Default: 47393.
     pub port: u16,
-    /// Folder with the built web app (`npm run export:web` in flockr-mobile
-    /// writes it to `dist/`).
+    /// Folder with a built web app to serve instead of the one built into
+    /// the binary (`npm run export:web` in `app/` writes it to `app/dist`).
     pub dir: Option<String>,
 }
 
@@ -1570,14 +1570,25 @@ impl WebConfig {
         (addrs, diagnostics)
     }
 
+    /// `dir`, trimmed, when it is set and not empty.
+    pub fn dir(&self) -> Option<&str> {
+        self.dir
+            .as_deref()
+            .map(str::trim)
+            .filter(|dir| !dir.is_empty())
+    }
+
     /// Config warnings for `[web]`.
     pub fn diagnostics(&self) -> Vec<String> {
         let (addrs, mut diagnostics) = self.listen_addrs();
         if self.enabled && addrs.is_empty() {
             diagnostics.push("web.enabled is true but web.listen has no usable address".to_owned());
         }
-        if self.enabled && self.dir.as_deref().is_none_or(|dir| dir.trim().is_empty()) {
-            diagnostics.push("web.enabled is true but web.dir is not set".to_owned());
+        if self.enabled && self.dir().is_none() && !crate::web_app::is_embedded() {
+            diagnostics.push(
+                "web.enabled is true but web.dir is not set and this flockr has no built-in web app"
+                    .to_owned(),
+            );
         }
         diagnostics
     }
@@ -2009,7 +2020,7 @@ alert_prompt_text = false
     }
 
     #[test]
-    fn web_config_parses_and_needs_a_dir_and_address() {
+    fn web_config_parses_and_needs_an_app_and_address() {
         let default_config = Config::default();
         assert!(!default_config.web.enabled);
         assert_eq!(default_config.web.port, DEFAULT_WEB_PORT);
@@ -2023,7 +2034,14 @@ alert_prompt_text = false
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(config.web.dir.as_deref(), Some("/srv/flockr-web"));
         let config: Config = toml::from_str("[web]\nenabled = true\n").unwrap();
-        assert_eq!(config.web.diagnostics().len(), 2);
+        assert_eq!(config.web.dir(), None);
+        // No address, plus no app when the binary has none built in.
+        let expected = if crate::web_app::is_embedded() { 1 } else { 2 };
+        assert_eq!(config.web.diagnostics().len(), expected);
+        let config: Config =
+            toml::from_str("[web]\nenabled = true\nlisten = [\"10.0.0.1\"]\ndir = \" \"\n")
+                .unwrap();
+        assert_eq!(config.web.dir(), None);
     }
 
     #[test]

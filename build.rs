@@ -1,6 +1,83 @@
+use std::io::Write as _;
+use std::path::{Path, PathBuf};
+
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-env-changed=FLOCKR_BUILD_CHANNEL");
     println!("cargo:rerun-if-env-changed=FLOCKR_BUILD_ID");
     println!("cargo:rerun-if-env-changed=FLOCKR_BUILD_COMMIT");
+    embed_web_app();
+}
+
+/// Packs the built web app into `$OUT_DIR/web-app.zlib` for `src/web_app.rs`.
+///
+/// The folder is `FLOCKR_WEB_DIST` when set, else `app/dist`
+/// (`npm run export:web`). Without an `index.html` there the file is empty
+/// and the binary has no web app, so builds work without Node.
+///
+/// Format before zlib: for each file, sorted by path, a u32 LE path length,
+/// the `/`-separated relative path, a u64 LE data length, and the data.
+///
+/// A missing folder is not watched: Cargo reruns build scripts on every
+/// build while a watched path is missing. After the first web export, touch
+/// build.rs (or set FLOCKR_WEB_DIST) so the next build picks it up.
+fn embed_web_app() {
+    println!("cargo:rerun-if-env-changed=FLOCKR_WEB_DIST");
+    let out = PathBuf::from(std::env::var_os("OUT_DIR").expect("cargo sets OUT_DIR"))
+        .join("web-app.zlib");
+    let dist = match std::env::var_os("FLOCKR_WEB_DIST").filter(|dir| !dir.is_empty()) {
+        Some(dir) => PathBuf::from(dir),
+        None => Path::new(env!("CARGO_MANIFEST_DIR")).join("app/dist"),
+    };
+    if !dist.join("index.html").is_file() {
+        if std::env::var_os("FLOCKR_WEB_DIST").is_some_and(|dir| !dir.is_empty()) {
+            panic!(
+                "FLOCKR_WEB_DIST={} has no index.html; build the web app first",
+                dist.display()
+            );
+        }
+        std::fs::write(&out, []).expect("write empty web app archive");
+        return;
+    }
+    println!("cargo:rerun-if-changed={}", dist.display());
+
+    let mut files = Vec::new();
+    collect_files(&dist, &dist, &mut files);
+    files.sort();
+    let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::best());
+    for (name, path) in &files {
+        let data =
+            std::fs::read(path).unwrap_or_else(|err| panic!("read {}: {err}", path.display()));
+        let name_len = u32::try_from(name.len()).expect("web app path fits in u32");
+        let data_len = u64::try_from(data.len()).expect("web app file fits in u64");
+        encoder
+            .write_all(&name_len.to_le_bytes())
+            .and_then(|()| encoder.write_all(name.as_bytes()))
+            .and_then(|()| encoder.write_all(&data_len.to_le_bytes()))
+            .and_then(|()| encoder.write_all(&data))
+            .expect("compress web app");
+    }
+    let archive = encoder.finish().expect("compress web app");
+    std::fs::write(&out, archive).expect("write web app archive");
+}
+
+fn collect_files(root: &Path, dir: &Path, files: &mut Vec<(String, PathBuf)>) {
+    let entries =
+        std::fs::read_dir(dir).unwrap_or_else(|err| panic!("read {}: {err}", dir.display()));
+    for entry in entries {
+        let path = entry.expect("read web app folder entry").path();
+        if path.is_dir() {
+            collect_files(root, &path, files);
+        } else if path.is_file() {
+            let relative = path
+                .strip_prefix(root)
+                .expect("file is under the web app folder");
+            let name = relative
+                .components()
+                .map(|part| part.as_os_str().to_str().expect("web app paths are UTF-8"))
+                .collect::<Vec<_>>()
+                .join("/");
+            files.push((name, path));
+        }
+    }
 }

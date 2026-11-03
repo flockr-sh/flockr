@@ -3,7 +3,8 @@
 The flockr phone and web app, in `app/` of the flockr repo. Watch agents,
 read their panes and type into them from an iPhone or a browser. Expo SDK 58
 + TypeScript. Android uses the same code. The web build (`npm run export:web`)
-is the flockr web app.
+is the flockr web app; flockr's build embeds it in the binary (see "Web app"
+below).
 
 The wire contract is `mobile.v2`: the messages in
 [`docs/mobile/protocol.md`](../docs/mobile/protocol.md), carried inside a
@@ -235,6 +236,17 @@ It is run by hand. Export `ASC_KEY_ID`, `ASC_ISSUER_ID`, `APPLE_TEAM_ID`, and
 Connect `.p8` key, signing keychain, and keychain password stay in
 `~/.flockr-build` on the Mac. `scripts/asc.sh` runs on the Mac and needs
 `ASC_KEY_ID` and `ASC_ISSUER_ID` there.
+
+## Web app
+
+`npm run export:web` copies Skia's `canvaskit.wasm` into `public/` and
+exports the web build to `dist/`. When `app/dist/index.html` exists, building
+flockr (`cargo build`, `just build`) embeds `dist/` in the binary, and
+`[web] enabled = true` serves it with no `dir`. Release builds always embed
+it. `[web] dir` points the server at another build instead, for example while
+working on the app. A flockr built without `app/dist` has no web app; it
+still builds without Node. Cargo does not watch a missing `app/dist`, so
+after the first export touch `build.rs` once before building flockr.
 
 ## What is stubbed or missing
 

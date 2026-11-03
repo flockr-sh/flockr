@@ -132,6 +132,11 @@ npx jest
 npm run export:web   # web build in app/dist
 ```
 
+- The web build is embedded in the flockr binary: `build.rs` packs
+  `app/dist` (or `FLOCKR_WEB_DIST`) when it has an `index.html`, and
+  `src/server/web.rs` serves it when `[web] dir` is unset. Without a web
+  build the binary has no web app; Rust builds never need Node. After the
+  first `npm run export:web`, touch `build.rs` so Cargo picks it up.
 - It talks to the server over `mobile.v2` (`docs/mobile/protocol.md`). Wire
   fixtures in `tests/fixtures/` are shared with the Rust tests; edit them
   there.
