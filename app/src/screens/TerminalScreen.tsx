@@ -402,7 +402,7 @@ const desk = StyleSheet.create({
     borderBottomColor: '#1e2029',
   },
   title: { color: colors.text, fontSize: 15.5, fontWeight: '650' as never },
-  crumb: { color: '#6f7587', fontSize: 12.5, marginTop: 2 },
+  crumb: { color: '#8a90a2', fontSize: 12.5, marginTop: 2 },
   pill: {
     flexDirection: 'row',
     alignItems: 'center',

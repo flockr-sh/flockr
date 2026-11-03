@@ -114,10 +114,10 @@ const styles = StyleSheet.create({
   section: { color: colors.text, fontSize: 15, fontWeight: '700' },
   lead: { color: colors.dim, fontSize: 13.5, lineHeight: 19 },
   card: {
-    backgroundColor: '#14161d',
+    backgroundColor: '#171a22',
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#23262f',
+    borderColor: '#2a2e3b',
     padding: 14,
     gap: 10,
   },

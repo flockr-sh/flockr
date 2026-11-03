@@ -30,10 +30,10 @@ interface Selection {
 
 const SIDEBAR = {
   bg: '#0b0c10',
-  border: '#1b1d25',
-  hover: '#14161d',
-  active: '#1c1f29',
-  dim: '#6f7587',
+  border: '#262a35',
+  hover: '#171920',
+  active: '#1f2330',
+  dim: '#8a90a2',
 };
 
 export function DesktopShell() {
@@ -578,7 +578,7 @@ function AgentItem({ row, active, onPress }: { row: AgentRow; active: boolean; o
     >
       <StatusDot status={row.status} />
       <View style={{ flex: 1, minWidth: 0 }}>
-        <Text style={[side.itemName, active && { color: colors.text }]} numberOfLines={1}>
+        <Text style={[side.itemName, active && { color: colors.accent }]} numberOfLines={1}>
           {row.name}
         </Text>
         {activity ? (
@@ -731,10 +731,10 @@ const toast = StyleSheet.create({
   cardHover: { backgroundColor: '#20232b' },
   dot: { width: 8, height: 8, borderRadius: 4 },
   title: { color: colors.text, fontSize: 13.5, fontWeight: '600' },
-  body: { color: '#7d8394', fontSize: 12.5, marginTop: 2 },
+  body: { color: '#8a90a2', fontSize: 12.5, marginTop: 2 },
   close: { width: 26, height: 26, borderRadius: 6, alignItems: 'center', justifyContent: 'center' },
   closeHover: { backgroundColor: '#2a2d37' },
-  closeText: { color: '#7d8394', fontSize: 17, lineHeight: 18 },
+  closeText: { color: '#8a90a2', fontSize: 17, lineHeight: 18 },
 });
 
 const shell = StyleSheet.create({
@@ -747,7 +747,7 @@ const shell = StyleSheet.create({
     borderRadius: 16,
     overflow: 'hidden',
     borderWidth: 1,
-    borderColor: '#23262f',
+    borderColor: '#2a2e3b',
   },
 });
 
@@ -796,8 +796,8 @@ const side = StyleSheet.create({
     borderRadius: 8,
   },
   workspaceName: { color: '#c9cdd8', fontSize: 13.5, fontWeight: '600' },
-  workspaceNumber: { color: '#5d6375', fontWeight: '600' },
-  branch: { color: '#5d6375', fontSize: 11.5, marginTop: 1 },
+  workspaceNumber: { color: '#8a90a2', fontWeight: '600' },
+  branch: { color: '#8a90a2', fontSize: 11.5, marginTop: 1 },
   wsChildren: { paddingLeft: 16, gap: 1, marginBottom: 4 },
   shellToggle: {
     flexDirection: 'row',
@@ -807,7 +807,7 @@ const side = StyleSheet.create({
     paddingVertical: 5,
     borderRadius: 8,
   },
-  shellToggleText: { flex: 1, color: '#6f7587', fontSize: 12.5 },
+  shellToggleText: { flex: 1, color: '#8a90a2', fontSize: 12.5 },
   item: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -823,7 +823,7 @@ const side = StyleSheet.create({
   itemSub: { color: SIDEBAR.dim, fontSize: 11.5, marginTop: 2 },
   none: { color: SIDEBAR.dim, fontSize: 12, paddingHorizontal: 10, paddingVertical: 6 },
   sub: {
-    color: '#555b6c',
+    color: '#8a90a2',
     fontSize: 10.5,
     fontWeight: '700',
     letterSpacing: 0.8,
@@ -832,7 +832,7 @@ const side = StyleSheet.create({
     paddingTop: 10,
     paddingBottom: 4,
   },
-  prompt: { color: '#555b6c', fontSize: 11, fontWeight: '700', width: 12 },
+  prompt: { color: '#8a90a2', fontSize: 11, fontWeight: '700', width: 12 },
   terminalName: { flex: 1, fontSize: 13 },
   footer: {
     flexDirection: 'row',
@@ -842,7 +842,7 @@ const side = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: SIDEBAR.border,
   },
-  footerText: { color: '#4b5060', fontSize: 11.5, flex: 1 },
+  footerText: { color: '#8a90a2', fontSize: 11.5, flex: 1 },
   footerButton: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 7 },
   footerButtonText: { color: '#aab0c0', fontSize: 12.5, fontWeight: '600' },
   nav: { paddingHorizontal: 8, paddingBottom: 6 },
@@ -890,17 +890,17 @@ const over = StyleSheet.create({
   card: {
     flexGrow: 1,
     flexBasis: 420,
-    backgroundColor: '#14161d',
+    backgroundColor: '#171a22',
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#20232d',
+    borderColor: '#2a2e3b',
     padding: 16,
     gap: 4,
   },
   cardHead: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
   cardTitle: { color: colors.text, fontSize: 15, fontWeight: '650' as never, flex: 1 },
-  cardMeta: { color: '#6f7587', fontSize: 12 },
-  cardEmpty: { color: '#6f7587', fontSize: 13, paddingVertical: 6 },
+  cardMeta: { color: '#8a90a2', fontSize: 12 },
+  cardEmpty: { color: '#8a90a2', fontSize: 13, paddingVertical: 6 },
   agent: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -911,6 +911,6 @@ const over = StyleSheet.create({
   },
   agentHover: { backgroundColor: '#1b1e27' },
   agentName: { color: '#d6d9e2', fontSize: 13.5, fontWeight: '600', width: 150 },
-  agentWhere: { color: '#6f7587', fontSize: 12.5, flex: 1 },
+  agentWhere: { color: '#8a90a2', fontSize: 12.5, flex: 1 },
   badge: { fontSize: 11.5, fontWeight: '600', textTransform: 'capitalize' },
 });
