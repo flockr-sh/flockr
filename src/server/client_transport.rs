@@ -170,7 +170,11 @@ impl ClientWriter {
     ) -> Self {
         let queue = ClientWriterQueue::new();
         let drain = queue.clone();
-        let control_writer = ClientControlWriter::queue(queue.clone());
+        // Control and plain render frames reach the receivers before `send`
+        // returns, so tests can read them with `try_recv` without racing a
+        // forwarding thread. Only ordered render frames go through the queue.
+        let mut control_writer = ClientControlWriter::queue(queue.clone());
+        control_writer.test_control = Some(control);
         let mut render_writer = ClientRenderWriter::queue(queue);
         render_writer.test_render = Some(render.clone());
         let writer = Self {
@@ -179,11 +183,10 @@ impl ClientWriter {
         };
         std::thread::spawn(move || {
             while let Some(item) = drain.recv() {
-                let sent = match item {
-                    ClientWriteItem::Control(data) => control.send(data).is_ok(),
-                    ClientWriteItem::Render(data) => render.send(data).is_ok(),
+                let ClientWriteItem::Render(data) = item else {
+                    continue;
                 };
-                if !sent {
+                if render.send(data).is_err() {
                     break;
                 }
             }
@@ -241,7 +244,7 @@ impl ClientWriter {
 pub(crate) struct ClientControlWriter {
     queue: Arc<ClientWriterQueue>,
     #[cfg(test)]
-    test_render: Option<std::sync::mpsc::SyncSender<Vec<u8>>>,
+    test_control: Option<std::sync::mpsc::Sender<Vec<u8>>>,
 }
 
 #[derive(Debug)]
@@ -252,14 +255,14 @@ pub(crate) struct ClientRenderWriter {
 }
 
 macro_rules! writer_handle {
-    ($type:ty) => {
+    ($type:ty, $test_sink:ident) => {
         impl Clone for $type {
             fn clone(&self) -> Self {
                 self.queue.add_sender();
                 Self {
                     queue: self.queue.clone(),
                     #[cfg(test)]
-                    test_render: self.test_render.clone(),
+                    $test_sink: self.$test_sink.clone(),
                 }
             }
         }
@@ -270,8 +273,8 @@ macro_rules! writer_handle {
         }
     };
 }
-writer_handle!(ClientControlWriter);
-writer_handle!(ClientRenderWriter);
+writer_handle!(ClientControlWriter, test_control);
+writer_handle!(ClientRenderWriter, test_render);
 
 impl ClientControlWriter {
     fn queue(queue: Arc<ClientWriterQueue>) -> Self {
@@ -279,11 +282,15 @@ impl ClientControlWriter {
         Self {
             queue,
             #[cfg(test)]
-            test_render: None,
+            test_control: None,
         }
     }
 
     pub(crate) fn send(&self, data: Vec<u8>) -> Result<(), SendError<Vec<u8>>> {
+        #[cfg(test)]
+        if let Some(sender) = &self.test_control {
+            return sender.send(data);
+        }
         self.queue.send_control(data)
     }
 }
