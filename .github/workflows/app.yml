@@ -1,0 +1,57 @@
+name: App
+
+# The Expo app in app/ (iPhone and web). TestFlight builds stay manual
+# (app/scripts/testflight.sh).
+on:
+  push:
+    branches: [master]
+    paths:
+      - "app/**"
+      - "tests/fixtures/prompts/**"
+      - "tests/fixtures/mobile-v2/**"
+      - ".github/workflows/app.yml"
+  pull_request:
+    paths:
+      - "app/**"
+      - "tests/fixtures/prompts/**"
+      - "tests/fixtures/mobile-v2/**"
+      - ".github/workflows/app.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: app-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: check (app)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+
+      - name: Install Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: app/.nvmrc
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Install packages
+        run: npm ci --no-audit --no-fund
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Test
+        run: npx jest
+
+      - name: Build the web app
+        run: npm run export:web
