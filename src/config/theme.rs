@@ -2,9 +2,11 @@ use serde::Deserialize;
 use tracing::warn;
 
 pub const THEME_NAMES: &[&str] = &[
+    "terminal",
+    "flockr",
+    "flockr-light",
     "catppuccin",
     "catppuccin-latte",
-    "terminal",
     "tokyo-night",
     "tokyo-night-day",
     "dracula",
@@ -24,9 +26,11 @@ pub const THEME_NAMES: &[&str] = &[
 
 pub(crate) fn canonical_theme_name(name: &str) -> Option<&'static str> {
     match name.to_lowercase().replace([' ', '_'], "-").as_str() {
+        "terminal" => Some("terminal"),
+        "flockr" | "flockr-dark" => Some("flockr"),
+        "flockr-light" => Some("flockr-light"),
         "catppuccin" | "catppuccin-mocha" => Some("catppuccin"),
         "catppuccin-latte" | "latte" | "light" => Some("catppuccin-latte"),
-        "terminal" => Some("terminal"),
         "tokyo-night" | "tokyonight" => Some("tokyo-night"),
         "tokyo-night-day" | "tokyo-day" | "tokyonight-day" => Some("tokyo-night-day"),
         "dracula" => Some("dracula"),
@@ -50,7 +54,7 @@ pub(crate) fn canonical_theme_name(name: &str) -> Option<&'static str> {
 ///
 /// ```toml
 /// [theme]
-/// name = "tokyo-night"  # built-in: catppuccin, terminal, dracula, nord, etc.
+/// name = "tokyo-night"  # built-in: terminal, flockr, catppuccin, dracula, etc.
 ///
 /// [theme.custom]        # override individual tokens on top of the base
 /// accent = "#f5c2e7"
@@ -59,7 +63,7 @@ pub(crate) fn canonical_theme_name(name: &str) -> Option<&'static str> {
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct ThemeConfig {
-    /// Built-in theme name. Default: "catppuccin".
+    /// Built-in theme name. Default: "terminal".
     pub name: Option<String>,
     /// Follow host terminal light/dark appearance and switch between theme names.
     pub auto_switch: bool,
@@ -75,13 +79,9 @@ impl ThemeConfig {
     pub(crate) fn diagnostics(&self) -> Vec<String> {
         let valid = THEME_NAMES.join(", ");
         [
-            ("theme.name", self.name.as_deref(), "catppuccin"),
-            ("theme.dark_name", self.dark_name.as_deref(), "catppuccin"),
-            (
-                "theme.light_name",
-                self.light_name.as_deref(),
-                "catppuccin-latte",
-            ),
+            ("theme.name", self.name.as_deref(), "terminal"),
+            ("theme.dark_name", self.dark_name.as_deref(), "terminal"),
+            ("theme.light_name", self.light_name.as_deref(), "terminal"),
         ]
         .into_iter()
         .filter_map(|(field, value, fallback)| {
@@ -248,15 +248,21 @@ light_name = "lattee"
         let diagnostics = config.theme.diagnostics();
         assert_eq!(diagnostics.len(), 3);
         assert!(diagnostics[0].contains("theme.name = \"catppucin\""));
-        assert!(diagnostics[0].contains("using \"catppuccin\""));
+        assert!(diagnostics[0].contains("using \"terminal\""));
         assert!(diagnostics[1].contains("theme.dark_name = \"tokio-night\""));
         assert!(diagnostics[2].contains("theme.light_name = \"lattee\""));
-        assert!(diagnostics[2].contains("using \"catppuccin-latte\""));
+        assert!(diagnostics[2].contains("using \"terminal\""));
     }
 
     #[test]
     fn theme_name_aliases_are_valid() {
-        for name in ["catppuccin-mocha", "tokyonight", "gruvbox-dark", "dawn"] {
+        for name in [
+            "catppuccin-mocha",
+            "tokyonight",
+            "gruvbox-dark",
+            "dawn",
+            "flockr-dark",
+        ] {
             assert!(canonical_theme_name(name).is_some(), "alias: {name}");
         }
     }

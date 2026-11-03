@@ -133,6 +133,12 @@ fn theme_value(name: Option<&str>, default: &str) -> toml::Value {
     toml::Value::String(name.unwrap_or(default).to_owned())
 }
 
+/// The dark and light themes the runtime uses when none is set: the
+/// siblings of the manual theme.
+fn default_theme_names(c: &Config) -> (String, String) {
+    crate::app::sibling_theme_names(c.theme.name.as_deref().unwrap_or("terminal"))
+}
+
 use ClientSettingsSection::{Alerts, Appearance, Behavior, Session, Sidebar};
 use SettingValue::{Int, Str};
 
@@ -144,7 +150,7 @@ static ROWS: &[SettingRow] = &[
         label: "theme",
         help: "Colors for flockr's own UI. Not used while following light/dark.",
         choices: SettingChoices::Themes,
-        current: |c| theme_value(c.theme.name.as_deref(), "catppuccin"),
+        current: |c| theme_value(c.theme.name.as_deref(), "terminal"),
         visible: |c| !c.theme.auto_switch,
     },
     SettingRow {
@@ -164,7 +170,7 @@ static ROWS: &[SettingRow] = &[
         label: "dark theme",
         help: "Theme used while the terminal is dark.",
         choices: SettingChoices::Themes,
-        current: |c| theme_value(c.theme.dark_name.as_deref(), "catppuccin"),
+        current: |c| theme_value(c.theme.dark_name.as_deref(), &default_theme_names(c).0),
         visible: |c| c.theme.auto_switch,
     },
     SettingRow {
@@ -174,7 +180,7 @@ static ROWS: &[SettingRow] = &[
         label: "light theme",
         help: "Theme used while the terminal is light.",
         choices: SettingChoices::Themes,
-        current: |c| theme_value(c.theme.light_name.as_deref(), "catppuccin-latte"),
+        current: |c| theme_value(c.theme.light_name.as_deref(), &default_theme_names(c).1),
         visible: |c| c.theme.auto_switch,
     },
     SettingRow {
@@ -707,6 +713,27 @@ mod tests {
                 "light_name",
                 "status_indicators"
             ]
+        );
+    }
+
+    #[test]
+    fn unset_light_and_dark_themes_show_the_runtime_defaults() {
+        let shown = |toml: &str| {
+            let config: Config = toml::from_str(toml).unwrap();
+            ["dark_name", "light_name"].map(|key| {
+                ROWS.iter()
+                    .find(|row| row.key == key)
+                    .unwrap()
+                    .current_label(&config)
+            })
+        };
+        assert_eq!(
+            shown("[theme]\nauto_switch = true\n"),
+            ["terminal", "terminal"]
+        );
+        assert_eq!(
+            shown("[theme]\nname = \"flockr\"\nauto_switch = true\n"),
+            ["flockr", "flockr-light"]
         );
     }
 }
