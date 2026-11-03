@@ -11,6 +11,7 @@ import { repairReason, repairShort, StoredServer } from '../state/storage';
 import { colors, statusColor, ui } from '../state/ui';
 import { byAttention, type AgentRow, type AgentStatus } from '../protocol';
 import { AgentCard } from './AgentsScreen';
+import { DemoTag } from './DemoTag';
 
 type Counts = Partial<Record<AgentStatus, number>>;
 
@@ -53,6 +54,16 @@ export function ServersScreen({ nav, pushNote }: { nav: Nav; pushNote: string | 
             <Text style={ui.text}>No servers yet.</Text>
             <Text style={[ui.sub, { marginTop: 8, textAlign: 'center' }]}>
               On your computer run `flockr mobile pair`, then tap Pair and scan the QR code.
+            </Text>
+            <Pressable
+              accessibilityRole="button"
+              style={[ui.button, { marginTop: 20 }]}
+              onPress={() => void connections.startDemo()}
+            >
+              <Text style={ui.buttonText}>Try the demo</Text>
+            </Pressable>
+            <Text style={[ui.sub, { marginTop: 8, textAlign: 'center' }]}>
+              Two made-up machines with agents, so you can look around without a server.
             </Text>
           </View>
         ) : (
@@ -131,6 +142,7 @@ function MachineSection({
         <Text style={styles.machineName} numberOfLines={1}>
           {server.name}
         </Text>
+        <DemoTag show={!!server.demo} />
         <Text style={styles.machineMeta} numberOfLines={1}>
           {meta}
         </Text>

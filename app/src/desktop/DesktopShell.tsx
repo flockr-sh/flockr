@@ -18,6 +18,7 @@ import {
 } from '../protocol';
 import { MessagesList } from '../screens/MessagesScreen';
 import { PairScreen } from '../screens/PairScreen';
+import { DemoTag } from '../screens/DemoTag';
 import { SettingsList } from '../screens/SettingsScreen';
 import { TerminalScreen } from '../screens/TerminalScreen';
 import { useWaitingMessages } from '../state/messages';
@@ -413,9 +414,12 @@ function MachineGroup({
             <Text style={[side.chevron, open && side.chevronOpen]}>›</Text>
             <View style={[side.connDot, { backgroundColor: repair ? colors.danger : connColor(status) }]} />
             <View style={{ flex: 1, minWidth: 0 }}>
-              <Text style={side.machineName} numberOfLines={1}>
-                {server.name}
-              </Text>
+              <View style={side.nameLine}>
+                <Text style={side.machineName} numberOfLines={1}>
+                  {server.name}
+                </Text>
+                <DemoTag show={!!server.demo} />
+              </View>
               <Text style={side.machineSub} numberOfLines={1}>
                 {repair ? repairShort(repair) : status.state === 'open' ? machineLabel(server) : statusText(status)}
               </Text>
@@ -631,6 +635,14 @@ function Overview({
         <Pressable accessibilityRole="button" onPress={onPair} style={over.cta}>
           <Text style={over.ctaText}>Pair a server</Text>
         </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => void connections.startDemo()}
+          style={(state) => [over.demo, (state as { hovered?: boolean }).hovered && over.demoHover]}
+        >
+          <Text style={over.demoText}>Try the demo</Text>
+        </Pressable>
+        <Text style={over.demoNote}>Two made-up machines with agents, so you can look around without a server.</Text>
       </View>
     );
   }
@@ -675,6 +687,7 @@ function MachineCard({ server, onSelect }: { server: StoredServer; onSelect: (s:
         <Text style={over.cardTitle} numberOfLines={1}>
           {server.name}
         </Text>
+        <DemoTag show={!!server.demo} />
         <Text style={over.cardMeta}>
           {repair ? repairShort(repair) : `${rows.length} ${rows.length === 1 ? 'agent' : 'agents'}`}
         </Text>
@@ -773,7 +786,8 @@ const side = StyleSheet.create({
   chevron: { color: SIDEBAR.dim, fontSize: 15, width: 10, textAlign: 'center', lineHeight: 15 },
   chevronOpen: { transform: [{ rotate: '90deg' }] },
   connDot: { width: 7, height: 7, borderRadius: 4 },
-  machineName: { color: '#d6d9e2', fontSize: 13.5, fontWeight: '600' },
+  machineName: { color: '#d6d9e2', fontSize: 13.5, fontWeight: '600', flexShrink: 1 },
+  nameLine: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   machineSub: { color: SIDEBAR.dim, fontSize: 11.5, marginTop: 1 },
   more: { width: 24, height: 22, borderRadius: 6, alignItems: 'center', justifyContent: 'center' },
   moreText: { color: '#aab0c0', fontSize: 15, lineHeight: 16 },
@@ -872,6 +886,17 @@ const over = StyleSheet.create({
   lead: { color: '#8a90a2', fontSize: 15, marginTop: 8, marginBottom: 28, textAlign: 'left' },
   cta: { marginTop: 4, backgroundColor: colors.text, borderRadius: 10, paddingHorizontal: 18, paddingVertical: 10 },
   ctaText: { color: '#0b0d12', fontWeight: '700', fontSize: 14 },
+  demo: {
+    marginTop: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingHorizontal: 18,
+    paddingVertical: 9,
+  },
+  demoHover: { backgroundColor: colors.panelHi },
+  demoText: { color: colors.text, fontWeight: '600', fontSize: 14 },
+  demoNote: { color: colors.dim, fontSize: 12.5, marginTop: 8 },
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 16 },
   waiting: {
     flexDirection: 'row',
