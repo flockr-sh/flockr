@@ -19,7 +19,8 @@ module.exports = {
     runtimeVersion: { policy: 'appVersion' },
     ios: {
       bundleIdentifier: IS_DEV ? 'sh.flockr.app.dev' : 'sh.flockr.app',
-      supportsTablet: true,
+      // iPads run the iPhone layout until the app has one built for tablets.
+      supportsTablet: false,
       infoPlist: {
         ITSAppUsesNonExemptEncryption: false,
         // mobile.v2 is plain ws:// (no TLS); the payload is Noise encrypted
