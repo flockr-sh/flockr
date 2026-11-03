@@ -29,15 +29,21 @@ export type AnswerResult = 'sent' | 'changed' | 'not-blocked';
 /**
  * Send `option`'s digit to the agent, but only if it is still blocked and its
  * screen still shows the same prompt with the same option under that number.
+ * `opts.stateChangeSeq` also requires the agent's `state_change_seq` to match.
  */
 export async function answerPrompt(
   client: Api,
   paneId: string,
   seen: Prompt,
   option: PromptOption,
+  opts: { stateChangeSeq?: number } = {},
 ): Promise<AnswerResult> {
-  const got = await client.api<{ agent?: { agent_status?: string } }>('agent.get', { target: paneId });
+  const got = await client.api<{ agent?: { agent_status?: string; state_change_seq?: number } }>('agent.get', {
+    target: paneId,
+  });
   if (normalizeStatus(got.agent?.agent_status) !== 'blocked') return 'not-blocked';
+  // With a seq (from a push), the agent must still be in the same blocked spell.
+  if (opts.stateChangeSeq !== undefined && got.agent?.state_change_seq !== opts.stateChangeSeq) return 'changed';
   const now = await readPrompt(client, paneId);
   const same = now?.options.find((o) => o.key === option.key);
   if (!now || !samePrompt(now, seen) || !same || same.label !== option.label) return 'changed';

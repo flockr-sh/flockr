@@ -372,6 +372,10 @@ export interface PushData {
   tab?: string;
   pane_id: string;
   terminal_id?: string;
+  /** The agent's status change this alert is about (blocked alerts check it before answering). */
+  state_change_seq?: number;
+  /** A blocked agent's prompt and its answer buttons; read with `parsePushPrompt`. */
+  prompt?: unknown;
 }
 
 /** Any message from the server. `t` is checked at runtime. */
