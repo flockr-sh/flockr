@@ -132,8 +132,11 @@ pub(crate) mod tests {
         assert!(decode(&encoder.finish().unwrap()).is_err());
     }
 
-    /// Runs both ways: with `app/dist` built the binary must carry a working
-    /// web app; without it, none.
+    /// An embedded web app must decode and, when `app/dist` (or
+    /// `FLOCKR_WEB_DIST`) is still there, have the same `index.html`. A binary
+    /// without a web app passes, so this does not catch a build from before
+    /// the first export: Cargo does not watch a missing `app/dist`, which is
+    /// why `npm run export:web` touches build.rs.
     #[test]
     fn embedded_archive_matches_the_build() {
         let dist = std::env::var_os("FLOCKR_WEB_DIST")

@@ -29,8 +29,8 @@ fn main() {
 /// the `/`-separated relative path, a u64 LE data length, and the data.
 ///
 /// A missing folder is not watched: Cargo reruns build scripts on every
-/// build while a watched path is missing. After the first web export, touch
-/// build.rs (or set FLOCKR_WEB_DIST) so the next build picks it up.
+/// build while a watched path is missing. `npm run export:web` touches
+/// build.rs when it finishes, so the next build picks up a new export.
 fn embed_web_app() {
     println!("cargo:rerun-if-env-changed=FLOCKR_WEB_DIST");
     let out = PathBuf::from(std::env::var_os("OUT_DIR").expect("cargo sets OUT_DIR"))

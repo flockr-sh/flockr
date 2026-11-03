@@ -262,7 +262,8 @@ flockr (`cargo build`, `just build`) embeds `dist/` in the binary, and
 it. `[web] dir` points the server at another build instead, for example while
 working on the app. A flockr built without `app/dist` has no web app; it
 still builds without Node. Cargo does not watch a missing `app/dist`, so
-after the first export touch `build.rs` once before building flockr.
+`npm run export:web` touches `../build.rs` when it finishes; the next flockr
+build then embeds the new export.
 
 ## What is stubbed or missing
 
