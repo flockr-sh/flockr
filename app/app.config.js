@@ -14,6 +14,8 @@ module.exports = {
     version: '0.1.0',
     orientation: 'default',
     userInterfaceStyle: 'dark',
+    icon: './assets/brand/app-icon-1024.png',
+    backgroundColor: '#101116',
     runtimeVersion: { policy: 'appVersion' },
     ios: {
       bundleIdentifier: IS_DEV ? 'sh.flockr.app.dev' : 'sh.flockr.app',
@@ -32,11 +34,26 @@ module.exports = {
     android: {
       package: IS_DEV ? 'sh.flockr.app.dev' : 'sh.flockr.app',
       predictiveBackGestureEnabled: false,
+      adaptiveIcon: {
+        foregroundImage: './assets/brand/android-adaptive-foreground.png',
+        backgroundImage: './assets/brand/android-adaptive-background.png',
+        monochromeImage: './assets/brand/android-adaptive-monochrome.png',
+        backgroundColor: '#101116',
+      },
     },
     web: {},
     plugins: [
       'expo-font',
       'expo-status-bar',
+      [
+        'expo-splash-screen',
+        {
+          image: './assets/brand/splash-icon.png',
+          imageWidth: 200,
+          resizeMode: 'contain',
+          backgroundColor: '#101116',
+        },
+      ],
       // Tokens are read without Face ID.
       ['expo-secure-store', { faceIDPermission: false }],
       [
