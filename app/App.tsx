@@ -73,7 +73,8 @@ export default function App() {
   useEffect(() => {
     if (!ready) return;
     if (!pushSupported()) {
-      setPushNote('Push needs a dev build on a real device.');
+      // Only Expo Go and simulators land here; that's a developer's concern.
+      if (__DEV__) setPushNote('Push needs a dev build on a real device.');
       return;
     }
     void setupNotifications();
