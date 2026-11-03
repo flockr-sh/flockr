@@ -3,13 +3,13 @@
 #   scripts/testflight.sh
 # Needs the Mac set up as in fastlane/Fastfile: ~/.flockr-build holds the signing
 # keychain (and its password), the App Store Connect API key, and the push key.
-# Needs ASC_KEY_ID, ASC_ISSUER_ID, APPLE_TEAM_ID, and APPLE_ID in the environment;
-# they are passed to fastlane on the Mac.
+# Needs ASC_KEY_ID, ASC_ISSUER_ID, APPLE_TEAM_ID, APPLE_CERT_ID, and
+# APPLE_SIGNING_IDENTITY in the environment; they are passed to fastlane on the Mac.
 # Only native changes need a new build; JS loads from Metro.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 envs=""
-for name in ASC_KEY_ID ASC_ISSUER_ID APPLE_TEAM_ID APPLE_ID; do
+for name in ASC_KEY_ID ASC_ISSUER_ID APPLE_TEAM_ID APPLE_CERT_ID APPLE_SIGNING_IDENTITY; do
   if [ -z "${!name:-}" ]; then
     echo "testflight.sh: $name is not set (see the top of fastlane/Fastfile)" >&2
     exit 1

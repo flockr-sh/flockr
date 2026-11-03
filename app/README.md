@@ -231,11 +231,27 @@ encrypted).
 
 `scripts/testflight.sh` syncs the app to the Mac (ssh host `mac`), runs
 `expo prebuild`, and uploads a dev-client build with `fastlane ios beta`.
-It is run by hand. Export `ASC_KEY_ID`, `ASC_ISSUER_ID`, `APPLE_TEAM_ID`, and
-`APPLE_ID` first; the script passes them to fastlane on the Mac. The App Store
-Connect `.p8` key, signing keychain, and keychain password stay in
-`~/.flockr-build` on the Mac. `scripts/asc.sh` runs on the Mac and needs
-`ASC_KEY_ID` and `ASC_ISSUER_ID` there.
+It is run by hand. The account values come from your own Apple developer
+account and are read from the environment; none are stored in the repo. Each
+fastlane lane checks only the ones it uses:
+
+| Variable | Used by |
+| --- | --- |
+| `ASC_KEY_ID` | every lane but `list_certs`; App Store Connect API key id |
+| `ASC_ISSUER_ID` | every lane but `list_certs`; App Store Connect issuer id |
+| `APPLE_TEAM_ID` | `beta`, `profile`, `list_certs`, `push_key`; developer team id |
+| `APPLE_CERT_ID` | `beta`, `profile`; Apple Distribution certificate id (`list_certs` prints it) |
+| `APPLE_SIGNING_IDENTITY` | `beta`; for example `Apple Distribution: Your Org (TEAMID)` |
+| `APPLE_ID` | `list_certs`, `push_key`; Apple ID email for the portal login |
+| `TESTER_FIRST_NAME`, `TESTER_LAST_NAME` | `testers`; TestFlight tester name |
+| `TESTER_EMAIL` | `testers`; tester email, defaults to `APPLE_ID` |
+
+`scripts/testflight.sh` runs `beta`: export `ASC_KEY_ID`, `ASC_ISSUER_ID`,
+`APPLE_TEAM_ID`, `APPLE_CERT_ID`, and `APPLE_SIGNING_IDENTITY` first; the
+script passes them to fastlane on the Mac. The App Store Connect `.p8` key,
+signing keychain, and keychain password stay in `~/.flockr-build` on the Mac.
+`scripts/asc.sh` runs on the Mac and needs `ASC_KEY_ID` and `ASC_ISSUER_ID`
+there.
 
 ## Web app
 
