@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [1.2.0] - 2026-11-03
 
 ### Added
 - Mobile gateway for the flockr phone app, off by default (`[mobile]` in
