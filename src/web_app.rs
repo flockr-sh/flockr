@@ -6,6 +6,10 @@ use std::collections::HashMap;
 use std::io::Read as _;
 use std::sync::{Arc, OnceLock};
 
+// Shared with build.rs, which uses it to refuse a partial web build.
+#[cfg(test)]
+mod dist_refs;
+
 static ARCHIVE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/web-app.zlib"));
 
 /// Web app files by `/`-separated relative path (`index.html`,

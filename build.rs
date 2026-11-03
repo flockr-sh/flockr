@@ -1,6 +1,9 @@
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
+#[path = "src/web_app/dist_refs.rs"]
+mod dist_refs;
+
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-env-changed=FLOCKR_BUILD_CHANNEL");
@@ -17,7 +20,10 @@ fn main() {
 ///
 /// Files and folders whose names start with `.` are left out, and symlinks
 /// are skipped with a warning; that matches what the release workflow's
-/// artifact upload ships.
+/// artifact upload ships. If `index.html` loads a same-origin script or
+/// link that is not in the folder, the build is partial: with
+/// `FLOCKR_WEB_DIST` set (release builds) that fails the build, otherwise
+/// it warns and embeds nothing.
 ///
 /// Format before zlib: for each file, sorted by path, a u32 LE path length,
 /// the `/`-separated relative path, a u64 LE data length, and the data.
@@ -49,6 +55,28 @@ fn embed_web_app() {
     let mut files = Vec::new();
     collect_files(&dist, &dist, &mut files);
     files.sort();
+
+    let index = std::fs::read_to_string(dist.join("index.html"))
+        .unwrap_or_else(|err| panic!("read {}: {err}", dist.join("index.html").display()));
+    let missing: Vec<String> = dist_refs::local_asset_paths(&index)
+        .into_iter()
+        .filter(|asset| !files.iter().any(|(name, _)| name == asset))
+        .collect();
+    if !missing.is_empty() {
+        let list = missing.join(", ");
+        if required.is_some() {
+            panic!(
+                "{} is a partial web build; index.html loads files that are not there: {list}",
+                dist.display()
+            );
+        }
+        println!(
+            "cargo:warning=not embedding the web app: {} is a partial build; index.html loads missing files: {list}. Run npm run export:web in app/ again.",
+            dist.display()
+        );
+        std::fs::write(&out, []).expect("write empty web app archive");
+        return;
+    }
 
     let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::best());
     for (name, path) in &files {
