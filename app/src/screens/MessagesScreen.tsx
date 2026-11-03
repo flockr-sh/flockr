@@ -6,6 +6,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import type { Nav } from '../state/nav';
 import { approveMessage, denyMessage, partyLabel, useWaitingMessages, type Waiting } from '../state/messages';
 import { colors, ui } from '../state/ui';
+import { DemoTag } from './DemoTag';
 
 export function MessagesScreen({ nav }: { nav: Nav }) {
   return (
@@ -60,7 +61,10 @@ function MessageCard({ waiting }: { waiting: Waiting }) {
         <Text style={styles.arrow}>{'  →  '}</Text>
         <Text style={styles.party}>{partyLabel(message.to)}</Text>
       </Text>
-      <Text style={styles.when}>{sentAgo(message.sent_at)}</Text>
+      <View style={styles.whenLine}>
+        <Text style={styles.when}>{sentAgo(message.sent_at)}</Text>
+        <DemoTag serverId={serverId} />
+      </View>
       <Text style={styles.body} numberOfLines={12} selectable>
         {message.body}
       </Text>
@@ -141,6 +145,7 @@ const styles = StyleSheet.create({
   party: { color: colors.text, fontWeight: '600' },
   arrow: { color: colors.dim },
   when: { color: '#8a90a2', fontSize: 12 },
+  whenLine: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   body: { color: '#d6d9e2', fontSize: 14, lineHeight: 20, marginTop: 4 },
   error: { color: colors.danger, fontSize: 12.5 },
   actions: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8 },

@@ -15,6 +15,7 @@ import {
 import type { Nav } from '../state/nav';
 import type { StoredServer } from '../state/storage';
 import { colors, ui } from '../state/ui';
+import { DemoTag } from './DemoTag';
 
 export function SettingsScreen({ nav }: { nav: Nav }) {
   return (
@@ -44,7 +45,32 @@ export function SettingsList() {
       {servers.map((server) => (
         <MachineSetting key={server.server_id} server={server} />
       ))}
+      <DemoSetting />
     </View>
+  );
+}
+
+/** Adds or removes the two made-up demo machines. */
+function DemoSetting() {
+  useServers();
+  const on = connections.demoOn;
+  return (
+    <>
+      <Text style={[styles.section, { marginTop: 12 }]}>Demo machines</Text>
+      <Text style={styles.lead}>
+        Two made-up machines, studio and build-box, with agents to look around. They run inside the app, are marked
+        Demo, and never connect to anything.
+      </Text>
+      <Pressable
+        accessibilityRole="button"
+        onPress={() => void (on ? connections.stopDemo() : connections.startDemo())}
+        style={[ui.button, { alignSelf: 'flex-start' }]}
+      >
+        <Text style={[ui.buttonText, on && { color: colors.danger }]}>
+          {on ? 'Remove demo machines' : 'Add demo machines'}
+        </Text>
+      </Pressable>
+    </>
   );
 }
 
@@ -80,7 +106,10 @@ function MachineSetting({ server }: { server: StoredServer }) {
   const help = APPROVE_MODES.find((m) => m.mode === mode)?.help;
   return (
     <View style={styles.card}>
-      <Text style={styles.machine}>{server.name}</Text>
+      <View style={styles.machineLine}>
+        <Text style={styles.machine}>{server.name}</Text>
+        <DemoTag show={!!server.demo} />
+      </View>
       {note ? (
         <Text style={styles.note}>{note}</Text>
       ) : (
@@ -122,6 +151,7 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   machine: { color: colors.text, fontSize: 14.5, fontWeight: '600' },
+  machineLine: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   note: { color: '#8a90a2', fontSize: 13, lineHeight: 18 },
   error: { color: colors.danger, fontSize: 12.5 },
   segments: {

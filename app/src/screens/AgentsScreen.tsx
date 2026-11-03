@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Alert, Animated, Pressable, SectionList, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { DemoTag } from './DemoTag';
 import { connections } from '../state/connections';
 import { statusText, useAgents, useClientStatus, useServers, useTerminals } from '../state/hooks';
 import type { Nav } from '../state/nav';
@@ -66,9 +67,12 @@ export function AgentsScreen({ nav, serverId }: Props) {
           <Text style={ui.buttonText}>‹</Text>
         </Pressable>
         <View style={{ flex: 1 }}>
-          <Text style={ui.title} numberOfLines={1}>
-            {server?.name ?? 'Server'}
-          </Text>
+          <View style={styles.line}>
+            <Text style={ui.title} numberOfLines={1}>
+              {server?.name ?? 'Server'}
+            </Text>
+            <DemoTag show={!!server?.demo} />
+          </View>
           <Text style={ui.sub}>{repair ? repairShort(repair) : statusText(status)}</Text>
         </View>
         <Pressable accessibilityRole="button" onPress={remove} style={ui.button}>
