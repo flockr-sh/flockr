@@ -155,6 +155,7 @@ fn content_type(path: &Path) -> &'static str {
         "js" => "text/javascript; charset=utf-8",
         "css" => "text/css; charset=utf-8",
         "json" => "application/json",
+        "webmanifest" => "application/manifest+json",
         "wasm" => "application/wasm",
         "ttf" => "font/ttf",
         "otf" => "font/otf",
@@ -214,6 +215,10 @@ mod tests {
         assert_eq!(resolve(&dir, "/../etc/passwd"), None);
         assert_eq!(resolve(&dir, "/%2e%2e/etc/passwd"), None);
         assert_eq!(content_type(Path::new("a.wasm")), "application/wasm");
+        assert_eq!(
+            content_type(Path::new("site.webmanifest")),
+            "application/manifest+json"
+        );
     }
 
     #[tokio::test]

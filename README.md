@@ -1,4 +1,9 @@
-# flockr
+<h1>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/readme-header-dark.svg">
+    <img alt="flockr" src="assets/readme-header-light.svg" height="48">
+  </picture>
+</h1>
 
 A terminal workspace for running many coding agents side by side. Spaces,
 tabs, and split panes, with a sidebar that shows which agents are working,
