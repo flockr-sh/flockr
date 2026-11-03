@@ -3,24 +3,16 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use tokio::net::TcpListener;
 use tracing::{debug, info, warn};
 
-use super::{connection, Gateway, BIND_RETRY};
+use super::{connection, Gateway};
 
 pub(crate) async fn run(gateway: Arc<Gateway>, addr: SocketAddr) {
     let mut shutdown = gateway.shutdown.clone();
-    let listener = loop {
-        match TcpListener::bind(addr).await {
-            Ok(listener) => break listener,
-            Err(err) => {
-                warn!(%addr, err = %err, "mobile gateway could not bind; retrying in 10 s");
-                tokio::select! {
-                    _ = tokio::time::sleep(BIND_RETRY) => {}
-                    _ = shutdown.changed() => return,
-                }
-            }
-        }
+    let Some(listener) =
+        crate::server::bind::bind_with_retry(addr, "mobile gateway", &mut shutdown).await
+    else {
+        return;
     };
     let bound = listener.local_addr().unwrap_or(addr);
     info!(addr = %bound, "mobile gateway listening");

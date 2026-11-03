@@ -52,7 +52,6 @@ pub(crate) const MAX_COLS: u16 = 500;
 pub(crate) const MAX_ROWS: u16 = 200;
 pub(crate) const PUSHES_PER_DEVICE_PER_MINUTE: usize = 30;
 pub(crate) const REVOCATION_CHECK: Duration = Duration::from_secs(2);
-pub(crate) const BIND_RETRY: Duration = Duration::from_secs(10);
 pub(crate) const PING_INTERVAL: Duration = Duration::from_secs(20);
 pub(crate) const PONG_TIMEOUT: Duration = Duration::from_secs(60);
 /// One outbound frame may take this long to write before the connection closes.

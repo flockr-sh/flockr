@@ -18,7 +18,6 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime};
 
 use serde_json::Value;
-use tokio::net::TcpListener;
 use tokio::sync::{mpsc, watch};
 use tracing::{info, warn};
 
@@ -31,7 +30,6 @@ use crate::server::mobile::RateWindow;
 const POLL: Duration = Duration::from_secs(2);
 const DIAL_INTERVAL: Duration = Duration::from_secs(5);
 const DIAL_BACKOFF_MAX: Duration = Duration::from_secs(60);
-const BIND_RETRY: Duration = Duration::from_secs(10);
 const MAX_UNAUTHENTICATED: usize = 8;
 const JOIN_FAILURES_PER_IP: usize = 5;
 const JOIN_FAILURE_WINDOW: Duration = Duration::from_secs(60);
@@ -519,17 +517,9 @@ pub(crate) fn start(
 
 async fn listen(node: Arc<Node>, addr: SocketAddr) {
     let mut shutdown = node.shutdown();
-    let listener = loop {
-        match TcpListener::bind(addr).await {
-            Ok(listener) => break listener,
-            Err(err) => {
-                warn!(%addr, err = %err, "flock could not bind; retrying in 10 s");
-                tokio::select! {
-                    _ = tokio::time::sleep(BIND_RETRY) => {}
-                    _ = shutdown.changed() => return,
-                }
-            }
-        }
+    let Some(listener) = crate::server::bind::bind_with_retry(addr, "flock", &mut shutdown).await
+    else {
+        return;
     };
     let bound = listener.local_addr().unwrap_or(addr);
     info!(addr = %bound, "flock listening");

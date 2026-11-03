@@ -8,7 +8,7 @@ use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::TcpStream;
 use tokio::sync::watch;
 use tracing::{debug, info, warn};
 
@@ -16,7 +16,6 @@ use crate::config::WebConfig;
 
 const MAX_REQUEST_BYTES: usize = 8 * 1024;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
-const BIND_RETRY: Duration = Duration::from_secs(10);
 
 /// Keeps the web server running; dropping it stops it.
 pub(crate) struct WebHandle {
@@ -50,17 +49,9 @@ pub(crate) fn start(config: &WebConfig) -> Option<WebHandle> {
 }
 
 async fn listen(addr: SocketAddr, dir: PathBuf, mut shutdown: watch::Receiver<bool>) {
-    let listener = loop {
-        match TcpListener::bind(addr).await {
-            Ok(listener) => break listener,
-            Err(err) => {
-                warn!(%addr, err = %err, "web app could not bind; retrying in 10 s");
-                tokio::select! {
-                    _ = tokio::time::sleep(BIND_RETRY) => {}
-                    _ = shutdown.changed() => return,
-                }
-            }
-        }
+    let Some(listener) = crate::server::bind::bind_with_retry(addr, "web app", &mut shutdown).await
+    else {
+        return;
     };
     info!(%addr, dir = %dir.display(), "web app listening");
     loop {
@@ -202,6 +193,7 @@ async fn respond(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::net::TcpListener;
 
     #[test]
     fn paths_stay_inside_the_folder_and_fall_back_to_index() {

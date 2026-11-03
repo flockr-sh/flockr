@@ -1,5 +1,6 @@
 mod alt_screen_read;
 pub mod autodetect;
+pub(crate) mod bind;
 #[cfg(unix)]
 pub(crate) mod client_accept;
 pub(crate) mod client_commands;
