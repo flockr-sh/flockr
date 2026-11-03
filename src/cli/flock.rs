@@ -574,8 +574,8 @@ fn agents(args: &[String]) -> std::io::Result<i32> {
         return Ok(0);
     }
     println!(
-        "{:<14} {:<8} {:<10} {:<9} TITLE",
-        "MACHINE", "PANE", "AGENT", "STATUS"
+        "{:<14} {:<24} {:<10} {:<9} TITLE",
+        "MACHINE", "SEND TO", "AGENT", "STATUS"
     );
     for machine in &machines {
         let name = machine["name"].as_str().unwrap_or_default();
@@ -589,9 +589,14 @@ fn agents(args: &[String]) -> std::io::Result<i32> {
         }
         for agent in &agents {
             let field = |key: &str| agent[key].as_str().unwrap_or("-").to_owned();
+            // What `flockr message send` takes: the agent's name, else its pane.
+            let label = agent["name"]
+                .as_str()
+                .or_else(|| agent["pane_id"].as_str())
+                .unwrap_or("-");
             println!(
-                "{name:<14} {:<8} {:<10} {:<9} {}",
-                field("pane_id"),
+                "{name:<14} {:<24} {:<10} {:<9} {}",
+                format!("{name}:{label}"),
                 field("agent"),
                 field("agent_status"),
                 field("terminal_title_stripped")

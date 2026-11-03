@@ -184,6 +184,36 @@ impl Messages {
         })
     }
 
+    /// The agent a message to `target` goes to: by name or pane ID, or by
+    /// kind ("claude") when exactly one agent of that kind runs here.
+    async fn recipient(&self, target: &str, machine: &str) -> Result<Party, Failure> {
+        if let Some(party) = self.local_agent(target).await {
+            return Ok(party);
+        }
+        let listed = self.api("agent.list", json!({})).await.unwrap_or_default();
+        match agents_of_kind(&listed["result"]["agents"], target).as_slice() {
+            [pane] => self.local_agent(pane).await.ok_or_else(|| {
+                Failure::new("no_such_agent", format!("no agent {target:?} on {machine}"))
+            }),
+            [] => Err(Failure::new(
+                "no_such_agent",
+                format!("no agent {target:?} on {machine}"),
+            )),
+            several => Err(Failure::new(
+                "ambiguous_agent",
+                format!(
+                    "{} {target} agents on {machine}; send to one of: {}",
+                    several.len(),
+                    several
+                        .iter()
+                        .map(|pane| format!("{machine}:{pane}"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            )),
+        }
+    }
+
     /// The sender: the agent in the calling pane, or a person.
     async fn sender(&self, pane: Option<String>) -> Result<Party, Failure> {
         if let Some(pane) = &pane {
@@ -425,13 +455,7 @@ impl Messages {
             ));
         }
         let target = message.to.agent.clone().unwrap_or_default();
-        let recipient = self.local_agent(&target).await.ok_or_else(|| {
-            Failure::new(
-                "no_such_agent",
-                format!("no agent {target:?} on {}", message.to.machine),
-            )
-        })?;
-        message.to = recipient;
+        message.to = self.recipient(&target, &message.to.machine).await?;
         let terminal = message.to.terminal.clone().unwrap_or_default();
         let inbox = message::inbox(&self.dir, &terminal);
         if inbox.iter().any(|entry| entry.message.id == message.id) {
@@ -778,10 +802,38 @@ pub(super) fn serve_local(messages: Arc<Messages>, shutdown: tokio::sync::watch:
     });
 }
 
+/// The names (or pane IDs) of the listed agents of `kind`.
+fn agents_of_kind(agents: &Value, kind: &str) -> Vec<String> {
+    agents
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|agent| agent["agent"].as_str() == Some(kind))
+        .filter_map(|agent| {
+            agent["name"]
+                .as_str()
+                .or_else(|| agent["pane_id"].as_str())
+                .map(str::to_owned)
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::flock::message::tests::party;
+
+    #[test]
+    fn agents_are_found_by_kind_under_their_name_or_pane() {
+        let agents = json!([
+            { "agent": "claude", "pane_id": "w3:p1" },
+            { "agent": "codex", "pane_id": "w3:p2", "name": "reviewer" },
+            { "agent": "codex", "pane_id": "w4:p1" },
+        ]);
+        assert_eq!(agents_of_kind(&agents, "claude"), vec!["w3:p1"]);
+        assert_eq!(agents_of_kind(&agents, "codex"), vec!["reviewer", "w4:p1"]);
+        assert!(agents_of_kind(&agents, "pi").is_empty());
+    }
 
     #[test]
     fn lines_split_across_reads_come_out_whole() {
