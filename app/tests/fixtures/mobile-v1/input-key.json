@@ -1,0 +1,8 @@
+{
+  "t": "input.key",
+  "id": "i2",
+  "sub": 1,
+  "keys": [
+    "ctrl+c"
+  ]
+}
