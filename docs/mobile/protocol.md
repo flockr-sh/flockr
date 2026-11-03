@@ -7,7 +7,7 @@ server key from the pairing QR. Message types, close codes, and limits are
 the ones the plaintext v1 draft had, unless this file says otherwise. v1 was
 never released; servers support only v2 and phones paired under v1 must pair
 again. Both the Rust server (`flockr`)
-and the TypeScript app (`flockr-mobile`) implement this file independently.
+and the TypeScript app (`app/`) implement this file independently.
 When code and this file disagree, fix one of them; do not guess.
 
 Key words: MUST, MUST NOT, SHOULD, MAY as in RFC 2119.
@@ -1465,7 +1465,7 @@ today (tokio lacks the `net` feature). `sha2`, `base64`, `serde_json`,
 Each `Cargo.toml` line gets a short comment with its reason, matching the
 existing style.
 
-## 15. App notes (flockr-mobile)
+## 15. App notes (`app/`)
 
 - Expo SDK 57, TypeScript. `@shopify/react-native-skia` for the grid,
   `expo-camera` for QR, `expo-secure-store` for tokens. All run in Expo Go,
@@ -1494,7 +1494,7 @@ existing style.
   CSPRNG: in Expo, `expo-crypto` provides `crypto.getRandomValues` when the
   runtime lacks it.
 - Implement the decoder against the JSON fixtures in
-  `tests/fixtures/mobile-v2/` (copy them into the app repo's tests) and
+  `tests/fixtures/mobile-v2/` (the app's tests read them from there) and
   replay `noise-nk.json` byte for byte.
 
 ## 16. Server implementation notes (prototype)

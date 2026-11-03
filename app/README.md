@@ -1,12 +1,12 @@
-# flockr-mobile
+# flockr app
 
-Phone app for [flockr](../flockr). Watch agents, read their panes and type
-into them from an iPhone. Expo SDK 57 + TypeScript. Android uses the same
-code; desktop web is not set up yet.
+The flockr phone and web app, in `app/` of the flockr repo. Watch agents,
+read their panes and type into them from an iPhone or a browser. Expo SDK 58
++ TypeScript. Android uses the same code. The web build (`npm run export:web`)
+is the flockr web app.
 
-Status: **prototype**. Its job is to show whether drawing the terminal on the
-phone is fast enough. The wire contract is `mobile.v2`: the messages in
-`flockr/docs/mobile/protocol-v1.md`, carried inside a
+The wire contract is `mobile.v2`: the messages in
+[`docs/mobile/protocol.md`](../docs/mobile/protocol.md), carried inside a
 `Noise_NK_25519_ChaChaPoly_SHA256` channel pinned to the server key from the
 pairing QR (path `/mobile/v2`, subprotocol `flockr.mobile.v2`, binary frames
 only). Phones paired under v1 must pair again.
@@ -71,6 +71,7 @@ npm run smoke -- --mock          # protocol client vs in-process mock
 npm run smoke -- --flockr <path/to/flockr>   # end-to-end vs a real flockr server
 npm run mock-gateway -- --host <ip>   # mock server for the phone
 npx tsx scripts/push-check.ts --flockr <bin> --pane <shell pane> --log <flockr-server.log>   # real Expo push path
+npm run export:web       # web build in dist/
 scripts/emu.sh boot|open|shot|tap|swipe|text|key|stop   # drive the Android emulator
 scripts/ios.sh boot|open|snap|tap|tapl|tapxy|touch|swipexy|type|shot|stop   # drive the iOS Simulator on the Mac over ssh
 ```
@@ -224,10 +225,18 @@ the development variant); change it in `app.config.js` if needed.
 for every variant because the socket is plain `ws://` (the payload is Noise
 encrypted).
 
+## TestFlight
+
+`scripts/testflight.sh` syncs the app to the Mac (ssh host `mac`), runs
+`expo prebuild`, and uploads a dev-client build with `fastlane ios beta`.
+It is run by hand. Export `ASC_KEY_ID`, `ASC_ISSUER_ID`, `APPLE_TEAM_ID`, and
+`APPLE_ID` first; the script passes them to fastlane on the Mac. The App Store
+Connect `.p8` key, signing keychain, and keychain password stay in
+`~/.flockr-build` on the Mac. `scripts/asc.sh` runs on the Mac and needs
+`ASC_KEY_ID` and `ASC_ISSUER_ID` there.
+
 ## What is stubbed or missing
 
-- Desktop web: not set up (no `react-dom`/`react-native-web`, no Skia web
-  loader).
 - Text selection, copy and link tapping in the grid.
 - Mouse input (not in the protocol).
 - Glyphs missing from JetBrains Mono fall back to system fonts only for

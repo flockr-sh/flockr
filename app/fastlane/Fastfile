@@ -1,9 +1,35 @@
 # TestFlight builds of the flockr dev app (development client, loads JS from Metro).
 # Signing uses the Apple Distribution cert in ~/.flockr-build/flockr-build.keychain-db.
+#
+# Account values come from the environment, not this file:
+#   ASC_KEY_ID      App Store Connect API key id (the .p8 is ~/.flockr-build/AuthKey_<id>.p8)
+#   ASC_ISSUER_ID   App Store Connect API issuer id
+#   APPLE_TEAM_ID   Apple developer team id
+#   APPLE_ID        Apple ID email (portal lanes and the TestFlight tester)
 default_platform(:ios)
 
-TEAM = "REDACTED_TEAM_ID"
-USER = "REDACTED_APPLE_ID"
+def required_env(name)
+  value = ENV[name].to_s.strip
+  UI.user_error!("#{name} is not set. Export it before running fastlane (see the top of fastlane/Fastfile).") if value.empty?
+  value
+end
+
+def team
+  required_env("APPLE_TEAM_ID")
+end
+
+def apple_id
+  required_env("APPLE_ID")
+end
+
+def asc_key_id
+  required_env("ASC_KEY_ID")
+end
+
+def asc_issuer_id
+  required_env("ASC_ISSUER_ID")
+end
+
 APP_ID = "sh.flockr.app.dev"
 CERT_ID = "QZ4YT3P322"
 PROFILE_NAME = "sh.flockr.app.dev AppStore"
@@ -13,22 +39,22 @@ KEYCHAIN = File.join(BUILD_DIR, "flockr-build.keychain-db")
 platform :ios do
   # App Store Connect API key (1Password: "App Store Connect API key - flockr build").
   before_all do |lane|
-    ENV["FASTLANE_TEAM_ID"] ||= TEAM
+    ENV["FASTLANE_TEAM_ID"] ||= team
     next if lane == :list_certs
-    app_store_connect_api_key(key_id: "REDACTED_ASC_KEY_ID", issuer_id: "REDACTED_ASC_ISSUER_ID",
-                              key_filepath: File.join(BUILD_DIR, "AuthKey_REDACTED_ASC_KEY_ID.p8"))
+    app_store_connect_api_key(key_id: asc_key_id, issuer_id: asc_issuer_id,
+                              key_filepath: File.join(BUILD_DIR, "AuthKey_#{asc_key_id}.p8"))
   end
 
   lane :list_certs do
-    Spaceship::Portal.login(USER)
-    Spaceship::Portal.select_team(team_id: TEAM)
+    Spaceship::Portal.login(apple_id)
+    Spaceship::Portal.select_team(team_id: team)
     Spaceship::Portal.certificate.all.each do |c|
       UI.message([c.class.name.split("::").last, c.name, c.expires.to_s, c.id].join(" | "))
     end
   end
 
   lane :profile do
-    sigh(app_identifier: APP_ID, team_id: TEAM, cert_id: CERT_ID,
+    sigh(app_identifier: APP_ID, team_id: team, cert_id: CERT_ID,
          skip_certificate_verification: true, output_path: BUILD_DIR,
          filename: "flockr-dev-appstore.mobileprovision", force: false)
   end
@@ -38,15 +64,15 @@ platform :ios do
                     add_to_search_list: true, set_default: false)
     profile
     project = File.expand_path("../ios/flockrdev.xcodeproj", __dir__)
-    update_code_signing_settings(use_automatic_signing: false, path: project, team_id: TEAM,
+    update_code_signing_settings(use_automatic_signing: false, path: project, team_id: team,
                                  targets: ["flockrdev"], code_sign_identity: "Apple Distribution",
                                  profile_name: PROFILE_NAME, bundle_identifier: APP_ID)
-    build = latest_testflight_build_number(app_identifier: APP_ID, team_id: TEAM, initial_build_number: 0) + 1
+    build = latest_testflight_build_number(app_identifier: APP_ID, team_id: team, initial_build_number: 0) + 1
     increment_build_number(xcodeproj: project, build_number: build)
     build_app(workspace: File.expand_path("../ios/flockrdev.xcworkspace", __dir__), scheme: "flockrdev",
               configuration: "Debug", export_method: "app-store",
               export_options: { provisioningProfiles: { APP_ID => PROFILE_NAME }, signingStyle: "manual" },
-              codesigning_identity: "Apple Distribution: Fitness Booking, Inc. (#{TEAM})",
+              codesigning_identity: "Apple Distribution: Fitness Booking, Inc. (#{team})",
               output_directory: File.join(BUILD_DIR, "out"), output_name: "flockr-dev.ipa",
               xcargs: "OTHER_CODE_SIGN_FLAGS=--keychain=#{KEYCHAIN}")
     upload_to_testflight(app_identifier: APP_ID, skip_waiting_for_build_processing: true)
@@ -66,11 +92,11 @@ platform :ios do
       group = Spaceship::ConnectAPI::BetaGroup.new(client.post("betaGroups", body).body["data"]["id"], {})
     end
     UI.message("group #{group.id}")
-    body = { data: { type: "betaTesters", attributes: { email: USER, firstName: "Dylan", lastName: "Kenney" },
+    body = { data: { type: "betaTesters", attributes: { email: apple_id, firstName: "Dylan", lastName: "Kenney" },
                      relationships: { betaGroups: { data: [{ type: "betaGroups", id: group.id }] } } } }
     begin
       client.post("betaTesters", body)
-      UI.success("added #{USER}")
+      UI.success("added #{apple_id}")
     rescue => e
       UI.important("tester add: #{e.message}")
     end
@@ -80,8 +106,8 @@ end
 platform :ios do
   # Short-lived App Store Connect API token for direct HTTP calls (20 min).
   lane :api_token do
-    token = Spaceship::ConnectAPI::Token.create(key_id: "REDACTED_ASC_KEY_ID", issuer_id: "REDACTED_ASC_ISSUER_ID",
-                                                filepath: File.join(BUILD_DIR, "AuthKey_REDACTED_ASC_KEY_ID.p8"))
+    token = Spaceship::ConnectAPI::Token.create(key_id: asc_key_id, issuer_id: asc_issuer_id,
+                                                filepath: File.join(BUILD_DIR, "AuthKey_#{asc_key_id}.p8"))
     File.write(File.join(BUILD_DIR, "token"), token.text, perm: 0o600)
   end
 end
@@ -89,8 +115,8 @@ end
 platform :ios do
   # Apple push (APNs) key for the team, saved for upload to Expo. Uses the Apple ID session.
   lane :push_key do
-    Spaceship::Portal.login(USER)
-    Spaceship::Portal.select_team(team_id: TEAM)
+    Spaceship::Portal.login(apple_id)
+    Spaceship::Portal.select_team(team_id: team)
     existing = Spaceship::Portal::Key.all.find { |k| k.name == "flockr push" }
     key = existing || Spaceship::Portal::Key.create(name: "flockr push", apns: true)
     path = File.join(BUILD_DIR, "AuthKey_push_#{key.id}.p8")
