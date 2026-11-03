@@ -120,7 +120,10 @@ fn write_requested_help(
 }
 
 fn update_command() -> Command {
+    // flockr does not self-update (src/update.rs); kept only so old scripts get
+    // a clear error instead of an unknown command.
     Command::new("update")
+        .hide(true)
         .about("Download and install the latest version")
         .arg(flag("handoff").help("Try live handoff after installing"))
 }
@@ -149,7 +152,9 @@ fn config_command() -> Command {
 }
 
 fn channel_command() -> Command {
+    // Update channels only matter for self-update, which flockr doesn't do.
     Command::new("channel")
+        .hide(true)
         .about("Manage stable and preview update channels")
         .subcommand(Command::new("show").about("Print the configured update channel"))
         .subcommand(

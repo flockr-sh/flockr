@@ -188,10 +188,10 @@ const DEFAULT_CONFIG: &str = r##"# flockr configuration
 # resize_pane_down = "prefix+ctrl+j"
 # resize_pane_up = "prefix+ctrl+k"
 # resize_pane_right = "prefix+ctrl+l"
-# swap_pane_left = ""    # optional, unset by default; swaps the focused pane with its neighbor
-# swap_pane_down = ""
-# swap_pane_up = ""
-# swap_pane_right = ""
+# swap_pane_left = "prefix+shift+h"    # swaps the focused pane with its neighbor
+# swap_pane_down = "prefix+shift+j"
+# swap_pane_up = "prefix+shift+k"
+# swap_pane_right = "prefix+shift+l"
 # Layout presets, as in tmux. main_* layouts lead with the focused pane.
 # layout_even_horizontal = "prefix+alt+1"
 # layout_even_vertical = "prefix+alt+2"
@@ -300,7 +300,7 @@ const DEFAULT_CONFIG: &str = r##"# flockr configuration
 # editor move between its own splits first, like vim-tmux-navigator; the
 # editor calls `flockr pane focus --direction left` at its edge. Names match
 # the process name of the pane's foreground job leader.
-# pane_focus_passthrough = ["nvim"]
+# pane_focus_passthrough = []    # e.g. ["nvim"]
 
 # Force a full redraw when the outer terminal regains focus.
 # Set false to reduce visible flashing when switching back to Flockr.
@@ -757,15 +757,12 @@ fn main() -> io::Result<()> {
         println!("       flockr --remote <ssh-target> [--session <name>]");
         println!("       flockr session attach <name>");
         println!("       flockr completion zsh");
-        println!("       flockr update [--handoff]");
-        println!("       flockr channel set <stable|preview>");
         println!("       flockr machine <subcommand> ...");
         println!("       flockr server stop");
         println!("       flockr server reload-config");
         println!("       flockr api <subcommand> ...");
         println!("       flockr completion <shell>");
         println!("       flockr config <subcommand> ...");
-        println!("       flockr channel <subcommand> ...");
         println!("       flockr workspace <subcommand> ...");
         println!("       flockr worktree <subcommand> ...");
         println!("       flockr tab <subcommand> ...");
@@ -774,6 +771,8 @@ fn main() -> io::Result<()> {
         println!("       flockr pane <subcommand> ...");
         println!("       flockr session <subcommand> ...");
         println!("       flockr integration <subcommand> ...");
+        println!("       flockr flock <subcommand> ...");
+        println!("       flockr message <subcommand> ...");
         println!();
         println!("Common commands:");
         for (command, description) in [
@@ -782,7 +781,6 @@ fn main() -> io::Result<()> {
                 "flockr status [server|client]",
                 "Show local client and running server status",
             ),
-            ("flockr update", "Download and install the latest version"),
             (
                 "flockr completion zsh",
                 "Generate shell completions for zsh",
@@ -792,20 +790,12 @@ fn main() -> io::Result<()> {
                 "Stop the running server via the API socket",
             ),
             (
-                "flockr channel set <stable|preview>",
-                "Choose the stable or preview update channel",
-            ),
-            (
                 "flockr server reload-config",
                 "Reload config.toml in the running server",
             ),
             (
                 "flockr config reset-keys",
                 "Back up config.toml and remove custom keybindings",
-            ),
-            (
-                "flockr channel <subcommand>",
-                "Manage the stable or preview update channel",
             ),
             ("flockr machine <subcommand>", "Manage saved SSH machines"),
             (
@@ -854,7 +844,7 @@ fn main() -> io::Result<()> {
         println!("  --remote <target>   Attach through SSH to a remote Flockr server");
         println!("  --remote-keybindings <local|server>");
         println!("                      Keybindings for --remote app attach (default: local)");
-        println!("  --handoff           Opt into live handoff for update or remote attach");
+        println!("  --handoff           Opt into live handoff for remote attach");
         println!("  --default-config    Print default configuration and exit");
         println!("  --skill             Print the agent skill file and exit");
         println!("  --version, -V       Print version and exit");
