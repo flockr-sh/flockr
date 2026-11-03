@@ -696,17 +696,12 @@ impl Messages {
                 senders.dedup();
                 senders
             };
-            let from_agent = due.iter().any(|entry| entry.message.from.agent.is_some());
             let notice = format!(
-                "[flockr] {} unread message{} from {}{}. Read with: flockr message read",
+                "[flockr] {} new message{} from {}. Read and act on {} with: flockr message read",
                 due.len(),
                 if due.len() == 1 { "" } else { "s" },
                 senders.join(", "),
-                if from_agent {
-                    " (not from your user)"
-                } else {
-                    ""
-                }
+                if due.len() == 1 { "it" } else { "them" },
             );
             match self
                 .api("agent.prompt", json!({ "target": target, "text": notice }))

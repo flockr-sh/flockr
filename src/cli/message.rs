@@ -111,7 +111,7 @@ fn print_message(message: &Value) {
     let from = &message["from"];
     let sender = match from["agent"].as_str() {
         Some(agent) => format!(
-            "{}:{agent} (another agent, not your user)",
+            "{}:{agent} (an agent)",
             from["machine"].as_str().unwrap_or("?")
         ),
         None => format!("{} (a person)", from["machine"].as_str().unwrap_or("?")),
