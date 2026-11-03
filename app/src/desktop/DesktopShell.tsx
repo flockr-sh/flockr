@@ -15,8 +15,11 @@ import {
   type TerminalRow,
   type WorkspaceInfo,
 } from '../protocol';
+import { MessagesList } from '../screens/MessagesScreen';
 import { PairScreen } from '../screens/PairScreen';
+import { SettingsList } from '../screens/SettingsScreen';
 import { TerminalScreen } from '../screens/TerminalScreen';
+import { useWaitingMessages } from '../state/messages';
 
 interface Selection {
   serverId: string;
@@ -37,13 +40,21 @@ export function DesktopShell() {
   const servers = useServers();
   const [selected, setSelected] = useState<Selection | null>(null);
   const [pairing, setPairing] = useState(false);
+  // A page in the main panel instead of a terminal or the overview.
+  const [page, setPage] = useState<'messages' | 'settings' | null>(null);
+  const waiting = useWaitingMessages();
   const pairNav: Nav = useMemo(
     () => ({ push: () => setPairing(false), pop: () => setPairing(false), reset: () => setPairing(false) }),
     [],
   );
   const choose = (s: Selection) => {
     setPairing(false);
+    setPage(null);
     setSelected(s);
+  };
+  const openPage = (next: 'messages' | 'settings') => {
+    setPairing(false);
+    setPage(next);
   };
   const toasts = useToasts();
   const [menu, setMenu] = useState<MenuState | null>(null);
@@ -56,6 +67,18 @@ export function DesktopShell() {
           <PairScreen nav={pairNav} />
         </View>
       </View>
+    );
+  } else if (page) {
+    main = (
+      <ScrollView contentContainerStyle={over.page}>
+        <Text style={over.hero}>{page === 'messages' ? 'Messages' : 'Settings'}</Text>
+        <Text style={over.lead}>
+          {page === 'messages'
+            ? 'Messages between agents that wait for you, from every machine.'
+            : 'Settings for each paired machine.'}
+        </Text>
+        <View style={{ maxWidth: 760 }}>{page === 'messages' ? <MessagesList /> : <SettingsList />}</View>
+      </ScrollView>
     );
   } else if (selected && connections.server(selected.serverId)) {
     main = (
@@ -70,14 +93,30 @@ export function DesktopShell() {
       />
     );
   } else {
-    main = <Overview servers={servers} onSelect={choose} onPair={() => setPairing(true)} />;
+    main = (
+      <Overview
+        servers={servers}
+        waiting={waiting.length}
+        onSelect={choose}
+        onPair={() => setPairing(true)}
+        onMessages={() => openPage('messages')}
+      />
+    );
   }
 
   return (
     <View style={shell.root}>
       <View style={side.wrap}>
         <View style={side.top}>
-          <Pressable accessibilityRole="button" onPress={() => setSelected(null)} style={side.brand}>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => {
+              setSelected(null);
+              setPage(null);
+              setPairing(false);
+            }}
+            style={side.brand}
+          >
             <View style={side.logo}>
               <Text style={side.logoText}>f</Text>
             </View>
@@ -91,6 +130,14 @@ export function DesktopShell() {
           >
             <Text style={side.iconText}>＋</Text>
           </Pressable>
+        </View>
+        <View style={side.nav}>
+          <NavItem
+            label="Messages"
+            count={waiting.length}
+            active={page === 'messages'}
+            onPress={() => openPage('messages')}
+          />
         </View>
         <ScrollView style={{ flex: 1 }} contentContainerStyle={side.list}>
           {servers.length === 0 ? <Text style={side.empty}>No servers yet. Pair one with ＋.</Text> : null}
@@ -123,9 +170,21 @@ export function DesktopShell() {
             />
           ))}
         </ScrollView>
-        <Text style={side.footer}>
-          {servers.length} {servers.length === 1 ? 'machine' : 'machines'}
-        </Text>
+        <View style={side.footer}>
+          <Text style={side.footerText}>
+            {servers.length} {servers.length === 1 ? 'machine' : 'machines'}
+          </Text>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => openPage('settings')}
+            style={(state) => [
+              side.footerButton,
+              ((state as { hovered?: boolean }).hovered || page === 'settings') && side.iconHover,
+            ]}
+          >
+            <Text style={side.footerButtonText}>Settings</Text>
+          </Pressable>
+        </View>
       </View>
       <View style={{ flex: 1 }}>{main}</View>
       {menu ? <ContextMenu menu={menu} onClose={() => setMenu(null)} /> : null}
@@ -143,6 +202,33 @@ export function DesktopShell() {
         ))}
       </View>
     </View>
+  );
+}
+
+function NavItem({
+  label,
+  count,
+  active,
+  onPress,
+}: {
+  label: string;
+  count: number;
+  active: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      onPress={onPress}
+      style={(state) => [
+        side.navItem,
+        (state as { hovered?: boolean }).hovered && { backgroundColor: SIDEBAR.hover },
+        active && { backgroundColor: SIDEBAR.active },
+      ]}
+    >
+      <Text style={side.navText}>{label}</Text>
+      {count > 0 ? <Text style={side.navBadge}>{count}</Text> : null}
+    </Pressable>
   );
 }
 
@@ -527,12 +613,16 @@ function TerminalItem({ row, active, onPress }: { row: TerminalRow; active: bool
 
 function Overview({
   servers,
+  waiting,
   onSelect,
   onPair,
+  onMessages,
 }: {
   servers: StoredServer[];
+  waiting: number;
   onSelect: (s: Selection) => void;
   onPair: () => void;
+  onMessages: () => void;
 }) {
   if (servers.length === 0) {
     return (
@@ -552,6 +642,18 @@ function Overview({
         Pick an agent to open its terminal. Each machine lists agents that need you first (blocked, then finished), then
         working, then idle.
       </Text>
+      {waiting > 0 ? (
+        <Pressable
+          accessibilityRole="button"
+          onPress={onMessages}
+          style={(state) => [over.waiting, (state as { hovered?: boolean }).hovered && { borderColor: colors.warn }]}
+        >
+          <Text style={over.waitingText}>
+            {waiting === 1 ? '1 message waits' : `${waiting} messages wait`} for your approval
+          </Text>
+          <Text style={over.waitingLink}>Review</Text>
+        </Pressable>
+      ) : null}
       <View style={over.grid}>
         {servers.map((server) => (
           <MachineCard key={server.server_id} server={server} onSelect={onSelect} />
@@ -742,7 +844,36 @@ const side = StyleSheet.create({
   },
   prompt: { color: '#555b6c', fontSize: 11, fontWeight: '700', width: 12 },
   terminalName: { flex: 1, fontSize: 13 },
-  footer: { color: '#4b5060', fontSize: 11.5, padding: 14, borderTopWidth: 1, borderTopColor: SIDEBAR.border },
+  footer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderTopWidth: 1,
+    borderTopColor: SIDEBAR.border,
+  },
+  footerText: { color: '#4b5060', fontSize: 11.5, flex: 1 },
+  footerButton: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 7 },
+  footerButtonText: { color: '#aab0c0', fontSize: 12.5, fontWeight: '600' },
+  nav: { paddingHorizontal: 8, paddingBottom: 6 },
+  navItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 8,
+  },
+  navText: { color: '#d6d9e2', fontSize: 13.5, fontWeight: '600', flex: 1 },
+  navBadge: {
+    color: '#0b0d12',
+    backgroundColor: colors.warn,
+    fontSize: 11,
+    fontWeight: '700',
+    paddingHorizontal: 7,
+    paddingVertical: 1,
+    borderRadius: 8,
+    overflow: 'hidden',
+  },
 });
 
 const over = StyleSheet.create({
@@ -753,6 +884,19 @@ const over = StyleSheet.create({
   cta: { marginTop: 4, backgroundColor: colors.text, borderRadius: 10, paddingHorizontal: 18, paddingVertical: 10 },
   ctaText: { color: '#0b0d12', fontWeight: '700', fontSize: 14 },
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 16 },
+  waiting: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#4a3c22',
+    backgroundColor: '#1a1610',
+  },
+  waitingText: { color: colors.warn, fontSize: 14, fontWeight: '600', flex: 1 },
+  waitingLink: { color: colors.text, fontSize: 13.5, fontWeight: '600' },
   card: {
     flexGrow: 1,
     flexBasis: 420,

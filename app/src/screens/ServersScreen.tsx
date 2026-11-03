@@ -4,16 +4,21 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { connections } from '../state/connections';
 import { statusText, useClientStatus, useServers } from '../state/hooks';
 import type { Nav } from '../state/nav';
+import { useWaitingMessages } from '../state/messages';
 import { isExpoGo } from '../state/push';
 import { repairReason, repairShort, StoredServer } from '../state/storage';
 import { colors, ui } from '../state/ui';
 
 export function ServersScreen({ nav, pushNote }: { nav: Nav; pushNote: string | null }) {
   const servers = useServers();
+  const waiting = useWaitingMessages();
   return (
     <SafeAreaView style={ui.screen}>
       <View style={ui.header}>
         <Text style={[ui.title, { flex: 1 }]}>flockr</Text>
+        <Pressable accessibilityRole="button" style={ui.button} onPress={() => nav.push({ name: 'settings' })}>
+          <Text style={ui.buttonText}>Settings</Text>
+        </Pressable>
         <Pressable
           accessibilityRole="button"
           style={[ui.button, ui.primary]}
@@ -22,6 +27,18 @@ export function ServersScreen({ nav, pushNote }: { nav: Nav; pushNote: string | 
           <Text style={[ui.buttonText, ui.primaryText]}>Pair</Text>
         </Pressable>
       </View>
+      {waiting.length > 0 ? (
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => nav.push({ name: 'messages' })}
+          style={({ pressed }) => [styles.waiting, pressed && { opacity: 0.8 }]}
+        >
+          <Text style={styles.waitingText}>
+            {waiting.length === 1 ? '1 message waits' : `${waiting.length} messages wait`} for your approval
+          </Text>
+          <Text style={styles.waitingText}>›</Text>
+        </Pressable>
+      ) : null}
       <FlatList
         data={servers}
         keyExtractor={(s) => s.server_id}
@@ -66,6 +83,18 @@ function ServerCard({ server, onPress }: { server: StoredServer; onPress: () => 
 
 const styles = StyleSheet.create({
   empty: { padding: 24, alignItems: 'center' },
+  waiting: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    margin: 8,
+    marginBottom: 0,
+    padding: 14,
+    borderRadius: 10,
+    backgroundColor: '#2a2414',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.warn,
+  },
+  waitingText: { color: colors.warn, fontSize: 15, fontWeight: '600' },
   card: {
     padding: 14,
     borderRadius: 10,

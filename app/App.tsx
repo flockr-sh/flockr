@@ -12,7 +12,9 @@ import type { PushData } from './src/protocol';
 import { DesktopShell } from './src/desktop/DesktopShell';
 import { AgentsScreen } from './src/screens/AgentsScreen';
 import { PairScreen } from './src/screens/PairScreen';
+import { MessagesScreen } from './src/screens/MessagesScreen';
 import { ServersScreen } from './src/screens/ServersScreen';
+import { SettingsScreen } from './src/screens/SettingsScreen';
 import { TerminalScreen } from './src/screens/TerminalScreen';
 
 export default function App() {
@@ -108,6 +110,8 @@ export default function App() {
   else if (route.name === 'servers') screen = <ServersScreen nav={nav} pushNote={pushNote} />;
   else if (route.name === 'pair') screen = <PairScreen nav={nav} initialUrl={route.initialUrl} />;
   else if (route.name === 'agents') screen = <AgentsScreen key={route.serverId} nav={nav} serverId={route.serverId} />;
+  else if (route.name === 'messages') screen = <MessagesScreen nav={nav} />;
+  else if (route.name === 'settings') screen = <SettingsScreen nav={nav} />;
   else
     screen = (
       <TerminalScreen
