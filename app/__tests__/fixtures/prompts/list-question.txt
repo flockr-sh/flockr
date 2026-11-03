@@ -1,9 +1,0 @@
-● Which store should the rate limiter use?
-
-  1. Redis, which the app already connects to
-  2. An in-memory map, simpler but per process
-
-──────────────────────────────────────────────────────────────────
-❯ 
-──────────────────────────────────────────────────────────────────
-  ? for shortcuts

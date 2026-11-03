@@ -1,9 +1,10 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
+import { SHARED_FIXTURES } from '../sharedFixtures';
 import { parsePrompt } from '../../src/protocol/prompt';
 import { answerPrompt } from '../../src/state/answer';
 
-const screen = readFileSync(join(__dirname, '../fixtures/prompts/claude-bash.txt'), 'utf8');
+const screen = readFileSync(join(SHARED_FIXTURES, 'prompts/claude-bash.txt'), 'utf8');
 
 function fakeServer(status: string, text: string) {
   const calls: [string, Record<string, unknown>][] = [];

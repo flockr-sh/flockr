@@ -1,5 +1,6 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
+import { SHARED_FIXTURES } from '../sharedFixtures';
 import type { PushData } from '../../src/protocol';
 import {
   answerFromPush,
@@ -11,7 +12,7 @@ import {
   type AnswerDeps,
 } from '../../src/state/pushActions';
 
-const screen = readFileSync(join(__dirname, '../fixtures/prompts/claude-bash.txt'), 'utf8');
+const screen = readFileSync(join(SHARED_FIXTURES, 'prompts/claude-bash.txt'), 'utf8');
 const FINGERPRINT = '36dfc8675e9d416e241ddc54a4bb19d3';
 
 // What the server sends for the claude-bash fixture (src/server/mobile/push.rs tests).
@@ -171,7 +172,7 @@ describe('answerFromPush', () => {
   });
 
   it('answers a prompt without a detail', async () => {
-    const text = readFileSync(join(__dirname, '../fixtures/prompts/claude-edit.txt'), 'utf8');
+    const text = readFileSync(join(SHARED_FIXTURES, 'prompts/claude-edit.txt'), 'utf8');
     const server = fakeServer({ text });
     const { d } = deps(server.client);
     const data = pushData({

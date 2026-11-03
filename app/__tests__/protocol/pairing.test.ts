@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { SHARED_FIXTURES } from '../sharedFixtures';
 import {
   encodePairingUrl,
   PairingPayload,
@@ -21,9 +22,8 @@ describe('pairing URL', () => {
   const payload: PairingPayload = { ...fixture<PairingPayload>('pairing-payload'), v: 2, pk };
 
   it("parses the flockr server's v2 pairing fixture", () => {
-    // Copied from flockr's tests/fixtures/mobile-v2/pairing.payload.json.
     const server = JSON.parse(
-      readFileSync(join(__dirname, '../fixtures/mobile-v2/pairing.payload.json'), 'utf8'),
+      readFileSync(join(SHARED_FIXTURES, 'mobile-v2/pairing.payload.json'), 'utf8'),
     ) as PairingPayload;
     const b64 = Buffer.from(JSON.stringify(server), 'utf8').toString('base64url');
     expect(parsePairingUrl(`flockr://pair?p=${b64}`)).toEqual(server);
