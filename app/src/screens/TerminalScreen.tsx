@@ -56,8 +56,10 @@ export function TerminalScreen({ nav, serverId, paneId, title, variant = 'phone'
   const [sheet, setSheet] = useState<{ title: string; lines: string[] } | null>(null);
   const [lastError, setLastError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  // The pane's current size; in Fit, a size other than ours means another device holds it.
+  // The pane's current size; in Fit, a size other than the one we asked for
+  // means another device holds it.
   const [gridKey, setGridKey] = useState('');
+  const [sentKey, setSentKey] = useState('');
   const viewStats = useRef(makeViewStats()).current;
   const insets = useSafeAreaInsets();
   const [keyboardOpen, setKeyboardOpen] = useState(false);
@@ -115,6 +117,7 @@ export function TerminalScreen({ nav, serverId, paneId, title, variant = 'phone'
     if (mode === 'fit' && !fitSize) return;
     setEnded(null);
     setGridKey('');
+    setSentKey(mode === 'fit' && fitSize ? fitKey : '');
     const s = client.subscribe(
       paneId,
       mode === 'fit' && fitSize ? { mode: 'fit', cols: fitSize.cols, rows: fitSize.rows } : { mode: 'observe' },
@@ -139,21 +142,29 @@ export function TerminalScreen({ nav, serverId, paneId, title, variant = 'phone'
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [client, paneId, mode, mode === 'fit' && !!fitSize]);
 
-  // Fit mode: follow layout changes (rotation, keyboard) with a resize.
-  useEffect(() => {
-    if (!sub || mode !== 'fit' || !fitSize) return;
-    const t = setTimeout(() => sub.resize(fitSize.cols, fitSize.rows), 150);
-    return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sub, mode, fitKey]);
-
   // Fit surfaces share the pane's size: the device used last holds it. Using
   // this one (focus, tap; the server handles typing) takes it back.
-  const held = mode === 'fit' && !!sub && gridKey !== '' && fitKey !== '' && gridKey !== fitKey;
-  const claim = useCallback(() => {
-    if (held && sub && fitSize) sub.resize(fitSize.cols, fitSize.rows);
+  const held = mode === 'fit' && !!sub && gridKey !== '' && sentKey !== '' && gridKey !== sentKey;
+  const resizeTo = useCallback(() => {
+    if (!sub || !fitSize) return;
+    setSentKey(fitKey);
+    sub.resize(fitSize.cols, fitSize.rows);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [held, sub, fitKey]);
+  }, [sub, fitKey]);
+  const claim = useCallback(() => {
+    if (held) resizeTo();
+  }, [held, resizeTo]);
+
+  // Fit mode: follow layout changes (rotation, keyboard) with a resize, but
+  // only while this device holds the size. A resize takes the size, and the
+  // notice shown while held changes the layout, so following it would take
+  // the size back from the device that has it.
+  useEffect(() => {
+    if (!sub || mode !== 'fit' || !fitSize || held || fitKey === sentKey) return;
+    const t = setTimeout(resizeTo, 150);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sub, mode, fitKey, held]);
   useEffect(() => {
     if (foreground) claim();
     // eslint-disable-next-line react-hooks/exhaustive-deps
