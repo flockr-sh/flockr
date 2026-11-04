@@ -1,6 +1,6 @@
 ---
 name: flockr
-description: "Control Flockr, a terminal multiplexer for coding agents, and message agents on this or other machines. Use when the user mentions Flockr, asks to inspect or control panes, tabs, workspaces, commands, or another agent, asks you to message, ask, or reply to another agent or machine, or when Flockr types a message notice into your pane. Do not use merely because a task could benefit from a background terminal, delegation, or parallel work. Requires FLOCKR_ENV=1."
+description: "Control Flockr, a terminal multiplexer for coding agents, and message agents on this or other machines. Use when the user mentions Flockr, asks to inspect or control panes, tabs, workspaces, commands, or another agent, asks you to message, ask, or reply to another agent or machine, asks you to close your own pane when done ("close yourself", "kill yourself", "close this pane"), or when Flockr types a message notice into your pane. Do not use merely because a task could benefit from a background terminal, delegation, or parallel work. Requires FLOCKR_ENV=1."
 ---
 
 # Flockr
@@ -201,6 +201,29 @@ Use `--format ansi` when colors and terminal styling are evidence. Otherwise use
 
 If a larger recent read still does not reveal the completed response, ask the agent to write it as Markdown in a temporary directory and reply only with the file path, then read that file on the same machine. Use this only as a fallback; do not request file output in the initial prompt.
 
+## Move a pane
+
+Move a pane next to a pane in another tab, into a new tab, or into a new workspace:
+
+```bash
+flockr pane move <pane-id> --tab <tab-id> --split right --no-focus
+flockr pane move <pane-id> --tab <tab-id> --target-pane <pane-id> --split down --no-focus
+flockr pane move <pane-id> --new-tab --workspace <workspace-id> --no-focus
+flockr pane move <pane-id> --new-workspace --label <label> --no-focus
+```
+
+Read the moved pane's new ID from `.result.move_result.pane.pane_id`. Zoomed tabs are fine as source or target.
+
+## Close your own pane when done
+
+When the user tells you to close or kill yourself, or to close this pane, when you finish, they mean: end this agent and close its pane. Finish the work, give your final report, then run this as your last command:
+
+```bash
+flockr pane close "$FLOCKR_PANE_ID"
+```
+
+It ends your own process, so nothing runs after it. If it is the last pane in its workspace, the workspace closes too. A pane in a linked worktree group returns `confirmation_required` and stays open; tell the user instead of retrying. Do not close your pane unless the user asked for it.
+
 ## Message agents on other machines
 
 When this machine is in a flock (`flockr flock status`), agents on any member can message each other. `flockr flock agents` lists them by machine.
@@ -238,7 +261,7 @@ Rules:
 - Use `--no-focus` for background work unless the user asked to switch context.
 - Use `--current`, an explicit pane ID, or a unique agent name. Do not rely on another client's focused pane.
 - Parse IDs from JSON responses. Do not derive them from sidebar order or examples.
-- Do not close workspaces, tabs, panes, or sessions you did not create unless the user explicitly asked. Ordinary CLI/API closes do not inherit the TUI's last-pane confirmation. `workspace close --group` closes the primary workspace and its linked worktree workspaces; never add it merely to bypass `workspace_group_close_required`.
+- Do not close workspaces, tabs, panes, or sessions you did not create unless the user explicitly asked. Being told to close yourself when done is such a request for your own pane. Ordinary CLI/API closes do not inherit the TUI's last-pane confirmation. `workspace close --group` closes the primary workspace and its linked worktree workspaces; never add it merely to bypass `workspace_group_close_required`.
 - Use `--trust-repository` only after the user has verified the repository. It grants per-request Git trust; it is not a routine retry for a failed worktree command.
 - Client and server versions can differ after an update. Check `flockr status` before relying on new server features. A missing method is not permission to stop or upgrade a server.
 - Never run `flockr server stop` from an active session unless the user explicitly intends to stop the server and its pane processes.
