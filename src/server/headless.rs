@@ -233,6 +233,9 @@ pub struct HeadlessServer {
     terminal_attach_owners: HashMap<String, u64>,
     /// Paired device per open mobile surface client id.
     mobile_surface_devices: HashMap<u64, String>,
+    /// Mobile surfaces opened in fit mode. They share a terminal's size: the
+    /// one used last holds it, the others watch at that size.
+    mobile_fit_surfaces: HashSet<u64>,
     /// Phone wheel lines not yet sent as a wheel event, per terminal.
     mobile_wheel_remainder: HashMap<String, i32>,
     /// Deferred application-history reads currently driving alternate-screen viewports.
@@ -408,6 +411,7 @@ impl HeadlessServer {
             server_config_diagnostic_without_keybindings,
             terminal_attach_owners: HashMap::new(),
             mobile_surface_devices: HashMap::new(),
+            mobile_fit_surfaces: HashSet::new(),
             mobile_wheel_remainder: HashMap::new(),
             pending_alt_screen_reads: Vec::new(),
             deferred_alt_screen_reads: Vec::new(),
@@ -989,6 +993,7 @@ impl HeadlessServer {
         });
         let was_foreground = self.foreground_client_id == Some(client_id);
         let removed = self.clients.remove(&client_id);
+        self.mobile_fit_surfaces.remove(&client_id);
         self.tab_geometry_controllers
             .retain(|_, controller_id| *controller_id != client_id);
         if let Some(mut removed) = removed {
@@ -1002,6 +1007,7 @@ impl HeadlessServer {
                         .state
                         .direct_attach_resize_locks
                         .remove(&terminal_id);
+                    self.app.state.mobile_fit_holds.remove(&terminal_id);
                 }
             }
         }
@@ -2213,6 +2219,14 @@ impl HeadlessServer {
                     height_px: cell_height_px,
                 };
                 let pixel_mouse = pixel_mouse && observed.is_known();
+                if self.mobile_fit_surfaces.contains(&client_id) {
+                    if let Some(client) = self.clients.get_mut(&client_id) {
+                        client.terminal_size = (cols, rows);
+                        client.render_state.request_repaint();
+                    }
+                    self.claim_mobile_fit_surface(client_id);
+                    return true;
+                }
                 let direct_terminal_id = if let Some(ClientConnection {
                     mode: ClientConnectionMode::TerminalAttach { terminal_id },
                     terminal_size,
@@ -2705,6 +2719,9 @@ impl HeadlessServer {
                 let applied = result.is_ok();
                 let _ = reply.send(result);
                 applied
+            }
+            ServerEvent::MobileSurfaceClaim { client_id } => {
+                self.claim_mobile_fit_surface(client_id)
             }
             ServerEvent::MobilePaneWheel {
                 target,

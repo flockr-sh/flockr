@@ -584,7 +584,7 @@ Conventions:
 | `rate_limited` | Rate limit. |
 | `method_not_allowed` | API method not in allowlist. |
 | `not_found` | Target pane/terminal/agent/subscription not found. |
-| `pane_busy` | Fit subscribe refused: terminal already has an attach owner. |
+| `pane_busy` | Fit subscribe refused: a local `terminal attach` holds the terminal. |
 | `too_many_subscriptions` | Over `max_subscriptions`. |
 | `payload_too_large` | Reply or frame would exceed caps. |
 | `push_unavailable` | Push disabled in config. |
@@ -956,13 +956,16 @@ should be unchanged; it has no mobile clients).
   server then sends a full frame with the new size. Many observers per pane
   are fine.
 - `fit`: the PTY is resized to the phone's `cols × rows` (agent TUIs reflow
-  to phone width). Like `flockr terminal attach`: the desktop layout for that
-  pane is held at the phone's size until the subscription ends, then
-  restored. If the terminal already has an attach owner, subscribe fails with
-  `pane_busy`, except when the owner is a fit surface of the same paired
-  device (an old connection after a network switch): then the new
-  subscription takes it over and the old one ends `taken_over`. If a local
-  `attach --takeover` takes it, the phone gets `surface.ended` `taken_over`.
+  to phone width). Like `flockr terminal attach`, the desktop layout for that
+  pane is held at the phone's size while the surface holds it. Fit surfaces
+  share the size: the one used last holds it. Subscribing, `surface.resize`,
+  and `input.*` on a fit subscription take the size from any other fit
+  surface (any device), which stays subscribed and gets frames at the new
+  size. A client shell interacting with the pane's tab gives the size back to
+  the tab layout. When the holder ends, the desktop geometry is restored. A
+  local `terminal attach` is never taken from: a fit subscribe then fails
+  with `pane_busy`, and `attach --takeover` ends the surface with
+  `taken_over`.
 
 The prototype SHOULD start in `observe` and offer a "fit to phone" toggle.
 

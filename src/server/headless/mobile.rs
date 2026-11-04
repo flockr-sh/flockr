@@ -37,17 +37,10 @@ impl HeadlessServer {
         let clients = &self.clients;
         self.mobile_surface_devices
             .retain(|id, _| clients.contains_key(id));
-        // A phone that reconnects (network switch, half-open socket) may
-        // still own the attach through its old connection; let the same
-        // device take it over. Anyone else gets `pane_busy`.
-        let mut takeover = false;
-        if fit {
-            if let Some(owner) = self.terminal_attach_owners.get(&terminal_id) {
-                if self.mobile_surface_devices.get(owner) != Some(&device_id) {
-                    return Err(SurfaceOpenError::Busy);
-                }
-                takeover = true;
-            }
+        // Fit surfaces share the size: a new one takes it from another fit
+        // surface, which keeps watching. A plain `terminal attach` keeps it.
+        if fit && self.terminal_attach_owner_is_exclusive(&terminal_id) {
+            return Err(SurfaceOpenError::Busy);
         }
         if self.clients.contains_key(&client_id) {
             return Err(SurfaceOpenError::Unavailable);
@@ -66,7 +59,8 @@ impl HeadlessServer {
         self.clients.insert(client_id, connection);
 
         let opened = if fit {
-            self.attach_terminal_client(client_id, terminal_id.clone(), takeover)
+            self.demote_mobile_fit_owner(&terminal_id);
+            self.attach_terminal_client(client_id, terminal_id.clone(), false)
         } else {
             self.observe_terminal_client(client_id, terminal_id.clone())
         };
@@ -75,6 +69,12 @@ impl HeadlessServer {
             return Err(SurfaceOpenError::NotFound);
         }
         self.mobile_surface_devices.insert(client_id, device_id);
+        if fit {
+            self.mobile_fit_surfaces.insert(client_id);
+            if let Some(real_id) = self.terminal_id_by_string(&terminal_id) {
+                self.app.state.mobile_fit_holds.insert(real_id);
+            }
+        }
         let (rows, cols) = self
             .runtime_for_terminal_id_string(&terminal_id)
             .map(|runtime| runtime.current_size())
@@ -86,6 +86,117 @@ impl HeadlessServer {
             cols,
             rows,
         })
+    }
+
+    /// True when `terminal_id` is attached by something other than a fit
+    /// surface, which a fit surface must not take the size from.
+    fn terminal_attach_owner_is_exclusive(&self, terminal_id: &str) -> bool {
+        self.terminal_attach_owners
+            .get(terminal_id)
+            .is_some_and(|owner| !self.mobile_fit_surfaces.contains(owner))
+    }
+
+    /// Moves the fit surface that holds `terminal_id`'s size, if any, to
+    /// watching at whatever size the terminal gets next. Returns true when
+    /// one was moved.
+    pub(super) fn demote_mobile_fit_owner(&mut self, terminal_id: &str) -> bool {
+        let Some(&owner) = self.terminal_attach_owners.get(terminal_id) else {
+            return false;
+        };
+        if !self.mobile_fit_surfaces.contains(&owner) {
+            return false;
+        }
+        self.terminal_attach_owners.remove(terminal_id);
+        if let Some(real_id) = self.terminal_id_by_string(terminal_id) {
+            self.app.state.direct_attach_resize_locks.remove(&real_id);
+            self.app.state.mobile_fit_holds.remove(&real_id);
+        }
+        if let Some(client) = self.clients.get_mut(&owner) {
+            client.mode = ClientConnectionMode::TerminalObserve {
+                terminal_id: terminal_id.to_owned(),
+            };
+            client.render_state.request_repaint();
+        }
+        info!(
+            client_id = owner,
+            terminal_id, "mobile fit surface gave up the size"
+        );
+        true
+    }
+
+    /// Gives a fit surface its terminal's size: the last surface used holds
+    /// it. Does nothing when a plain `terminal attach` holds the terminal.
+    pub(super) fn claim_mobile_fit_surface(&mut self, client_id: u64) -> bool {
+        if !self.mobile_fit_surfaces.contains(&client_id) {
+            return false;
+        }
+        let Some(client) = self.clients.get(&client_id) else {
+            return false;
+        };
+        let (terminal_id, owner) = match &client.mode {
+            ClientConnectionMode::TerminalAttach { terminal_id } => (terminal_id.clone(), true),
+            ClientConnectionMode::TerminalObserve { terminal_id } => (terminal_id.clone(), false),
+            _ => return false,
+        };
+        let (cols, rows) = client.terminal_size;
+        let cell_size = client.cell_size;
+        if !owner {
+            if self.terminal_attach_owner_is_exclusive(&terminal_id) {
+                return false;
+            }
+            self.demote_mobile_fit_owner(&terminal_id);
+            let Some(real_id) = self.terminal_id_by_string(&terminal_id) else {
+                return false;
+            };
+            if let Some(client) = self.clients.get_mut(&client_id) {
+                client.mode = ClientConnectionMode::TerminalAttach {
+                    terminal_id: terminal_id.clone(),
+                };
+                client.render_state.request_repaint();
+            }
+            self.terminal_attach_owners
+                .insert(terminal_id.clone(), client_id);
+            self.app
+                .state
+                .direct_attach_resize_locks
+                .insert(real_id.clone());
+            self.app.state.mobile_fit_holds.insert(real_id);
+            info!(client_id, terminal_id = %terminal_id, cols, rows, "mobile fit surface took the size");
+        }
+        if let Some(runtime) = self.runtime_for_terminal_id_string(&terminal_id) {
+            runtime.resize(rows, cols, cell_size.width_px, cell_size.height_px);
+        }
+        !owner
+    }
+
+    /// A client shell used `tab_id`: fit surfaces give its panes back to the
+    /// tab layout. Returns true when any surface gave one up.
+    pub(super) fn release_mobile_fit_in_tab(&mut self, tab_id: &str) -> bool {
+        if self.mobile_fit_surfaces.is_empty() {
+            return false;
+        }
+        let Some((workspace_index, tab_index)) = self.app.parse_tab_id(tab_id) else {
+            return false;
+        };
+        let Some(tab) = self
+            .app
+            .state
+            .workspaces
+            .get(workspace_index)
+            .and_then(|workspace| workspace.tabs.get(tab_index))
+        else {
+            return false;
+        };
+        let terminals = tab
+            .panes
+            .values()
+            .map(|pane| pane.attached_terminal_id.to_string())
+            .collect::<Vec<_>>();
+        let mut released = false;
+        for terminal_id in terminals {
+            released |= self.demote_mobile_fit_owner(&terminal_id);
+        }
+        released
     }
 
     pub(super) fn apply_mobile_pane_input(

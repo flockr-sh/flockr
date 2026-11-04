@@ -79,7 +79,7 @@ impl HeadlessServer {
             .or_else(|| self.default_shell_target())
     }
 
-    fn tab_id_for_target(&self, target: crate::ui::TabSurfaceTarget) -> Option<String> {
+    pub(super) fn tab_id_for_target(&self, target: crate::ui::TabSurfaceTarget) -> Option<String> {
         self.app
             .public_tab_id(target.workspace_index, target.tab_index)
     }
@@ -706,7 +706,8 @@ impl HeadlessServer {
         let Some(tab_id) = self.shell_tab_id_for_client(client_id) else {
             return false;
         };
-        if self.tab_geometry_controllers.insert(tab_id, client_id) == Some(client_id) {
+        let released = self.release_mobile_fit_in_tab(&tab_id);
+        if self.tab_geometry_controllers.insert(tab_id, client_id) == Some(client_id) && !released {
             return false;
         }
         self.apply_shell_tab_geometry(client_id, start_pending_agent_resumes)

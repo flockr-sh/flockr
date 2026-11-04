@@ -504,6 +504,14 @@ pub(super) fn render_panes(
                 && app.pane_exposes_host_cursor(ws_idx, info.id);
             rt.render(frame, info.inner_rect, show_cursor);
             render_pane_scrollbar(app, frame, info, rt);
+            if let Some(terminal_id) = ws
+                .tabs
+                .get(target.tab_index)
+                .and_then(|tab| tab.terminal_id(info.id))
+                .filter(|id| app.direct_attach_resize_locks.contains(*id))
+            {
+                render_held_size_notice(app, frame, info, rt, terminal_id);
+            }
         } else if let Some(reason) = ws
             .tabs
             .get(target.tab_index)
@@ -519,6 +527,34 @@ pub(super) fn render_panes(
     }
 
     render_pane_borders(app, ws, pane_infos, split_borders, frame);
+}
+
+/// One line under a pane whose size another device or attach client holds.
+fn render_held_size_notice(
+    app: &AppState,
+    frame: &mut Frame,
+    info: &PaneInfo,
+    rt: &TerminalRuntime,
+    terminal_id: &crate::terminal::TerminalId,
+) {
+    let area = info.inner_rect;
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+    let text = if app.mobile_fit_holds.contains(terminal_id) {
+        " Another device is using this pane. Type here to fit it back. "
+    } else {
+        " Another client has this pane attached at its size. "
+    };
+    // Just under the held rows when they leave room, else the last row.
+    let (rows, _) = rt.current_size();
+    let y = area.y + rows.min(area.height - 1);
+    let style = Style::default()
+        .fg(panel_contrast_fg(&app.palette))
+        .bg(app.palette.accent);
+    frame
+        .buffer_mut()
+        .set_stringn(area.x, y, text, area.width as usize, style);
 }
 
 pub(crate) fn popup_pane_rects(app: &AppState, area: Rect) -> Option<(Rect, Rect)> {
