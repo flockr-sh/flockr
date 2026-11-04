@@ -40,6 +40,10 @@ pub(super) fn run_pane_command(args: &[String]) -> std::io::Result<i32> {
         return super::send_ok_request(request.method);
     }
     let response = super::send_request(&request)?;
+    if name == "move" && move_refused(&response) {
+        eprintln!("{}", response);
+        return Ok(1);
+    }
     match leaf.output {
         bindings::Output::Json => super::print_response(&response),
         bindings::Output::Read => super::print_read_response(&response),
@@ -51,6 +55,16 @@ pub(super) fn run_pane_command(args: &[String]) -> std::io::Result<i32> {
             }
         }
     }
+}
+
+/// A move that changed nothing for any reason but `same_tab` did not happen;
+/// scripts read the exit code, so report it as a failure.
+fn move_refused(response: &serde_json::Value) -> bool {
+    let Some(result) = response.pointer("/result/move_result") else {
+        return false;
+    };
+    result.get("changed").and_then(serde_json::Value::as_bool) == Some(false)
+        && result.get("reason").and_then(serde_json::Value::as_str) != Some("same_tab")
 }
 
 fn last_index(matches: &ArgMatches, names: &[&str]) -> Option<usize> {
@@ -209,6 +223,23 @@ mod tests {
 
     fn args(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| (*value).to_owned()).collect()
+    }
+
+    #[test]
+    fn move_refused_flags_unchanged_moves_except_same_tab() {
+        let response = |changed: bool, reason: Option<&str>| {
+            serde_json::json!({
+                "id": "req",
+                "result": {"type": "pane_move", "move_result": {"changed": changed, "reason": reason}},
+            })
+        };
+        assert!(move_refused(&response(false, Some("zoomed_tab"))));
+        assert!(move_refused(&response(false, None)));
+        assert!(!move_refused(&response(false, Some("same_tab"))));
+        assert!(!move_refused(&response(true, None)));
+        assert!(!move_refused(
+            &serde_json::json!({"id": "req", "error": {"code": "x"}})
+        ));
     }
 
     fn request(name: &str, values: &[&str]) -> Result<crate::api::schema::Request, ParseError> {

@@ -471,7 +471,10 @@ impl Tab {
         }
 
         let pane_state = self.panes.remove(&pane_id)?;
-        self.zoomed = false;
+        // Keep the zoom on whichever pane takes focus; one pane can't be zoomed.
+        if self.layout.pane_count() <= 1 {
+            self.zoomed = false;
+        }
         Some(MovedPane {
             pane_id,
             pane_state,
@@ -494,7 +497,11 @@ impl Tab {
         }
         let pane_id = moved.pane_id;
         self.panes.insert(pane_id, moved.pane_state);
-        self.zoomed = false;
+        // An unfocused pane joins behind the zoom; a focused one ends it so
+        // the moved pane is shown in its layout.
+        if focus {
+            self.zoomed = false;
+        }
         Ok(pane_id)
     }
 
@@ -509,7 +516,10 @@ impl Tab {
 
         let pane = self.panes.remove(&pane_id)?;
         let terminal_id = pane.attached_terminal_id;
-        self.zoomed = false;
+        // Keep the zoom on whichever pane takes focus; one pane can't be zoomed.
+        if self.layout.pane_count() <= 1 {
+            self.zoomed = false;
+        }
         if let Some(next_root) = next_root {
             self.root_pane = next_root;
         }

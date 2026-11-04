@@ -177,7 +177,7 @@ async fn public_pane_move_focus_handles_source_removal_and_unchanged_server_targ
 
 #[tokio::test]
 async fn public_pane_move_without_effective_focus_preserves_client_views() {
-    for case in ["no-focus", "same-tab", "zoomed", "invalid"] {
+    for case in ["no-focus", "same-tab", "invalid"] {
         let mut server = pane_move_server();
         let source = server.app.state.workspaces[0].tabs[0].root_pane;
         let source_id = server.app.public_pane_id(0, source).unwrap();
@@ -189,9 +189,6 @@ async fn public_pane_move_without_effective_focus_preserves_client_views() {
         assert!(server.focus_shell_client_on_tab(9, &remaining_tab));
         let location_before = server.clients[&9].shell_location.clone();
         let revision_before = server.clients[&9].shell_projection_revision;
-        if case == "zoomed" {
-            server.app.state.workspaces[0].tabs[0].zoomed = true;
-        }
         let tab_id = match case {
             "same-tab" => server.app.public_tab_id(0, 0).unwrap(),
             "invalid" => "missing-tab".into(),

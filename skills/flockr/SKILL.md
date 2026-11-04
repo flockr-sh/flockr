@@ -66,7 +66,7 @@ Public IDs are opaque stable handles:
 - tab: `w1:t1`
 - pane: `w1:p1`
 
-Closed tab and pane IDs are not reused. A pane moved into another workspace receives a new workspace-qualified pane ID. After `pane move`, continue with `.result.move_result.pane.pane_id` or the live agent name. The old value is reported as `.result.move_result.previous_pane_id`; only the moved process's inherited caller context keeps resolving that old ID, so do not use it as a general agent target.
+Closed tab and pane IDs are not reused. A pane moved into another workspace receives a new workspace-qualified pane ID. After `pane move`, continue with `.result.move_result.pane.pane_id` or the live agent name. The old value is reported as `.result.move_result.previous_pane_id`; only the moved process's inherited caller context keeps resolving that old ID, so do not use it as a general agent target. `pane move` works with zoomed tabs: the source tab stays zoomed, on the pane that takes focus if the zoomed pane left. In a zoomed target tab, `--no-focus` adds the pane behind the zoom and `--focus` ends the zoom. A move that changes nothing for any reason but `same_tab` exits 1.
 
 Flockr injects the caller's context into each managed pane:
 

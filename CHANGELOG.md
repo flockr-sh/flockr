@@ -1,5 +1,18 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- `flockr pane move` no longer refuses to move a pane into or out of a
+  zoomed tab. The source tab stays zoomed, on the pane that takes focus
+  if the zoomed pane left. In a zoomed target tab, `--no-focus` adds the
+  pane behind the zoom and `--focus` ends the zoom.
+- Closing the zoomed pane keeps the tab zoomed on the pane that takes
+  focus, instead of showing every pane. Closing or moving out panes ends
+  the zoom only when one pane is left.
+- `flockr pane move` exits 1 when the move changes nothing for any reason
+  but `same_tab`.
+
 ## [1.2.0] - 2026-11-03
 
 ### Added
