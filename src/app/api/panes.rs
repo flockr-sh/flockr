@@ -1024,25 +1024,6 @@ impl App {
             identity_cwd: self.state.workspaces[source_ws_idx].identity_cwd.clone(),
         };
 
-        if self.state.workspaces[source_ws_idx].tabs[source_tab_idx].zoomed {
-            let Some(layout) = self.pane_layout_snapshot(source_ws_idx, source_tab_idx) else {
-                return encode_error(id, "pane_layout_unavailable", "pane layout unavailable");
-            };
-            let Some(pane) = self.pane_info(source_ws_idx, source_pane_id) else {
-                return encode_error(id, "pane_not_found", "source pane not found");
-            };
-            return encode_unchanged_pane_move(
-                id,
-                PaneMoveReason::ZoomedTab,
-                previous_pane_id,
-                previous_workspace_id,
-                previous_tab_id,
-                pane,
-                Some(layout.clone()),
-                layout,
-            );
-        }
-
         let resolved = match destination {
             PaneMoveDestination::Tab {
                 tab_id,
@@ -1074,39 +1055,6 @@ impl App {
                         pane,
                         Some(layout.clone()),
                         layout,
-                    );
-                }
-                if self.state.workspaces[target_ws_idx].tabs[target_tab_idx].zoomed {
-                    let Some(source_layout) =
-                        self.pane_layout_snapshot(source_ws_idx, source_tab_idx)
-                    else {
-                        return encode_error(
-                            id,
-                            "pane_layout_unavailable",
-                            "pane layout unavailable",
-                        );
-                    };
-                    let Some(target_layout) =
-                        self.pane_layout_snapshot(target_ws_idx, target_tab_idx)
-                    else {
-                        return encode_error(
-                            id,
-                            "pane_layout_unavailable",
-                            "pane layout unavailable",
-                        );
-                    };
-                    let Some(pane) = self.pane_info(source_ws_idx, source_pane_id) else {
-                        return encode_error(id, "pane_not_found", "source pane not found");
-                    };
-                    return encode_unchanged_pane_move(
-                        id,
-                        PaneMoveReason::ZoomedTab,
-                        previous_pane_id,
-                        previous_workspace_id,
-                        previous_tab_id,
-                        pane,
-                        Some(source_layout),
-                        target_layout,
                     );
                 }
                 let target_pane_id = match target_pane_id {
@@ -3893,46 +3841,118 @@ mod tests {
         );
     }
 
-    #[test]
-    fn api_pane_move_to_zoomed_target_returns_target_layout() {
+    /// Workspace 0: tab 0 holds panes A (focused, zoomed) and B; tab 1 holds
+    /// one pane. Returns (A, B, target tab index, target pane).
+    fn app_with_zoomed_source_tab() -> (App, PaneId, PaneId, usize, PaneId) {
         let mut app = app_with_linked_worktree();
-        let source = app.state.workspaces[0].tabs[0].root_pane;
         let target_tab = app.state.workspaces[0].test_add_tab(Some("target"));
         let target = app.state.workspaces[0].tabs[target_tab].root_pane;
-        app.state.workspaces[0].tabs[target_tab].zoomed = true;
+        app.state.workspaces[0].active_tab = 0;
+        let zoomed = app.state.workspaces[0].tabs[0].root_pane;
+        let other = app.state.workspaces[0].test_split(ratatui::layout::Direction::Horizontal);
+        app.state.workspaces[0].tabs[0].layout.focus_pane(zoomed);
+        app.state.workspaces[0].tabs[0].zoomed = true;
         seed_terminal_states(&mut app);
-        let source_public = app.public_pane_id(0, source).unwrap();
-        let target_tab_public = app.public_tab_id(0, target_tab).unwrap();
-        let target_public = app.public_pane_id(0, target).unwrap();
+        (app, zoomed, other, target_tab, target)
+    }
 
+    fn move_to_tab(app: &mut App, pane: PaneId, tab_idx: usize, focus: bool) -> PaneMoveResult {
+        let pane_public = app.public_pane_id(0, pane).unwrap();
+        let tab_public = app.public_tab_id(0, tab_idx).unwrap();
         let response = app.handle_pane_move(
             "req".into(),
             PaneMoveParams {
-                pane_id: source_public,
+                pane_id: pane_public,
                 destination: PaneMoveDestination::Tab {
-                    tab_id: target_tab_public.clone(),
-                    target_pane_id: Some(target_public),
+                    tab_id: tab_public,
+                    target_pane_id: None,
                     split: SplitDirection::Right,
                     ratio: None,
                 },
-                focus: true,
+                focus,
             },
         );
-
         let success: SuccessResponse = serde_json::from_str(&response).unwrap();
         let ResponseResult::PaneMove { move_result } = success.result else {
-            panic!("expected pane move response");
+            panic!("expected pane move response, got {response}");
         };
-        assert!(!move_result.changed);
-        assert_eq!(move_result.reason, Some(PaneMoveReason::ZoomedTab));
-        assert_eq!(move_result.target_layout.tab_id, target_tab_public);
-        assert_eq!(
-            move_result
-                .source_layout
-                .as_ref()
-                .map(|layout| layout.tab_id.as_str()),
-            app.public_tab_id(0, 0).as_deref()
-        );
+        move_result
+    }
+
+    #[test]
+    fn api_pane_move_unzoomed_pane_out_of_zoomed_tab_keeps_zoom() {
+        let (mut app, zoomed, other, target_tab, _) = app_with_zoomed_source_tab();
+        app.state.workspaces[0].test_split(ratatui::layout::Direction::Horizontal);
+        app.state.workspaces[0].tabs[0].layout.focus_pane(zoomed);
+        seed_terminal_states(&mut app);
+
+        let move_result = move_to_tab(&mut app, other, target_tab, false);
+
+        assert!(move_result.changed);
+        let source = &app.state.workspaces[0].tabs[0];
+        assert!(source.zoomed);
+        assert_eq!(source.layout.focused(), zoomed);
+        assert_eq!(source.layout.pane_count(), 2);
+        assert!(source.terminal_id(other).is_none());
+    }
+
+    #[test]
+    fn api_pane_move_zoomed_pane_zooms_the_next_source_pane() {
+        let (mut app, zoomed, other, target_tab, _) = app_with_zoomed_source_tab();
+        let third = app.state.workspaces[0].test_split(ratatui::layout::Direction::Horizontal);
+        app.state.workspaces[0].tabs[0].layout.focus_pane(zoomed);
+        seed_terminal_states(&mut app);
+
+        let move_result = move_to_tab(&mut app, zoomed, target_tab, false);
+
+        assert!(move_result.changed);
+        let source = &app.state.workspaces[0].tabs[0];
+        assert!(source.zoomed);
+        assert_eq!(source.layout.pane_count(), 2);
+        assert!([other, third].contains(&source.layout.focused()));
+    }
+
+    #[test]
+    fn api_pane_move_zoomed_pane_unzooms_a_source_left_with_one_pane() {
+        let (mut app, zoomed, other, target_tab, _) = app_with_zoomed_source_tab();
+
+        let move_result = move_to_tab(&mut app, zoomed, target_tab, false);
+
+        assert!(move_result.changed);
+        let source = &app.state.workspaces[0].tabs[0];
+        assert!(!source.zoomed);
+        assert_eq!(source.layout.focused(), other);
+    }
+
+    #[test]
+    fn api_pane_move_into_zoomed_tab_without_focus_keeps_zoom() {
+        let (mut app, zoomed, _, target_tab, target) = app_with_zoomed_source_tab();
+        app.state.workspaces[0].tabs[0].zoomed = false;
+        app.state.workspaces[0].tabs[target_tab].zoomed = true;
+
+        let move_result = move_to_tab(&mut app, zoomed, target_tab, false);
+
+        assert!(move_result.changed);
+        assert!(move_result.target_layout.zoomed);
+        let tab = &app.state.workspaces[0].tabs[target_tab];
+        assert!(tab.zoomed);
+        assert_eq!(tab.layout.focused(), target);
+        assert_eq!(tab.layout.pane_count(), 2);
+    }
+
+    #[test]
+    fn api_pane_move_into_zoomed_tab_with_focus_clears_zoom() {
+        let (mut app, zoomed, _, target_tab, _) = app_with_zoomed_source_tab();
+        app.state.workspaces[0].tabs[0].zoomed = false;
+        app.state.workspaces[0].tabs[target_tab].zoomed = true;
+
+        let move_result = move_to_tab(&mut app, zoomed, target_tab, true);
+
+        assert!(move_result.changed);
+        assert!(!move_result.target_layout.zoomed);
+        let tab = &app.state.workspaces[0].tabs[target_tab];
+        assert!(!tab.zoomed);
+        assert_eq!(tab.layout.focused(), zoomed);
     }
 
     #[test]

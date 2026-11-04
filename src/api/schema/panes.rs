@@ -674,6 +674,8 @@ pub struct PaneMoveResult {
 #[serde(rename_all = "snake_case")]
 pub enum PaneMoveReason {
     SameTab,
+    // Kept for the wire contract; servers no longer return it (moves into or
+    // out of zoomed tabs are allowed).
     ZoomedTab,
 }
 

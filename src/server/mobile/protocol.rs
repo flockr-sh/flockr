@@ -117,6 +117,10 @@ pub(crate) struct SurfaceSubscribe {
     pub rows: Option<u16>,
     #[serde(default)]
     pub max_fps: Option<u32>,
+    /// Set when the app restores this subscription after a reconnect. A
+    /// resumed fit surface takes the size only if its device held it last.
+    #[serde(default)]
+    pub resume: bool,
 }
 
 impl SurfaceSubscribe {

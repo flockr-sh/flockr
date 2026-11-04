@@ -99,6 +99,7 @@ pub(crate) async fn open(
             device_id: device_id.to_owned(),
             target: request.target.clone(),
             fit,
+            resume: request.resume,
             cols,
             rows,
             writer,

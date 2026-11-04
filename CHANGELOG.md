@@ -1,5 +1,32 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- `flockr pane move` no longer refuses to move a pane into or out of a
+  zoomed tab. The source tab stays zoomed, on the pane that takes focus
+  if the zoomed pane left. In a zoomed target tab, `--no-focus` adds the
+  pane behind the zoom and `--focus` ends the zoom.
+- Closing the zoomed pane keeps the tab zoomed on the pane that takes
+  focus, instead of showing every pane. Closing or moving out panes ends
+  the zoom only when one pane is left.
+- `flockr pane split --no-focus` in a zoomed tab opens the new pane
+  behind the zoom instead of ending it. A focused split still ends it.
+- A phone or web app showing a pane in Fit no longer locks the pane's
+  size. The device used last sets the size; the others show the pane
+  scaled to width with a notice. Opening the pane, tapping or clicking
+  it, or typing into it takes the size. In the TUI, switching to the tab
+  takes back every pane in it, and typing, pasting, or clicking in a pane
+  takes back that pane. Focusing a window, moving the mouse, scrolling,
+  and reconnecting do not, except that a device whose connection dropped
+  takes the size back if nobody used the pane meanwhile.
+- `flockr pane move` exits 1 when the move changes nothing for any reason
+  but `same_tab`.
+
+### Changed
+- The phone app's notification banner matches the agent cards: status
+  dot, one-line title and body, and a close button.
+
 ## [1.2.0] - 2026-11-03
 
 ### Added

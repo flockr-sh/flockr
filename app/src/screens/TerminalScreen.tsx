@@ -56,6 +56,10 @@ export function TerminalScreen({ nav, serverId, paneId, title, variant = 'phone'
   const [sheet, setSheet] = useState<{ title: string; lines: string[] } | null>(null);
   const [lastError, setLastError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // The pane's current size; in Fit, a size other than the one we asked for
+  // means another device holds it.
+  const [gridKey, setGridKey] = useState('');
+  const [sentKey, setSentKey] = useState('');
   const viewStats = useRef(makeViewStats()).current;
   const insets = useSafeAreaInsets();
   const [keyboardOpen, setKeyboardOpen] = useState(false);
@@ -112,15 +116,20 @@ export function TerminalScreen({ nav, serverId, paneId, title, variant = 'phone'
     if (!client) return;
     if (mode === 'fit' && !fitSize) return;
     setEnded(null);
+    setGridKey('');
+    setSentKey(mode === 'fit' && fitSize ? fitKey : '');
     const s = client.subscribe(
       paneId,
       mode === 'fit' && fitSize ? { mode: 'fit', cols: fitSize.cols, rows: fitSize.rows } : { mode: 'observe' },
       {
         onStarted: () => setPaneBg(`#${s.theme.bg.toString(16).padStart(6, '0')}`),
+        onUpdate: (change, grid) => {
+          if (change.full || change.sizeChanged) setGridKey(`${grid.cols}x${grid.rows}`);
+        },
         onEnded: (reason, message) => {
-          // Another device (or a desktop attach) holds this pane's size: keep watching at the desktop size.
+          // A `flockr terminal attach` holds this pane's size: keep watching at its size.
           if (mode === 'fit' && (reason === 'taken_over' || message?.startsWith('pane_busy'))) {
-            setNotice('Another device has this pane in Fit, showing it at desktop size');
+            setNotice('A terminal attach holds this pane, showing it at its size');
             setMode('observe');
             return;
           }
@@ -133,13 +142,29 @@ export function TerminalScreen({ nav, serverId, paneId, title, variant = 'phone'
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [client, paneId, mode, mode === 'fit' && !!fitSize]);
 
-  // Fit mode: follow layout changes (rotation, keyboard) with a resize.
+  // Fit surfaces share the pane's size: the device used last holds it.
+  // Tapping this one takes it back; the server handles typing.
+  const held = mode === 'fit' && !!sub && gridKey !== '' && sentKey !== '' && gridKey !== sentKey;
+  const resizeTo = useCallback(() => {
+    if (!sub || !fitSize) return;
+    setSentKey(fitKey);
+    sub.resize(fitSize.cols, fitSize.rows);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sub, fitKey]);
+  const claim = useCallback(() => {
+    if (held) resizeTo();
+  }, [held, resizeTo]);
+
+  // Fit mode: follow layout changes (rotation, keyboard) with a resize, but
+  // only while this device holds the size. A resize takes the size, and the
+  // notice shown while held changes the layout, so following it would take
+  // the size back from the device that has it.
   useEffect(() => {
-    if (!sub || mode !== 'fit' || !fitSize) return;
-    const t = setTimeout(() => sub.resize(fitSize.cols, fitSize.rows), 150);
+    if (!sub || mode !== 'fit' || !fitSize || held || fitKey === sentKey) return;
+    const t = setTimeout(resizeTo, 150);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sub, mode, fitKey]);
+  }, [sub, mode, fitKey, held]);
 
   const send = useCallback(
     (kind: InputKind, value: string | string[]) => {
@@ -191,6 +216,7 @@ export function TerminalScreen({ nav, serverId, paneId, title, variant = 'phone'
 
   const onTapCell = useCallback(
     (col: number, row: number) => {
+      claim();
       composer.current?.tapTerminal();
       const url = sub ? linkAt(sub.grid, col, row) : null;
       if (!url) return;
@@ -199,7 +225,7 @@ export function TerminalScreen({ nav, serverId, paneId, title, variant = 'phone'
         { text: 'Open', onPress: () => void Linking.openURL(url).catch((e: unknown) => setLastError(String(e))) },
       ]);
     },
-    [sub],
+    [sub, claim],
   );
 
   const onLongPress = useCallback(() => {
@@ -211,8 +237,9 @@ export function TerminalScreen({ nav, serverId, paneId, title, variant = 'phone'
     setZoom(z);
   }, []);
 
-  const viewZoom = mode === 'fit' ? fitZoom : zoom;
-  const viewFitWidth = mode === 'observe' && fitWidth;
+  const viewZoom = mode === 'fit' && !held ? fitZoom : zoom;
+  const viewFitWidth = (mode === 'observe' && fitWidth) || held;
+  const shownNotice = notice ?? (held ? 'Another device is using this pane. Tap or type to fit it here.' : null);
 
   const terminal = (
     <TerminalView
@@ -274,7 +301,7 @@ export function TerminalScreen({ nav, serverId, paneId, title, variant = 'phone'
             <Ghost label="↓" hint="Jump to the bottom" onPress={() => sub?.scrollToBottom()} />
           </View>
         </View>
-        {ended || notice ? <Text style={desk.notice}>{ended ? `Stream ended: ${ended}` : notice}</Text> : null}
+        {ended || shownNotice ? <Text style={desk.notice}>{ended ? `Stream ended: ${ended}` : shownNotice}</Text> : null}
         <View style={[desk.surface, paneBg ? { backgroundColor: paneBg } : null]}>
           {perf ? <PerfOverlay client={client} sub={sub} view={viewStats} /> : null}
           {terminal}
@@ -338,7 +365,7 @@ export function TerminalScreen({ nav, serverId, paneId, title, variant = 'phone'
             />
           ) : null}
         </View>
-        {ended || notice ? <Text style={styles.banner}>{ended ? `Stream ended: ${ended}` : notice}</Text> : null}
+        {ended || shownNotice ? <Text style={styles.banner}>{ended ? `Stream ended: ${ended}` : shownNotice}</Text> : null}
         <View style={{ flex: 1 }}>
           {perf ? <PerfOverlay client={client} sub={sub} view={viewStats} /> : null}
           <View style={{ flex: 1 }}>{terminal}</View>

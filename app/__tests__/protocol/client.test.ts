@@ -297,6 +297,17 @@ describe('GatewayClient against the mock gateway', () => {
     await waitFor(() => gw.pane('p_1')?.term.cols === 100);
   });
 
+  it('marks a fit subscription restored after a reconnect as a resume', async () => {
+    const { client } = await pairedClient({ reconnect: true, random: () => 0 });
+    await subscribed(client, 'p_1', { mode: 'fit', cols: 46, rows: 30 });
+    const subscribes = () => gw.received.filter((m) => m.t === 'surface.subscribe');
+    expect(subscribes()).toHaveLength(1);
+    expect(subscribes()[0].resume).toBeUndefined();
+    for (const ws of (gw as unknown as { wss: { clients: Set<WebSocket> } }).wss.clients) ws.terminate();
+    await waitFor(() => subscribes().length === 2, 5000);
+    expect(subscribes()[1].resume).toBe(true);
+  });
+
   it('wheel sends surface.wheel at a cell, or surface.scroll to servers without it', async () => {
     const { client } = await pairedClient();
     const sub = await subscribed(client, 'p_3');

@@ -1737,7 +1737,19 @@ impl Conn {
         let id = input.id.as_deref();
         let (pane_target, terminal_target) = match (input.sub, &input.target) {
             (Some(sub), _) => match self.subs.get(&sub) {
-                Some(handle) => (handle.pane_id.clone(), handle.terminal_id.clone()),
+                Some(handle) => {
+                    // Typing into a fit surface gives it the pane's size.
+                    if handle.fit {
+                        let _ = self
+                            .gateway
+                            .server_event_tx
+                            .send(ServerEvent::MobileSurfaceClaim {
+                                client_id: handle.client_id,
+                            })
+                            .await;
+                    }
+                    (handle.pane_id.clone(), handle.terminal_id.clone())
+                }
                 None => {
                     self.error(id, ErrorCode::NotFound, "no such subscription");
                     return;

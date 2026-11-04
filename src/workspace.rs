@@ -1447,6 +1447,26 @@ mod tests {
     use super::*;
 
     #[test]
+    fn closing_the_zoomed_pane_zooms_the_next_pane() {
+        let mut ws = Workspace::test_new("zoom");
+        let first = ws.tabs[0].root_pane;
+        let second = ws.test_split(ratatui::layout::Direction::Horizontal);
+        let third = ws.test_split(ratatui::layout::Direction::Horizontal);
+        let tab = &mut ws.tabs[0];
+        tab.layout.focus_pane(first);
+        tab.layout.focus_pane(third);
+        tab.zoomed = true;
+
+        assert!(tab.close_pane(third).is_some());
+        assert!(tab.zoomed);
+        assert_eq!(tab.layout.focused(), first);
+
+        assert!(tab.close_pane(first).is_some());
+        assert!(!tab.zoomed, "one pane left cannot stay zoomed");
+        assert_eq!(tab.layout.focused(), second);
+    }
+
+    #[test]
     fn generated_workspace_ids_are_short_base32_handles() {
         let first = generate_workspace_id();
         let second = generate_workspace_id();

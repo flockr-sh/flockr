@@ -608,11 +608,13 @@ pub(crate) enum ServerEvent {
     /// Internal only; never on the wire.
     MobileSurfaceOpen {
         client_id: u64,
-        /// Paired device that owns the subscription; a fit subscribe may take
-        /// over an attach held by another surface of the same device.
+        /// Paired device that owns the subscription.
         device_id: String,
         target: String,
         fit: bool,
+        /// Restored after a reconnect: take the size only if this device
+        /// held it last.
+        resume: bool,
         cols: u16,
         rows: u16,
         writer: ClientWriter,
@@ -620,6 +622,9 @@ pub(crate) enum ServerEvent {
             Result<crate::server::mobile::SurfaceOpened, crate::server::mobile::SurfaceOpenError>,
         >,
     },
+    /// A fit-mode mobile surface was used (input): give it the terminal's
+    /// size if another surface or a client shell holds it.
+    MobileSurfaceClaim { client_id: u64 },
     /// The mobile gateway typed text into one terminal (no paste brackets).
     MobilePaneInput {
         target: String,

@@ -124,6 +124,8 @@ fn test_headless_server_with_event_hub(event_hub: api::EventHub) -> HeadlessServ
         server_config_diagnostic_without_keybindings: None,
         terminal_attach_owners: HashMap::new(),
         mobile_surface_devices: HashMap::new(),
+        mobile_fit_surfaces: HashSet::new(),
+        mobile_fit_last_device: HashMap::new(),
         mobile_wheel_remainder: HashMap::new(),
         pending_alt_screen_reads: Vec::new(),
         deferred_alt_screen_reads: Vec::new(),
@@ -4539,39 +4541,103 @@ fn terminal_control_resolves_public_pane_id_and_takes_ownership() {
 }
 
 #[test]
-fn mobile_fit_surface_takes_over_only_from_the_same_device() {
-    with_terminal_session_test_server(|server, _, terminal_id_string, public_pane_id| {
-        let open = |server: &mut HeadlessServer, client_id: u64, device: &str| {
+fn mobile_fit_surfaces_share_the_size_and_the_last_one_used_holds_it() {
+    with_terminal_session_test_server(|server, terminal_id, terminal_id_string, public_pane_id| {
+        let open = |server: &mut HeadlessServer, client_id: u64, device: &str, cols: u16| {
             let (writer, _reader) = crate::server::client_transport::ClientWriter::in_process();
             server.open_mobile_surface(
                 client_id,
                 device.to_owned(),
                 public_pane_id.clone(),
                 true,
-                40,
+                false,
+                cols,
                 20,
                 writer,
             )
         };
+        let owner = |server: &HeadlessServer| {
+            server
+                .terminal_attach_owners
+                .get(&terminal_id_string)
+                .copied()
+        };
+        let observing = |server: &HeadlessServer, client_id: u64| {
+            matches!(
+                server.clients.get(&client_id).map(|client| &client.mode),
+                Some(ClientConnectionMode::TerminalObserve { .. })
+            )
+        };
         let base = 1u64 << 52;
-        assert!(open(server, base + 1, "d_a").is_ok());
-        assert_eq!(
-            server.terminal_attach_owners.get(&terminal_id_string),
-            Some(&(base + 1))
-        );
-        assert_eq!(
-            open(server, base + 2, "d_b"),
-            Err(crate::server::mobile::SurfaceOpenError::Busy)
-        );
-        assert!(open(server, base + 3, "d_a").is_ok());
-        assert_eq!(
-            server.terminal_attach_owners.get(&terminal_id_string),
-            Some(&(base + 3))
-        );
-        assert!(!server.clients.contains_key(&(base + 1)));
+        let phone = base + 1;
+        let web = base + 2;
 
-        // A desktop attach owner is never taken over from the phone.
-        server.remove_client_and_resize_if_needed(base + 3);
+        // The last surface opened holds the size; the other keeps watching.
+        assert!(open(server, phone, "d_a", 40).is_ok());
+        assert_eq!(owner(server), Some(phone));
+        assert!(open(server, web, "d_b", 120).is_ok());
+        assert_eq!(owner(server), Some(web));
+        assert!(observing(server, phone));
+        assert_eq!(
+            server
+                .runtime_for_terminal_id_string(&terminal_id_string)
+                .map(|r| r.current_size()),
+            Some((20, 120))
+        );
+
+        // Using the phone takes the size back.
+        assert!(server.handle_server_event(ServerEvent::MobileSurfaceClaim { client_id: phone }));
+        assert_eq!(owner(server), Some(phone));
+        assert!(observing(server, web));
+        assert_eq!(
+            server
+                .runtime_for_terminal_id_string(&terminal_id_string)
+                .map(|r| r.current_size()),
+            Some((20, 40))
+        );
+
+        // A resize from a watching surface claims the size too.
+        server.handle_server_event(ServerEvent::ClientResize {
+            client_id: web,
+            cols: 100,
+            rows: 30,
+            cell_width_px: 0,
+            cell_height_px: 0,
+            pixel_mouse: false,
+        });
+        assert_eq!(owner(server), Some(web));
+        assert_eq!(
+            server
+                .runtime_for_terminal_id_string(&terminal_id_string)
+                .map(|r| r.current_size()),
+            Some((30, 100))
+        );
+
+        // Using the tab in a client shell gives the pane back to the layout.
+        let (workspace_index, pane_id) = server.app.parse_pane_id(&public_pane_id).unwrap();
+        let tab_index = server.app.state.workspaces[workspace_index]
+            .find_tab_index_for_pane(pane_id)
+            .unwrap();
+        let tab_id = server
+            .tab_id_for_target(crate::ui::TabSurfaceTarget {
+                workspace_index,
+                tab_index,
+            })
+            .unwrap();
+        assert!(!server.release_mobile_fit(&tab_id, &super::FitRelease::None));
+        assert_eq!(owner(server), Some(web));
+        assert!(server.release_mobile_fit(&tab_id, &super::FitRelease::Tab));
+        assert_eq!(owner(server), None);
+        assert!(observing(server, web));
+        assert!(!server
+            .app
+            .state
+            .direct_attach_resize_locks
+            .contains(&terminal_id));
+
+        // A plain terminal attach is never taken from it.
+        server.remove_client_and_resize_if_needed(phone);
+        server.remove_client_and_resize_if_needed(web);
         connect_pending_terminal_client(server, 7);
         assert!(
             server.handle_server_event(ServerEvent::ClientAttachTerminal {
@@ -4581,10 +4647,107 @@ fn mobile_fit_surface_takes_over_only_from_the_same_device() {
             })
         );
         assert_eq!(
-            open(server, base + 4, "d_a"),
+            open(server, base + 4, "d_a", 40),
             Err(crate::server::mobile::SurfaceOpenError::Busy)
         );
+        assert_eq!(owner(server), Some(7));
     });
+}
+
+#[test]
+fn resumed_fit_surface_takes_the_size_only_if_its_device_held_it_last() {
+    with_terminal_session_test_server(
+        |server, _terminal_id, terminal_id_string, public_pane_id| {
+            let open = |server: &mut HeadlessServer, client_id: u64, device: &str, resume: bool| {
+                let (writer, _reader) = crate::server::client_transport::ClientWriter::in_process();
+                server.open_mobile_surface(
+                    client_id,
+                    device.to_owned(),
+                    public_pane_id.clone(),
+                    true,
+                    resume,
+                    40,
+                    20,
+                    writer,
+                )
+            };
+            let owner = |server: &HeadlessServer| {
+                server
+                    .terminal_attach_owners
+                    .get(&terminal_id_string)
+                    .copied()
+            };
+            let base = 1u64 << 52;
+
+            // The phone's connection drops while it holds the size; nobody uses
+            // the pane; the phone reconnects and takes it back.
+            assert!(open(server, base + 1, "d_phone", false).is_ok());
+            server.remove_client_and_resize_if_needed(base + 1);
+            assert_eq!(owner(server), None);
+            assert!(open(server, base + 2, "d_phone", true).is_ok());
+            assert_eq!(owner(server), Some(base + 2));
+
+            // Another device reconnecting does not take it.
+            assert!(open(server, base + 3, "d_web", true).is_ok());
+            assert_eq!(owner(server), Some(base + 2));
+
+            // A half-open old connection of the same device is taken over.
+            assert!(open(server, base + 4, "d_phone", true).is_ok());
+            assert_eq!(owner(server), Some(base + 4));
+
+            // After the client shell uses the pane, the phone reconnecting
+            // only watches.
+            server.remove_client_and_resize_if_needed(base + 4);
+            server.remove_client_and_resize_if_needed(base + 2);
+            assert!(server
+                .mobile_fit_last_device
+                .contains_key(&terminal_id_string));
+            let (workspace_index, pane_id) = server.app.parse_pane_id(&public_pane_id).unwrap();
+            let release = server.fit_release_for_pane(workspace_index, pane_id);
+            assert_eq!(
+                release,
+                super::FitRelease::Terminal(terminal_id_string.clone())
+            );
+            server.release_mobile_fit("", &release);
+            assert!(open(server, base + 5, "d_phone", true).is_ok());
+            assert_eq!(owner(server), None);
+
+            // A fresh open (not a resume) always takes it.
+            assert!(open(server, base + 6, "d_web", false).is_ok());
+            assert_eq!(owner(server), Some(base + 6));
+        },
+    );
+}
+
+#[test]
+fn only_typing_pasting_or_clicking_uses_a_pane() {
+    use crate::protocol::{
+        ClientMouseButton, ClientMouseKind, ClientMousePosition, ClientPaneInputEvent,
+    };
+    let mouse = |kind| ClientPaneInputEvent::Mouse {
+        kind,
+        position: ClientMousePosition::Cell { column: 1, row: 1 },
+        geometry: None,
+        modifiers: 0,
+        lines: 1,
+    };
+    assert!(super::client_pane_input_uses_pane(&[
+        ClientPaneInputEvent::TextCommit("a".into())
+    ]));
+    assert!(super::client_pane_input_uses_pane(&[
+        ClientPaneInputEvent::Paste("a".into())
+    ]));
+    assert!(super::client_pane_input_uses_pane(&[mouse(
+        ClientMouseKind::Down(ClientMouseButton::Left)
+    )]));
+    for kind in [
+        ClientMouseKind::Moved,
+        ClientMouseKind::ScrollUp,
+        ClientMouseKind::ScrollDown,
+        ClientMouseKind::Up(ClientMouseButton::Left),
+    ] {
+        assert!(!super::client_pane_input_uses_pane(&[mouse(kind)]));
+    }
 }
 
 #[test]
