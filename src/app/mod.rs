@@ -2921,6 +2921,57 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn pane_split_keeps_zoom_unless_the_new_pane_takes_focus() {
+        let _guard = config_env_lock().lock().unwrap();
+        let original_shell = std::env::var_os("SHELL");
+        std::env::set_var("SHELL", exiting_test_command());
+
+        let mut app = test_app();
+        let workspace = Workspace::test_new("api-pane-split-zoom");
+        let zoomed = workspace.tabs[0].root_pane;
+        app.state.workspaces = vec![workspace];
+        app.state.ensure_test_terminals();
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.workspaces[0].tabs[0].zoomed = true;
+        let target_pane_id = app.pane_info(0, zoomed).unwrap().pane_id;
+
+        for focus in [false, true] {
+            let response = app.handle_api_request(crate::api::schema::Request {
+                id: "req_pane_split_zoom".into(),
+                method: crate::api::schema::Method::PaneSplit(
+                    crate::api::schema::PaneSplitParams {
+                        workspace_id: None,
+                        target_pane_id: Some(target_pane_id.clone()),
+                        direction: crate::api::schema::SplitDirection::Right,
+                        ratio: None,
+                        cwd: None,
+                        focus,
+                        right_click: Default::default(),
+                        env: Default::default(),
+                    },
+                ),
+            });
+            let response: serde_json::Value = serde_json::from_str(&response).unwrap();
+            assert_eq!(response["result"]["type"], "pane_info");
+            let tab = &app.state.workspaces[0].tabs[0];
+            assert_eq!(tab.zoomed, !focus, "focus: {focus}");
+            if !focus {
+                assert_eq!(tab.layout.focused(), zoomed);
+            }
+        }
+
+        let runtimes: Vec<_> = app.terminal_runtimes.drain().collect();
+        for (_terminal_id, runtime) in runtimes {
+            runtime.shutdown();
+        }
+        match original_shell {
+            Some(value) => std::env::set_var("SHELL", value),
+            None => std::env::remove_var("SHELL"),
+        }
+    }
+
+    #[tokio::test]
     async fn hidden_panes_start_at_the_size_their_tab_layout_gives_them() {
         let mut app = test_app();
         let mut visible = Workspace::test_new("visible-with-tiny-first-pane");

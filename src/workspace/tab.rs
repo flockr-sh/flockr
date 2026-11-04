@@ -405,11 +405,12 @@ impl Tab {
             }
             None => TerminalState::new(terminal_id.clone(), actual_cwd),
         };
+        // An unfocused new pane opens behind the zoom; a focused one ends it.
         if focus_new_pane {
             self.layout.focus_pane(new_id);
+            self.zoomed = false;
         }
         self.panes.insert(new_id, PaneState::new(terminal_id));
-        self.zoomed = false;
         Ok(NewPane {
             pane_id: new_id,
             terminal,
