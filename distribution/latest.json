@@ -1,21 +1,21 @@
 {
-  "version": "1.3.0",
+  "version": "1.3.1",
   "protocol": 22,
   "endpoint_generation": 1,
-  "notes": "### Fixed\n- `flockr pane move` no longer refuses to move a pane into or out of a\n  zoomed tab. The source tab stays zoomed, on the pane that takes focus\n  if the zoomed pane left. In a zoomed target tab, `--no-focus` adds the\n  pane behind the zoom and `--focus` ends the zoom.\n- Closing the zoomed pane keeps the tab zoomed on the pane that takes\n  focus, instead of showing every pane. Closing or moving out panes ends\n  the zoom only when one pane is left.\n- `flockr pane split --no-focus` in a zoomed tab opens the new pane\n  behind the zoom instead of ending it. A focused split still ends it.\n- A phone or web app showing a pane in Fit no longer locks the pane's\n  size. The device used last sets the size; the others show the pane\n  scaled to width with a notice. Opening the pane, tapping or clicking\n  it, or typing into it takes the size. In the TUI, switching to the tab\n  takes back every pane in it, and typing, pasting, or clicking in a pane\n  takes back that pane. Focusing a window, moving the mouse, scrolling,\n  and reconnecting do not, except that a device whose connection dropped\n  takes the size back if nobody used the pane meanwhile.\n- `flockr pane move` exits 1 when the move changes nothing for any reason\n  but `same_tab`.\n\n### Changed\n- The phone app's notification banner matches the agent cards: status\n  dot, one-line title and body, and a close button.\n- The flockr skill tells agents to close their own pane, as their last\n  step, when told to close or kill themselves when done, and shows\n  `pane move` examples. Reinstall or update the Claude and Codex\n  integrations to get it.",
+  "notes": "### Fixed\n- The web app built into flockr is titled \"flockr\", not \"flockr (dev)\".",
   "assets": {
-    "linux-x86_64": "https://github.com/flockr-sh/flockr/releases/download/v1.3.0/flockr-linux-x86_64",
-    "linux-aarch64": "https://github.com/flockr-sh/flockr/releases/download/v1.3.0/flockr-linux-aarch64",
-    "macos-x86_64": "https://github.com/flockr-sh/flockr/releases/download/v1.3.0/flockr-macos-x86_64",
-    "macos-aarch64": "https://github.com/flockr-sh/flockr/releases/download/v1.3.0/flockr-macos-aarch64",
-    "windows-x86_64": "https://github.com/flockr-sh/flockr/releases/download/v1.3.0/flockr-windows-x86_64.zip"
+    "linux-x86_64": "https://github.com/flockr-sh/flockr/releases/download/v1.3.1/flockr-linux-x86_64",
+    "linux-aarch64": "https://github.com/flockr-sh/flockr/releases/download/v1.3.1/flockr-linux-aarch64",
+    "macos-x86_64": "https://github.com/flockr-sh/flockr/releases/download/v1.3.1/flockr-macos-x86_64",
+    "macos-aarch64": "https://github.com/flockr-sh/flockr/releases/download/v1.3.1/flockr-macos-aarch64",
+    "windows-x86_64": "https://github.com/flockr-sh/flockr/releases/download/v1.3.1/flockr-windows-x86_64.zip"
   },
   "sha256": {
-    "linux-x86_64": "a4f6ab9f3b5f5229fe9e835f70881aa9f227663fb99fee06de94c6b3febcfc39",
-    "linux-aarch64": "91fadbc09453adc9bbb11cfb4b7e10390810d28cc13cb5185dd377c7bd103876",
-    "macos-x86_64": "2ca84ae9dc84c5b9dc858ddc3d6dabe8742b2cf493334fb083132337dd3d8b6f",
-    "macos-aarch64": "9a7751b82110d86ee1a6baa6c650567aa8fd7bbbb7d23403d9ee7e8fb63a8b43",
-    "windows-x86_64": "246fbb138aef794605296b3514d0897dc7c8aef64acaa31f7039e47630cc40b2"
+    "linux-x86_64": "f8447b262ccf61ea960931159ddaeff2c8d89627e23d09d7d9e8268871021045",
+    "linux-aarch64": "1dbde5580759da816e3a1e8bbd8ba9132106def922669efd7c18e296ffa855f9",
+    "macos-x86_64": "e1843505cea9719bfeea2808fbf966a1fe07805d9598c0c0668c7e15eea11758",
+    "macos-aarch64": "f23765d0ecdb2d82fc9570ada795a395d01e4a1b83f389a4d0c9896370008afe",
+    "windows-x86_64": "2c15120dfbf66969e31c3efe417eb61170cbaaff5c699ea96b86bc0ff6ecd904"
   },
   "releases": {
     "1.0.0": {
@@ -92,6 +92,25 @@
         "macos-x86_64": "2ca84ae9dc84c5b9dc858ddc3d6dabe8742b2cf493334fb083132337dd3d8b6f",
         "macos-aarch64": "9a7751b82110d86ee1a6baa6c650567aa8fd7bbbb7d23403d9ee7e8fb63a8b43",
         "windows-x86_64": "246fbb138aef794605296b3514d0897dc7c8aef64acaa31f7039e47630cc40b2"
+      }
+    },
+    "1.3.1": {
+      "notes": "### Fixed\n- The web app built into flockr is titled \"flockr\", not \"flockr (dev)\".",
+      "protocol": 22,
+      "endpoint_generation": 1,
+      "assets": {
+        "linux-x86_64": "https://github.com/flockr-sh/flockr/releases/download/v1.3.1/flockr-linux-x86_64",
+        "linux-aarch64": "https://github.com/flockr-sh/flockr/releases/download/v1.3.1/flockr-linux-aarch64",
+        "macos-x86_64": "https://github.com/flockr-sh/flockr/releases/download/v1.3.1/flockr-macos-x86_64",
+        "macos-aarch64": "https://github.com/flockr-sh/flockr/releases/download/v1.3.1/flockr-macos-aarch64",
+        "windows-x86_64": "https://github.com/flockr-sh/flockr/releases/download/v1.3.1/flockr-windows-x86_64.zip"
+      },
+      "sha256": {
+        "linux-x86_64": "f8447b262ccf61ea960931159ddaeff2c8d89627e23d09d7d9e8268871021045",
+        "linux-aarch64": "1dbde5580759da816e3a1e8bbd8ba9132106def922669efd7c18e296ffa855f9",
+        "macos-x86_64": "e1843505cea9719bfeea2808fbf966a1fe07805d9598c0c0668c7e15eea11758",
+        "macos-aarch64": "f23765d0ecdb2d82fc9570ada795a395d01e4a1b83f389a4d0c9896370008afe",
+        "windows-x86_64": "2c15120dfbf66969e31c3efe417eb61170cbaaff5c699ea96b86bc0ff6ecd904"
       }
     }
   }
