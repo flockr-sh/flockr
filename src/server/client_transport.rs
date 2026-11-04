@@ -612,6 +612,9 @@ pub(crate) enum ServerEvent {
         device_id: String,
         target: String,
         fit: bool,
+        /// Restored after a reconnect: take the size only if this device
+        /// held it last.
+        resume: bool,
         cols: u16,
         rows: u16,
         writer: ClientWriter,

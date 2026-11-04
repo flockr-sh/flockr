@@ -737,6 +737,7 @@ See section 10 for the frame format and server behavior.
 ```json
 { "t": "surface.subscribe", "id": "s1", "sub": 1, "target": "p_3", "mode": "observe", "max_fps": 30 }
 { "t": "surface.subscribe", "id": "s2", "sub": 2, "target": "p_3", "mode": "fit", "cols": 46, "rows": 38 }
+{ "t": "surface.subscribe", "id": "s3", "sub": 3, "target": "p_3", "mode": "fit", "cols": 46, "rows": 38, "resume": true }
 { "t": "surface.resize", "sub": 2, "cols": 80, "rows": 30 }
 { "t": "surface.ack", "sub": 1, "seq": 17 }
 { "t": "surface.resync", "sub": 1 }
@@ -961,8 +962,15 @@ should be unchanged; it has no mobile clients).
   share the size: the one used last holds it. Subscribing, `surface.resize`,
   and `input.*` on a fit subscription take the size from any other fit
   surface (any device), which stays subscribed and gets frames at the new
-  size. A client shell interacting with the pane's tab gives the size back to
-  the tab layout. When the holder ends, the desktop geometry is restored. A
+  size. A subscribe with `"resume": true` (optional, default false; the app
+  sets it when it restores a subscription after a reconnect) takes the size
+  only if this device held it last: its fit surface still holds it (a
+  half-open old connection), or held it when its connection dropped and
+  nobody has used the pane since. Otherwise it watches at the current size
+  until it is used. A client shell takes the size back when it switches to
+  the pane's tab (every pane in the tab) or types, pastes, or clicks in the
+  pane (that pane only); focusing its window, moving the mouse, or scrolling
+  does not. When the holder ends, the desktop geometry is restored. A
   local `terminal attach` is never taken from: a fit subscribe then fails
   with `pane_busy`, and `attach --takeover` ends the surface with
   `taken_over`.

@@ -79,6 +79,7 @@ mod client_views;
 mod endpoint_requests;
 mod lifecycle;
 mod mobile;
+use mobile::FitRelease;
 mod native_graphics;
 mod notifications;
 mod render;
@@ -236,6 +237,10 @@ pub struct HeadlessServer {
     /// Mobile surfaces opened in fit mode. They share a terminal's size: the
     /// one used last holds it, the others watch at that size.
     mobile_fit_surfaces: HashSet<u64>,
+    /// Device whose fit surface held a terminal's size when its connection
+    /// dropped, until anyone else uses the pane. Lets that device take the
+    /// size back when it reconnects.
+    mobile_fit_last_device: HashMap<String, String>,
     /// Phone wheel lines not yet sent as a wheel event, per terminal.
     mobile_wheel_remainder: HashMap<String, i32>,
     /// Deferred application-history reads currently driving alternate-screen viewports.
@@ -412,6 +417,7 @@ impl HeadlessServer {
             terminal_attach_owners: HashMap::new(),
             mobile_surface_devices: HashMap::new(),
             mobile_fit_surfaces: HashSet::new(),
+            mobile_fit_last_device: HashMap::new(),
             mobile_wheel_remainder: HashMap::new(),
             pending_alt_screen_reads: Vec::new(),
             deferred_alt_screen_reads: Vec::new(),
@@ -993,7 +999,7 @@ impl HeadlessServer {
         });
         let was_foreground = self.foreground_client_id == Some(client_id);
         let removed = self.clients.remove(&client_id);
-        self.mobile_fit_surfaces.remove(&client_id);
+        let was_fit_surface = self.mobile_fit_surfaces.remove(&client_id);
         self.tab_geometry_controllers
             .retain(|_, controller_id| *controller_id != client_id);
         if let Some(mut removed) = removed {
@@ -1001,6 +1007,12 @@ impl HeadlessServer {
             self.release_client_shell_inputs(client_id, held_inputs);
             crate::server::clipboard_image::remove_files(removed.staged_clipboard_files);
             if let ClientConnectionMode::TerminalAttach { terminal_id } = removed.mode {
+                if was_fit_surface {
+                    if let Some(device_id) = self.mobile_surface_devices.get(&client_id) {
+                        self.mobile_fit_last_device
+                            .insert(terminal_id.clone(), device_id.clone());
+                    }
+                }
                 self.terminal_attach_owners.remove(&terminal_id);
                 if let Some(terminal_id) = self.terminal_id_by_string(&terminal_id) {
                     self.app
@@ -1248,7 +1260,9 @@ impl HeadlessServer {
                     return false;
                 }
                 let foreground_changed = self.promote_client_to_foreground(client_id);
-                let geometry_changed = self.claim_shell_tab_geometry(client_id, false);
+                let pane_release = self.fit_release_for_pane(workspace_index, runtime_pane_id);
+                let geometry_changed =
+                    self.claim_shell_tab_geometry_with(client_id, false, pane_release);
                 let Some(runtime) = self.app.state.runtime_for_pane_in_workspace(
                     &self.app.terminal_runtimes,
                     workspace_index,
@@ -1288,7 +1302,11 @@ impl HeadlessServer {
                     return false;
                 }
                 let foreground_changed = self.promote_client_to_foreground(client_id);
-                let geometry_changed = self.claim_shell_tab_geometry(client_id, false);
+                let geometry_changed = self.claim_shell_tab_geometry_with(
+                    client_id,
+                    false,
+                    FitRelease::Terminal(popup_terminal_id.to_string()),
+                );
                 let Some(runtime) = self.app.terminal_runtimes.get(&popup_terminal_id) else {
                     return foreground_changed | geometry_changed;
                 };
@@ -2343,7 +2361,9 @@ impl HeadlessServer {
                 }
                 if focused {
                     self.promote_client_to_foreground(client_id);
-                    self.claim_shell_tab_geometry(client_id, false);
+                    // Focus alone does not take panes back from a phone or
+                    // web app; using a pane does.
+                    self.claim_shell_tab_geometry_with(client_id, false, FitRelease::None);
                     if !another_focused_viewer {
                         if let Some(target) = self.shell_focus_target(client_id) {
                             self.send_shell_focus_target(
@@ -2472,8 +2492,13 @@ impl HeadlessServer {
                 }
                 let foreground_changed =
                     interaction && self.promote_client_to_foreground(client_id);
-                let geometry_changed =
-                    interaction && self.claim_shell_tab_geometry(client_id, false);
+                let pane_release = if client_pane_input_uses_pane(&events) {
+                    self.fit_release_for_pane(workspace_index, runtime_pane_id)
+                } else {
+                    FitRelease::None
+                };
+                let geometry_changed = interaction
+                    && self.claim_shell_tab_geometry_with(client_id, false, pane_release);
                 let Some(runtime) = self.app.state.runtime_for_pane_in_workspace(
                     &self.app.terminal_runtimes,
                     workspace_index,
@@ -2568,8 +2593,13 @@ impl HeadlessServer {
                 }
                 let foreground_changed =
                     interaction && self.promote_client_to_foreground(client_id);
-                let geometry_changed =
-                    interaction && self.claim_shell_tab_geometry(client_id, false);
+                let popup_release = if client_pane_input_uses_pane(&events) {
+                    FitRelease::Terminal(popup_terminal_id.to_string())
+                } else {
+                    FitRelease::None
+                };
+                let geometry_changed = interaction
+                    && self.claim_shell_tab_geometry_with(client_id, false, popup_release);
                 let Some(runtime) = self.app.terminal_runtimes.get(&popup_terminal_id) else {
                     return foreground_changed | geometry_changed;
                 };
@@ -2699,13 +2729,15 @@ impl HeadlessServer {
                 device_id,
                 target,
                 fit,
+                resume,
                 cols,
                 rows,
                 writer,
                 reply,
             } => {
-                let result =
-                    self.open_mobile_surface(client_id, device_id, target, fit, cols, rows, writer);
+                let result = self.open_mobile_surface(
+                    client_id, device_id, target, fit, resume, cols, rows, writer,
+                );
                 let opened = result.is_ok();
                 let _ = reply.send(result);
                 opened
@@ -3502,6 +3534,22 @@ fn client_pane_input_releases_press(event: &protocol::ClientPaneInputEvent) -> b
             ..
         }
     )
+}
+
+/// Input that uses a pane: typing, pasting, or clicking. Moving the mouse
+/// over it or scrolling it only looks at it, so a phone or web app keeps
+/// the pane's size.
+fn client_pane_input_uses_pane(events: &[protocol::ClientPaneInputEvent]) -> bool {
+    events.iter().any(|event| match event {
+        protocol::ClientPaneInputEvent::Key { kind, .. } => {
+            !matches!(kind, protocol::ClientKeyKind::Release)
+        }
+        protocol::ClientPaneInputEvent::TextCommit(_)
+        | protocol::ClientPaneInputEvent::Paste(_) => true,
+        protocol::ClientPaneInputEvent::Mouse { kind, .. } => {
+            matches!(kind, protocol::ClientMouseKind::Down(_))
+        }
+    })
 }
 
 fn client_pane_input_has_interaction(events: &[protocol::ClientPaneInputEvent]) -> bool {

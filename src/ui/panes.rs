@@ -542,7 +542,7 @@ fn render_held_size_notice(
         return;
     }
     let text = if app.mobile_fit_holds.contains(terminal_id) {
-        " Another device is using this pane. Type here to fit it back. "
+        " Another device is using this pane. Click or type here to fit it back. "
     } else {
         " Another client has this pane attached at its size. "
     };

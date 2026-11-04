@@ -691,10 +691,21 @@ impl HeadlessServer {
         reapplied
     }
 
+    /// Claims the tab's geometry for a client shell that opened or switched
+    /// to it, taking every pane in it back from phone and web fit surfaces.
     pub(super) fn claim_shell_tab_geometry(
         &mut self,
         client_id: u64,
         start_pending_agent_resumes: bool,
+    ) -> bool {
+        self.claim_shell_tab_geometry_with(client_id, start_pending_agent_resumes, FitRelease::Tab)
+    }
+
+    pub(super) fn claim_shell_tab_geometry_with(
+        &mut self,
+        client_id: u64,
+        start_pending_agent_resumes: bool,
+        release: FitRelease,
     ) -> bool {
         if !self
             .clients
@@ -706,7 +717,7 @@ impl HeadlessServer {
         let Some(tab_id) = self.shell_tab_id_for_client(client_id) else {
             return false;
         };
-        let released = self.release_mobile_fit_in_tab(&tab_id);
+        let released = self.release_mobile_fit(&tab_id, &release);
         if self.tab_geometry_controllers.insert(tab_id, client_id) == Some(client_id) && !released {
             return false;
         }
@@ -917,6 +928,9 @@ impl HeadlessServer {
         let focus_before = self.shell_focus_target(client_id);
         let focused_tabs_before = self.focused_shell_tabs();
         let method_claims_geometry = Self::shell_endpoint_claims_geometry(&msg.request.method);
+        // Scrolling only looks at a pane, so it takes nothing back from phone
+        // and web fit surfaces.
+        let scroll_only = matches!(msg.request.method, api::schema::Method::PaneScroll(_));
         let reconcile = Self::shell_locations_may_need_reconcile(&msg.request.method);
         let all_focus_before = reconcile.then(|| self.shell_focus_targets());
         let navigation_changed =
@@ -955,9 +969,23 @@ impl HeadlessServer {
             && if reconcile {
                 self.reapply_controlled_shell_tab_geometry(false)
             } else {
-                self.claim_shell_tab_geometry(client_id, false)
+                let release = if scroll_only {
+                    FitRelease::None
+                } else {
+                    self.shell_focus_fit_release(client_id)
+                };
+                self.claim_shell_tab_geometry_with(client_id, false, release)
                     || self.resize_shell_tab_if_controller(client_id, false)
             };
         changed | navigation_changed | geometry_changed
+    }
+
+    /// A client shell action takes back from phone and web fit surfaces the
+    /// pane it acted on, which is the client's focused pane afterward.
+    fn shell_focus_fit_release(&self, client_id: u64) -> FitRelease {
+        self.shell_focus_target(client_id)
+            .map_or(FitRelease::None, |target| {
+                self.fit_release_for_pane(target.workspace_index, target.pane_id)
+            })
     }
 }

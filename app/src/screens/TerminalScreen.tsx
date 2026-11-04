@@ -142,8 +142,8 @@ export function TerminalScreen({ nav, serverId, paneId, title, variant = 'phone'
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [client, paneId, mode, mode === 'fit' && !!fitSize]);
 
-  // Fit surfaces share the pane's size: the device used last holds it. Using
-  // this one (focus, tap; the server handles typing) takes it back.
+  // Fit surfaces share the pane's size: the device used last holds it.
+  // Tapping this one takes it back; the server handles typing.
   const held = mode === 'fit' && !!sub && gridKey !== '' && sentKey !== '' && gridKey !== sentKey;
   const resizeTo = useCallback(() => {
     if (!sub || !fitSize) return;
@@ -165,15 +165,6 @@ export function TerminalScreen({ nav, serverId, paneId, title, variant = 'phone'
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sub, mode, fitKey, held]);
-  useEffect(() => {
-    if (foreground) claim();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [foreground]);
-  useEffect(() => {
-    if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') return;
-    window.addEventListener('focus', claim);
-    return () => window.removeEventListener('focus', claim);
-  }, [claim]);
 
   const send = useCallback(
     (kind: InputKind, value: string | string[]) => {

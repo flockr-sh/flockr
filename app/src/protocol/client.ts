@@ -182,8 +182,12 @@ export class Subscription {
     return this.opts.mode ?? 'observe';
   }
 
-  /** Message that (re)opens this subscription. */
-  subscribeMessage(id: string): Record<string, unknown> {
+  /**
+   * Message that (re)opens this subscription. `resume` marks a subscription
+   * restored after a reconnect: in fit mode it takes the pane's size back
+   * only if this device held it last.
+   */
+  subscribeMessage(id: string, resume = false): Record<string, unknown> {
     const msg: Record<string, unknown> = {
       t: 'surface.subscribe',
       id,
@@ -195,6 +199,7 @@ export class Subscription {
     if (this.mode === 'fit') {
       msg.cols = this.opts.cols;
       msg.rows = this.opts.rows;
+      if (resume) msg.resume = true;
     }
     return msg;
   }
@@ -762,9 +767,11 @@ export class GatewayClient {
   }
 
   private sendSubscribe(s: Subscription): void {
+    // A subscription that started before is being restored after a reconnect.
+    const resume = s.started !== null;
     s.resetForResubscribe();
     const id = this.newId('s');
-    this.call(s.subscribeMessage(id), 'surface.started')
+    this.call(s.subscribeMessage(id, resume), 'surface.started')
       .then((m) => {
         if (this.subs.get(s.sub) === s) s.handleStarted(m as unknown as SurfaceStarted);
       })

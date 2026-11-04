@@ -11,6 +11,18 @@ use crate::server::mobile::{SurfaceOpenError, SurfaceOpened};
 /// Lines a desktop mouse wheel notch usually scrolls; one phone wheel event per this many dragged rows.
 const WHEEL_LINES_PER_EVENT: i32 = 3;
 
+/// Which panes a client shell takes back from phone and web fit surfaces
+/// when it claims its tab's geometry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum FitRelease {
+    /// None: the client only focused its window.
+    None,
+    /// Every pane in the tab: the client opened or switched to it.
+    Tab,
+    /// One terminal: the client typed or clicked in that pane.
+    Terminal(String),
+}
+
 impl HeadlessServer {
     pub(super) fn open_mobile_surface(
         &mut self,
@@ -18,6 +30,7 @@ impl HeadlessServer {
         device_id: String,
         target: String,
         fit: bool,
+        resume: bool,
         cols: u16,
         rows: u16,
         writer: ClientWriter,
@@ -58,8 +71,13 @@ impl HeadlessServer {
         connection.render_state = crate::server::render_stream::ClientRenderState::cells();
         self.clients.insert(client_id, connection);
 
-        let opened = if fit {
+        // Opening takes the size. A subscription restored after a reconnect
+        // takes it only if this device held it last; otherwise it watches
+        // until the device is used.
+        let take = fit && (!resume || self.mobile_fit_device_held_last(&terminal_id, &device_id));
+        let opened = if take {
             self.demote_mobile_fit_owner(&terminal_id);
+            self.mobile_fit_last_device.remove(&terminal_id);
             self.attach_terminal_client(client_id, terminal_id.clone(), false)
         } else {
             self.observe_terminal_client(client_id, terminal_id.clone())
@@ -71,6 +89,8 @@ impl HeadlessServer {
         self.mobile_surface_devices.insert(client_id, device_id);
         if fit {
             self.mobile_fit_surfaces.insert(client_id);
+        }
+        if take {
             if let Some(real_id) = self.terminal_id_by_string(&terminal_id) {
                 self.app.state.mobile_fit_holds.insert(real_id);
             }
@@ -79,13 +99,31 @@ impl HeadlessServer {
             .runtime_for_terminal_id_string(&terminal_id)
             .map(|runtime| runtime.current_size())
             .unwrap_or((rows, cols));
-        info!(client_id, terminal_id = %terminal_id, fit, "mobile surface opened");
+        info!(client_id, terminal_id = %terminal_id, fit, resume, take, "mobile surface opened");
         Ok(SurfaceOpened {
             pane_id,
             terminal_id,
             cols,
             rows,
         })
+    }
+
+    /// True when `device_id` held `terminal_id`'s size last: its fit surface
+    /// still holds it (a half-open old connection), or held it when its
+    /// connection dropped and nobody has used the pane since.
+    fn mobile_fit_device_held_last(&self, terminal_id: &str, device_id: &str) -> bool {
+        match self.terminal_attach_owners.get(terminal_id) {
+            Some(owner) => {
+                self.mobile_fit_surfaces.contains(owner)
+                    && self.mobile_surface_devices.get(owner).map(String::as_str) == Some(device_id)
+            }
+            None => {
+                self.mobile_fit_last_device
+                    .get(terminal_id)
+                    .map(String::as_str)
+                    == Some(device_id)
+            }
+        }
     }
 
     /// True when `terminal_id` is attached by something other than a fit
@@ -145,6 +183,7 @@ impl HeadlessServer {
                 return false;
             }
             self.demote_mobile_fit_owner(&terminal_id);
+            self.mobile_fit_last_device.remove(&terminal_id);
             let Some(real_id) = self.terminal_id_by_string(&terminal_id) else {
                 return false;
             };
@@ -169,10 +208,39 @@ impl HeadlessServer {
         !owner
     }
 
-    /// A client shell used `tab_id`: fit surfaces give its panes back to the
+    /// Takes panes back from fit surfaces for a client shell, as `release`
+    /// says. Returns true when any surface gave one up.
+    pub(super) fn release_mobile_fit(&mut self, tab_id: &str, release: &FitRelease) -> bool {
+        match release {
+            FitRelease::None => false,
+            FitRelease::Tab => self.release_mobile_fit_in_tab(tab_id),
+            FitRelease::Terminal(terminal_id) => self.release_mobile_fit_terminal(terminal_id),
+        }
+    }
+
+    /// A client shell used one pane: its fit surface, if any, gives the size
+    /// back to the tab layout.
+    fn release_mobile_fit_terminal(&mut self, terminal_id: &str) -> bool {
+        self.mobile_fit_last_device.remove(terminal_id);
+        self.demote_mobile_fit_owner(terminal_id)
+    }
+
+    /// The fit release for a client shell using `pane_id` in `ws_idx`.
+    pub(super) fn fit_release_for_pane(
+        &self,
+        ws_idx: usize,
+        pane_id: crate::layout::PaneId,
+    ) -> FitRelease {
+        self.app
+            .state
+            .terminal_id_for_pane(ws_idx, pane_id)
+            .map_or(FitRelease::None, |id| FitRelease::Terminal(id.to_string()))
+    }
+
+    /// A client shell opened `tab_id`: fit surfaces give its panes back to the
     /// tab layout. Returns true when any surface gave one up.
-    pub(super) fn release_mobile_fit_in_tab(&mut self, tab_id: &str) -> bool {
-        if self.mobile_fit_surfaces.is_empty() {
+    fn release_mobile_fit_in_tab(&mut self, tab_id: &str) -> bool {
+        if self.mobile_fit_surfaces.is_empty() && self.mobile_fit_last_device.is_empty() {
             return false;
         }
         let Some((workspace_index, tab_index)) = self.app.parse_tab_id(tab_id) else {
@@ -194,7 +262,7 @@ impl HeadlessServer {
             .collect::<Vec<_>>();
         let mut released = false;
         for terminal_id in terminals {
-            released |= self.demote_mobile_fit_owner(&terminal_id);
+            released |= self.release_mobile_fit_terminal(&terminal_id);
         }
         released
     }
