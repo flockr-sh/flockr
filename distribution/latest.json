@@ -1,21 +1,21 @@
 {
-  "version": "1.2.0",
+  "version": "1.3.0",
   "protocol": 22,
   "endpoint_generation": 1,
-  "notes": "### Added\n- Mobile gateway for the flockr phone app, off by default (`[mobile]` in\n  the config). `flockr mobile pair` shows a QR code; the phone then lists\n  agents and terminals, streams panes, types into them, and gets alerts\n  when an agent is blocked or done. `flockr mobile devices` lists and\n  revokes phones, and `flockr mobile status` shows the gateway.\n- Every phone connection is end-to-end encrypted with Noise and pinned to\n  the server key in the QR code. There is no plain-text mode.\n- `pane.mark_read` API method. Reading a finished agent on any desktop\n  client or phone now clears its done badge everywhere.\n- `agent.list` and `agent.get` report the agent's `branch` and whether its\n  session is still empty (`session_empty`).\n- The phone app can attach images. The gateway saves each one like a\n  desktop clipboard image paste and pastes its path into the pane.\n- Flock: several machines' flockr servers act as one, off by default\n  (`[flock]` in the config). Start one with `flockr flock init` on the hub,\n  add machines with `flockr flock invite` there and `flockr flock join` on\n  the new machine; no SSH needed. Members connect only to the hub, over\n  Noise, with keys the hub checks against its member list. Roles are\n  admin, member, and viewer. `flockr flock agents` lists every agent with\n  the address to send it a message, and `flockr --machine <name>` runs\n  commands on another member.\n- The TUI shows other flock members' panes, and the phone app shows every\n  machine in the flock through the one it paired with.\n- Agents message each other on any machine: `flockr message send\n  machine:agent \"...\"`, with `--wait` for the reply, and `flockr message\n  read` and `reply`. An agent can be addressed by name, pane ID, or kind\n  (`tower:claude`) when only one of that kind runs there. flockr types a\n  notice into the recipient's pane when it is idle, and holds it while a\n  person is typing there. Senders are verified, conversations stop after 8\n  replies, and every message is logged in `messages.jsonl`.\n- `[flock] approve_messages` decides which agent messages wait for a\n  person: `other-projects` (default: same-repo messages and replies go\n  through), `never`, or `always`. Approve or deny with `flockr message\n  approve` and `deny`, from the phone or web app, or allow a pair for\n  good. The setting is in the TUI settings and the apps, and applies\n  without a restart.\n- Web app, off by default (`[web]` in the config): the phone app's screens\n  in a desktop layout, served over plain HTTP on your private network.\n  Type straight into a terminal, paste text and images, approve messages,\n  and change the approval setting. It ships inside flockr: `[web] enabled\n  = true` serves it with no separate build, and `[web] dir` serves another\n  build instead.\n- `flockr integration install claude` and `codex` also install the flockr\n  skill, which tells agents how to message each other and to act on the\n  messages they receive.\n- A flockr theme, dark (`flockr`) and light (`flockr-light`), in the\n  colors of the phone app. With `auto_switch` on, they pair with each\n  other.\n- Blocked alerts on the phone show the agent's question and command\n  (\"Do you want to proceed? \u00b7 npm test\") and, for plain Yes / No prompts,\n  carry answer buttons: long-press for Yes, Yes don't ask again, No, or\n  Open. The app checks the prompt is unchanged before it answers.\n  `[mobile.push] alert_prompt_text = false` keeps the question, command,\n  and option labels out of the push entirely; the buttons stay.\n\n### Changed\n- The phone and web app's source now lives in `app/` of this repo.\n- The default theme is now `terminal`, which uses your terminal's colors.\n  Set `[theme] name = \"catppuccin\"` to keep the old look.\n\n### Fixed\n- The TUI client stays attached across `flockr server live-handoff`. It\n  used to exit unless the build had the dev-only `dev-reload` feature.\n- `flockr server live-handoff` with no `--import-exe` works after a rebuild\n  replaced the running binary. It used to fail with\n  \"failed to spawn handoff import server at .../flockr (deleted)\".\n- An agent that finished in the visible tab counted as read even with no\n  one looking (no client attached, or the terminal window not focused), so\n  it never showed done and sent no alert. It now stays done until a\n  focused client shows it or someone opens it.\n- A live handoff turned agents that had finished but were not yet read\n  back into idle. They now stay done.\n- Server listeners (phone gateway, flock, web) bind as soon as the old\n  server lets go during a live handoff, instead of after up to 10 seconds.\n- The sample config showed the pane swap keys as unset and\n  `pane_focus_passthrough` as `[\"nvim\"]`; it now shows the real defaults.\n  `--help` no longer lists `update` and `channel`, since flockr does not\n  self-update.",
+  "notes": "### Fixed\n- `flockr pane move` no longer refuses to move a pane into or out of a\n  zoomed tab. The source tab stays zoomed, on the pane that takes focus\n  if the zoomed pane left. In a zoomed target tab, `--no-focus` adds the\n  pane behind the zoom and `--focus` ends the zoom.\n- Closing the zoomed pane keeps the tab zoomed on the pane that takes\n  focus, instead of showing every pane. Closing or moving out panes ends\n  the zoom only when one pane is left.\n- `flockr pane split --no-focus` in a zoomed tab opens the new pane\n  behind the zoom instead of ending it. A focused split still ends it.\n- A phone or web app showing a pane in Fit no longer locks the pane's\n  size. The device used last sets the size; the others show the pane\n  scaled to width with a notice. Opening the pane, tapping or clicking\n  it, or typing into it takes the size. In the TUI, switching to the tab\n  takes back every pane in it, and typing, pasting, or clicking in a pane\n  takes back that pane. Focusing a window, moving the mouse, scrolling,\n  and reconnecting do not, except that a device whose connection dropped\n  takes the size back if nobody used the pane meanwhile.\n- `flockr pane move` exits 1 when the move changes nothing for any reason\n  but `same_tab`.\n\n### Changed\n- The phone app's notification banner matches the agent cards: status\n  dot, one-line title and body, and a close button.\n- The flockr skill tells agents to close their own pane, as their last\n  step, when told to close or kill themselves when done, and shows\n  `pane move` examples. Reinstall or update the Claude and Codex\n  integrations to get it.",
   "assets": {
-    "linux-x86_64": "https://github.com/flockr-sh/flockr/releases/download/v1.2.0/flockr-linux-x86_64",
-    "linux-aarch64": "https://github.com/flockr-sh/flockr/releases/download/v1.2.0/flockr-linux-aarch64",
-    "macos-x86_64": "https://github.com/flockr-sh/flockr/releases/download/v1.2.0/flockr-macos-x86_64",
-    "macos-aarch64": "https://github.com/flockr-sh/flockr/releases/download/v1.2.0/flockr-macos-aarch64",
-    "windows-x86_64": "https://github.com/flockr-sh/flockr/releases/download/v1.2.0/flockr-windows-x86_64.zip"
+    "linux-x86_64": "https://github.com/flockr-sh/flockr/releases/download/v1.3.0/flockr-linux-x86_64",
+    "linux-aarch64": "https://github.com/flockr-sh/flockr/releases/download/v1.3.0/flockr-linux-aarch64",
+    "macos-x86_64": "https://github.com/flockr-sh/flockr/releases/download/v1.3.0/flockr-macos-x86_64",
+    "macos-aarch64": "https://github.com/flockr-sh/flockr/releases/download/v1.3.0/flockr-macos-aarch64",
+    "windows-x86_64": "https://github.com/flockr-sh/flockr/releases/download/v1.3.0/flockr-windows-x86_64.zip"
   },
   "sha256": {
-    "linux-x86_64": "5abdfd2c8aeca04f0b4aa0d2d206b7eb200a79dedac4a3f2abea8cb84effd460",
-    "linux-aarch64": "4d1c648e0d32e11ae84fcc685ce32ae73ae5bd333ce7edcd725e4ee6031747b0",
-    "macos-x86_64": "b1038499394ac769ed7f90ef288a8d10a62e165a82bfbb66ffd828db192acf3d",
-    "macos-aarch64": "b7f109dd8d94bfe923b142f1f3af98d61ba060293e894217c82b29a0814aac00",
-    "windows-x86_64": "bfa931316c83623af2e6f76b47374e1d45cde198da0e6319035bfccc4d43db6e"
+    "linux-x86_64": "a4f6ab9f3b5f5229fe9e835f70881aa9f227663fb99fee06de94c6b3febcfc39",
+    "linux-aarch64": "91fadbc09453adc9bbb11cfb4b7e10390810d28cc13cb5185dd377c7bd103876",
+    "macos-x86_64": "2ca84ae9dc84c5b9dc858ddc3d6dabe8742b2cf493334fb083132337dd3d8b6f",
+    "macos-aarch64": "9a7751b82110d86ee1a6baa6c650567aa8fd7bbbb7d23403d9ee7e8fb63a8b43",
+    "windows-x86_64": "246fbb138aef794605296b3514d0897dc7c8aef64acaa31f7039e47630cc40b2"
   },
   "releases": {
     "1.0.0": {
@@ -73,6 +73,25 @@
         "macos-x86_64": "b1038499394ac769ed7f90ef288a8d10a62e165a82bfbb66ffd828db192acf3d",
         "macos-aarch64": "b7f109dd8d94bfe923b142f1f3af98d61ba060293e894217c82b29a0814aac00",
         "windows-x86_64": "bfa931316c83623af2e6f76b47374e1d45cde198da0e6319035bfccc4d43db6e"
+      }
+    },
+    "1.3.0": {
+      "notes": "### Fixed\n- `flockr pane move` no longer refuses to move a pane into or out of a\n  zoomed tab. The source tab stays zoomed, on the pane that takes focus\n  if the zoomed pane left. In a zoomed target tab, `--no-focus` adds the\n  pane behind the zoom and `--focus` ends the zoom.\n- Closing the zoomed pane keeps the tab zoomed on the pane that takes\n  focus, instead of showing every pane. Closing or moving out panes ends\n  the zoom only when one pane is left.\n- `flockr pane split --no-focus` in a zoomed tab opens the new pane\n  behind the zoom instead of ending it. A focused split still ends it.\n- A phone or web app showing a pane in Fit no longer locks the pane's\n  size. The device used last sets the size; the others show the pane\n  scaled to width with a notice. Opening the pane, tapping or clicking\n  it, or typing into it takes the size. In the TUI, switching to the tab\n  takes back every pane in it, and typing, pasting, or clicking in a pane\n  takes back that pane. Focusing a window, moving the mouse, scrolling,\n  and reconnecting do not, except that a device whose connection dropped\n  takes the size back if nobody used the pane meanwhile.\n- `flockr pane move` exits 1 when the move changes nothing for any reason\n  but `same_tab`.\n\n### Changed\n- The phone app's notification banner matches the agent cards: status\n  dot, one-line title and body, and a close button.\n- The flockr skill tells agents to close their own pane, as their last\n  step, when told to close or kill themselves when done, and shows\n  `pane move` examples. Reinstall or update the Claude and Codex\n  integrations to get it.",
+      "protocol": 22,
+      "endpoint_generation": 1,
+      "assets": {
+        "linux-x86_64": "https://github.com/flockr-sh/flockr/releases/download/v1.3.0/flockr-linux-x86_64",
+        "linux-aarch64": "https://github.com/flockr-sh/flockr/releases/download/v1.3.0/flockr-linux-aarch64",
+        "macos-x86_64": "https://github.com/flockr-sh/flockr/releases/download/v1.3.0/flockr-macos-x86_64",
+        "macos-aarch64": "https://github.com/flockr-sh/flockr/releases/download/v1.3.0/flockr-macos-aarch64",
+        "windows-x86_64": "https://github.com/flockr-sh/flockr/releases/download/v1.3.0/flockr-windows-x86_64.zip"
+      },
+      "sha256": {
+        "linux-x86_64": "a4f6ab9f3b5f5229fe9e835f70881aa9f227663fb99fee06de94c6b3febcfc39",
+        "linux-aarch64": "91fadbc09453adc9bbb11cfb4b7e10390810d28cc13cb5185dd377c7bd103876",
+        "macos-x86_64": "2ca84ae9dc84c5b9dc858ddc3d6dabe8742b2cf493334fb083132337dd3d8b6f",
+        "macos-aarch64": "9a7751b82110d86ee1a6baa6c650567aa8fd7bbbb7d23403d9ee7e8fb63a8b43",
+        "windows-x86_64": "246fbb138aef794605296b3514d0897dc7c8aef64acaa31f7039e47630cc40b2"
       }
     }
   }
