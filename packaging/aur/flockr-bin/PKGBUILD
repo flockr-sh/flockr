@@ -13,8 +13,8 @@ source=("LICENSE-$pkgver::https://raw.githubusercontent.com/flockr-sh/flockr/v$p
 source_x86_64=("flockr-$pkgver-x86_64::$url/releases/download/v$pkgver/flockr-linux-x86_64")
 source_aarch64=("flockr-$pkgver-aarch64::$url/releases/download/v$pkgver/flockr-linux-aarch64")
 sha256sums=('c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4')
-sha256sums_x86_64=('9ee6cfcb272b4e2bea7bbe649f447de9cdc1040ddc910e0da9568f399973f240')
-sha256sums_aarch64=('a44c2409bb0a80b7736b2099c56481216a58163682c2d33f3fd4880106187caa')
+sha256sums_x86_64=('5abdfd2c8aeca04f0b4aa0d2d206b7eb200a79dedac4a3f2abea8cb84effd460')
+sha256sums_aarch64=('4d1c648e0d32e11ae84fcc685ce32ae73ae5bd333ce7edcd725e4ee6031747b0')
 
 package() {
   local bin="flockr-$pkgver-$CARCH"
