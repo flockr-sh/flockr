@@ -1,12 +1,5 @@
 # Changelog
 
-## [Unreleased]
-
-### Changed
-- The web app ships inside flockr. `[web] enabled = true` serves it with no
-  separate build; `[web] dir` is optional and serves another build instead.
-- The phone and web app's source now lives in `app/` of this repo.
-
 ## [1.2.0] - 2026-11-03
 
 ### Added
@@ -49,7 +42,9 @@
 - Web app, off by default (`[web]` in the config): the phone app's screens
   in a desktop layout, served over plain HTTP on your private network.
   Type straight into a terminal, paste text and images, approve messages,
-  and change the approval setting.
+  and change the approval setting. It ships inside flockr: `[web] enabled
+  = true` serves it with no separate build, and `[web] dir` serves another
+  build instead.
 - `flockr integration install claude` and `codex` also install the flockr
   skill, which tells agents how to message each other and to act on the
   messages they receive.
@@ -64,6 +59,7 @@
   and option labels out of the push entirely; the buttons stay.
 
 ### Changed
+- The phone and web app's source now lives in `app/` of this repo.
 - The default theme is now `terminal`, which uses your terminal's colors.
   Set `[theme] name = "catppuccin"` to keep the old look.
 
