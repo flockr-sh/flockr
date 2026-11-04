@@ -153,14 +153,32 @@ export default function App() {
         <SafeAreaView edges={['top']} style={styles.bannerWrap} pointerEvents="box-none">
           <Pressable
             accessibilityRole="button"
-            style={[styles.banner, { borderLeftColor: statusColor[banner.kind === 'blocked' ? 'blocked' : 'done'] }]}
+            style={({ pressed }) => [styles.banner, pressed && styles.bannerPressed]}
             onPress={() => {
               setBanner(null);
               openPane(banner.server_id, banner.pane_id, banner.title);
             }}
           >
-            <Text style={styles.bannerTitle}>{banner.title}</Text>
-            <Text style={styles.bannerBody}>{banner.body}</Text>
+            <View
+              style={[styles.bannerDot, { backgroundColor: statusColor[banner.kind === 'blocked' ? 'blocked' : 'done'] }]}
+            />
+            <View style={styles.bannerText}>
+              <Text style={styles.bannerTitle} numberOfLines={1}>
+                {banner.title}
+              </Text>
+              <Text style={styles.bannerBody} numberOfLines={1}>
+                {banner.body}
+              </Text>
+            </View>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Dismiss"
+              hitSlop={8}
+              onPress={() => setBanner(null)}
+              style={styles.bannerClose}
+            >
+              <Text style={styles.bannerCloseText}>×</Text>
+            </Pressable>
           </Pressable>
         </SafeAreaView>
       ) : null}
@@ -171,16 +189,29 @@ export default function App() {
 const styles = StyleSheet.create({
   bannerWrap: { position: 'absolute', top: 0, left: 0, right: 0 },
   banner: {
-    margin: 8,
-    padding: 12,
+    marginHorizontal: 8,
+    marginTop: 4,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingLeft: 12,
+    paddingRight: 6,
+    paddingVertical: 10,
     borderRadius: 10,
     backgroundColor: colors.panelHi,
-    borderLeftWidth: 4,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
     shadowColor: '#000',
-    shadowOpacity: 0.4,
-    shadowRadius: 8,
+    shadowOpacity: 0.45,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 6 },
     elevation: 6,
   },
-  bannerTitle: { color: colors.text, fontWeight: '700', fontSize: 15 },
+  bannerPressed: { backgroundColor: colors.panel },
+  bannerDot: { width: 10, height: 10, borderRadius: 5 },
+  bannerText: { flex: 1, minWidth: 0 },
+  bannerTitle: { color: colors.text, fontSize: 15, fontWeight: '600' },
   bannerBody: { color: colors.dim, fontSize: 13, marginTop: 2 },
+  bannerClose: { width: 30, height: 30, alignItems: 'center', justifyContent: 'center' },
+  bannerCloseText: { color: colors.dim, fontSize: 20, lineHeight: 22 },
 });
