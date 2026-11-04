@@ -2,7 +2,7 @@
 # managed by flockr; reinstalling or updating the integration overwrites this file.
 # add custom hooks beside this file instead of editing it.
 # FLOCKR_INTEGRATION_ID=codex
-# FLOCKR_INTEGRATION_VERSION=11
+# FLOCKR_INTEGRATION_VERSION=12
 
 param([string]$Action = "")
 

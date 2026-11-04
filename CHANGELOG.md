@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [1.3.0] - 2026-11-04
 
 ### Fixed
 - `flockr pane move` no longer refuses to move a pane into or out of a
@@ -26,6 +26,10 @@
 ### Changed
 - The phone app's notification banner matches the agent cards: status
   dot, one-line title and body, and a close button.
+- The flockr skill tells agents to close their own pane, as their last
+  step, when told to close or kill themselves when done, and shows
+  `pane move` examples. Reinstall or update the Claude and Codex
+  integrations to get it.
 
 ## [1.2.0] - 2026-11-03
 

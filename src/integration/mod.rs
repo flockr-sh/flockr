@@ -53,7 +53,7 @@ const CLAUDE_HOOK_ASSET: &str = if cfg!(windows) {
 } else {
     include_str!("assets/claude/flockr-agent-state.sh")
 };
-const CLAUDE_INTEGRATION_VERSION: u32 = 12;
+const CLAUDE_INTEGRATION_VERSION: u32 = 13;
 const CODEX_HOOK_INSTALL_NAME: &str = if cfg!(windows) {
     "flockr-agent-state.ps1"
 } else {
@@ -64,7 +64,7 @@ const CODEX_HOOK_ASSET: &str = if cfg!(windows) {
 } else {
     include_str!("assets/codex/flockr-agent-state.sh")
 };
-const CODEX_INTEGRATION_VERSION: u32 = 11;
+const CODEX_INTEGRATION_VERSION: u32 = 12;
 const KIMI_HOOK_INSTALL_NAME: &str = if cfg!(windows) {
     "flockr-agent-state.ps1"
 } else {
