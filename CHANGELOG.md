@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.3.1] - 2026-11-04
+
+### Fixed
+- The web app built into flockr is titled "flockr", not "flockr (dev)".
+
 ## [1.3.0] - 2026-11-04
 
 ### Fixed
