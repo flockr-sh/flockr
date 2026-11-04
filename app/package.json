@@ -14,7 +14,7 @@
     "doctor": "expo-doctor",
     "start:go": "expo start --go",
     "format": "prettier --write \"App.tsx\" \"src/**/*.{ts,tsx}\" \"mock/**/*.ts\" \"scripts/**/*.ts\" \"__tests__/**/*.ts\"",
-    "export:web": "mkdir -p public && cp node_modules/canvaskit-wasm/bin/full/canvaskit.wasm public/ && expo export --platform web && node -e \"require('fs').utimesSync('../build.rs', new Date(), new Date())\""
+    "export:web": "mkdir -p public && cp node_modules/canvaskit-wasm/bin/full/canvaskit.wasm public/ && APP_VARIANT=production expo export --platform web --clear && node -e \"require('fs').utimesSync('../build.rs', new Date(), new Date())\""
   },
   "dependencies": {
     "@expo-google-fonts/jetbrains-mono": "^0.4.1",
