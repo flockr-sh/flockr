@@ -17,7 +17,35 @@ env:
   RUST_TOOLCHAIN_VERSION: 1.96.1
 
 jobs:
+  # The web app (app/dist) is built once and embedded in every binary.
+  web:
+    if: github.repository == 'flockr-sh/flockr'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+
+      - name: Install Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: app/.nvmrc
+
+      - name: Build the web app
+        working-directory: app
+        run: |
+          npm ci --no-audit --no-fund
+          npm run export:web
+
+      - name: Upload web app
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: web-app
+          path: app/dist
+          if-no-files-found: error
+
   build:
+    needs: web
     if: github.repository == 'flockr-sh/flockr'
     strategy:
       fail-fast: false
@@ -95,7 +123,17 @@ jobs:
         shell: bash
         run: rm -rf .zig-cache vendor/libghostty-vt/.zig-cache vendor/libghostty-vt/zig-out
 
+      - name: Download web app
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: web-app
+          path: app/dist
+
       - name: Build
+        # FLOCKR_WEB_DIST makes build.rs fail instead of building without
+        # the web app when app/dist is missing.
+        env:
+          FLOCKR_WEB_DIST: ${{ github.workspace }}/app/dist
         run: cargo build --release --locked --target ${{ matrix.target }}
 
       - name: Package artifact
@@ -148,6 +186,7 @@ jobs:
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           path: dist
+          pattern: flockr-*
           merge-multiple: true
 
       - name: Write checksums and release notes

@@ -15,8 +15,8 @@ include = [
     "docs/next/api/flockr-api.schema.json",
     "skills/flockr/SKILL.md",
     "distribution/install.ps1",
-    "README.md",
-    "LICENSE",
+    "/README.md",
+    "/LICENSE",
     "Cargo.toml",
 ]
 
@@ -42,6 +42,9 @@ jsonc-parser = { version = "0.33.1", default-features = false, features = ["cst"
 libc = "0.2"
 portable-pty = "=0.9.0"
 png = "0.17"
+# Unpacks the web app build.rs packs into the binary. Already in the tree
+# through png; no new code.
+flate2 = "1.1"
 ratatui = { version = "0.30", features = ["unstable-rendered-line-info"] }
 regex = "1"
 serde = { version = "1", features = ["derive"] }
@@ -71,6 +74,10 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 unicode-width = "0.2"
 unicode-segmentation = "1.13.1"
 schemars = { version = "1.2.1", features = ["derive"] }
+
+[build-dependencies]
+# Packs app/dist into the binary as one zlib stream (same crate as above).
+flate2 = "1.1"
 
 [patch.crates-io]
 portable-pty = { path = "vendor/portable-pty" }

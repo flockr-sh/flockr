@@ -1,0 +1,74 @@
+{
+  "name": "flockr-mobile",
+  "version": "0.1.0",
+  "main": "index.ts",
+  "private": true,
+  "scripts": {
+    "start": "expo start",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
+    "test": "jest",
+    "typecheck": "tsc --noEmit",
+    "mock-gateway": "tsx scripts/mock-gateway.ts",
+    "smoke": "tsx scripts/smoke.ts",
+    "doctor": "expo-doctor",
+    "start:go": "expo start --go",
+    "format": "prettier --write \"App.tsx\" \"src/**/*.{ts,tsx}\" \"mock/**/*.ts\" \"scripts/**/*.ts\" \"__tests__/**/*.ts\"",
+    "export:web": "mkdir -p public && cp node_modules/canvaskit-wasm/bin/full/canvaskit.wasm public/ && expo export --platform web && node -e \"require('fs').utimesSync('../build.rs', new Date(), new Date())\""
+  },
+  "dependencies": {
+    "@expo-google-fonts/jetbrains-mono": "^0.4.1",
+    "@noble/ciphers": "2.4.0",
+    "@noble/curves": "2.4.0",
+    "@noble/hashes": "2.4.0",
+    "@shopify/react-native-skia": "2.14.0",
+    "expo": "~58.0.19",
+    "expo-build-properties": "~58.0.11",
+    "expo-camera": "~58.0.12",
+    "expo-clipboard": "~58.0.4",
+    "expo-constants": "~58.0.13",
+    "expo-crypto": "~58.0.7",
+    "expo-dev-client": "~58.0.15",
+    "expo-device": "~58.0.5",
+    "expo-font": "~58.0.10",
+    "expo-image-manipulator": "~58.0.15",
+    "expo-image-picker": "~58.0.10",
+    "expo-linking": "~58.0.14",
+    "expo-notifications": "~58.1.6",
+    "expo-secure-store": "~58.0.2",
+    "expo-splash-screen": "~58.0.12",
+    "expo-status-bar": "~58.0.4",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "react-native": "0.88.0",
+    "react-native-safe-area-context": "~5.10.1",
+    "react-native-web": "^0.21.4"
+  },
+  "devDependencies": {
+    "@types/jest": "30.0.0",
+    "@types/node": "^22.20.5",
+    "@types/react": "~19.3.0",
+    "@types/ws": "^8.18.2",
+    "jest": "~30.5.2",
+    "qrcode-terminal": "^0.12.0",
+    "tsx": "^4.23.15",
+    "typescript": "~6.0.3",
+    "ws": "^8.22.0"
+  },
+  "allowScripts": {
+    "@shopify/react-native-skia@2.6.2": true,
+    "esbuild": false
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "testMatch": [
+      "**/__tests__/**/*.test.ts"
+    ],
+    "transform": {
+      "^.+\\.[jt]sx?$": "babel-jest"
+    },
+    "transformIgnorePatterns": [
+      "/node_modules/(?!@noble/)"
+    ]
+  }
+}

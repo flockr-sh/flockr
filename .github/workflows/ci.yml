@@ -1,9 +1,12 @@
 name: CI
 
+# The app in app/ has its own workflow (app.yml).
 on:
   push:
     branches: [master]
+    paths-ignore: ["app/**"]
   pull_request:
+    paths-ignore: ["app/**"]
 
 permissions:
   contents: read

@@ -1,0 +1,12 @@
+{
+  "t": "api.event",
+  "id": "r2",
+  "event": {
+    "event": "pane.agent_status_changed",
+    "data": {
+      "pane_id": "p_3",
+      "workspace_id": "w_1",
+      "agent_status": "blocked"
+    }
+  }
+}

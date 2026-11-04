@@ -25,5 +25,5 @@ One JSON file per example in `docs/mobile/protocol.md`.
 | 1 | `[0,3,"test result: ok"]` |
 | 2 | `[0,0,"$"]` |
 
-The app repo copies this directory into its tests and checks its decoder
-against it.
+The app (`app/`) reads `noise-nk.json` and `pairing.payload.json` from here
+in its tests.

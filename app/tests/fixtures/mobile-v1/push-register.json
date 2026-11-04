@@ -1,0 +1,6 @@
+{
+  "t": "push.register",
+  "id": "p1",
+  "expo_token": "ExponentPushToken[xxxxxxxxxxxxxxxxxxxxxx]",
+  "platform": "ios"
+}

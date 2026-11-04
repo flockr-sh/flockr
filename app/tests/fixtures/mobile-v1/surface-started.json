@@ -1,0 +1,19 @@
+{
+  "t": "surface.started",
+  "id": "s1",
+  "sub": 1,
+  "pane_id": "p_3",
+  "terminal_id": "t_5",
+  "mode": "observe",
+  "cols": 120,
+  "rows": 40,
+  "theme": {
+    "fg": "#d8dee9",
+    "bg": "#1e1e2e",
+    "palette": [
+      "#000000",
+      "#cc0000",
+      null
+    ]
+  }
+}

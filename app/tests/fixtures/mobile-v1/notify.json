@@ -1,0 +1,10 @@
+{
+  "t": "notify",
+  "kind": "blocked",
+  "pane_id": "p_3",
+  "workspace_id": "w_1",
+  "tab_id": "tab_2",
+  "terminal_id": "t_5",
+  "title": "Claude is blocked",
+  "body": "flockr › mobile · dk-desktop"
+}

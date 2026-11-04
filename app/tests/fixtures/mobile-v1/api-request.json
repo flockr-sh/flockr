@@ -1,0 +1,6 @@
+{
+  "t": "api.request",
+  "id": "r1",
+  "method": "agent.list",
+  "params": {}
+}
