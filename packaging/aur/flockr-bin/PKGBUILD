@@ -12,10 +12,9 @@ options=('!strip' '!debug')
 source=("LICENSE-$pkgver::https://raw.githubusercontent.com/flockr-sh/flockr/v$pkgver/LICENSE")
 source_x86_64=("flockr-$pkgver-x86_64::$url/releases/download/v$pkgver/flockr-linux-x86_64")
 source_aarch64=("flockr-$pkgver-aarch64::$url/releases/download/v$pkgver/flockr-linux-aarch64")
-# Filled by `updpkgsums` after the release is published.
-sha256sums=('SKIP')
-sha256sums_x86_64=('SKIP')
-sha256sums_aarch64=('SKIP')
+sha256sums=('c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4')
+sha256sums_x86_64=('f8447b262ccf61ea960931159ddaeff2c8d89627e23d09d7d9e8268871021045')
+sha256sums_aarch64=('1dbde5580759da816e3a1e8bbd8ba9132106def922669efd7c18e296ffa855f9')
 
 package() {
   local bin="flockr-$pkgver-$CARCH"
